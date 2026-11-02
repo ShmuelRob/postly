@@ -1,0 +1,184 @@
+import type { Network } from '../contracts/common.js';
+import {
+  type ConnectionLink,
+  CreateConnectionLinkRequest,
+  type ConnectionStatus,
+  ConnectionStatusRequest,
+  MetricsRequest,
+  type PostMetrics,
+  type PublicationStatus,
+  type PublishingProvider,
+  PublishRequest,
+  type PublishResult,
+} from '../contracts/providers/publishing.js';
+
+type Metrics = Omit<PostMetrics[number], 'providerPostId'>;
+
+export interface SimulatedPost {
+  providerPostId: string;
+  request: PublishRequest;
+  createdAt: string;
+  /** Set when a scripted failure fails the post; otherwise it publishes at `scheduledFor`. */
+  error?: string;
+  metrics?: Metrics;
+}
+
+export interface ScriptedPublishFailure {
+  /**
+   * `reject`: the call throws and nothing is created.
+   * `reject_after_create`: the post is created but the call throws (a lost response).
+   * `fail_status`: the call succeeds and the post's status is `failed`.
+   */
+  mode: 'reject' | 'reject_after_create' | 'fail_status';
+  error?: string;
+}
+
+interface Account {
+  businessId: string;
+  network: Network;
+  providerAccountId: string;
+  connected: boolean;
+}
+
+export interface PublishingSimulatorOptions {
+  now?: () => Date;
+}
+
+/**
+ * In-memory unified social API. Records every post per network (what the
+ * networks would see). A post is `scheduled` until the clock passes its
+ * `scheduledFor`, then `published`, unless a scripted failure fails it.
+ */
+export class PublishingSimulator implements PublishingProvider {
+  readonly name = 'simulator';
+  readonly posts: SimulatedPost[] = [];
+  readonly connectionLinks: { request: CreateConnectionLinkRequest; link: ConnectionLink }[] = [];
+
+  private readonly now: () => Date;
+  private readonly accounts: Account[] = [];
+  private readonly pending = new Set<string>();
+  private readonly failures: ScriptedPublishFailure[] = [];
+  private nextId = 1;
+
+  constructor(options: PublishingSimulatorOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+  }
+
+  async createConnectionLink(request: CreateConnectionLinkRequest): Promise<ConnectionLink> {
+    const parsed = CreateConnectionLinkRequest.parse(request);
+    for (const network of parsed.networks) this.pending.add(key(parsed.businessId, network));
+    const link = {
+      url: `https://connect.simulator.test/link/${this.nextId++}`,
+      expiresAt: new Date(this.now().getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    };
+    this.connectionLinks.push({ request: parsed, link });
+    return link;
+  }
+
+  async getConnectionStatus(request: ConnectionStatusRequest): Promise<ConnectionStatus> {
+    const { businessId, network } = ConnectionStatusRequest.parse(request);
+    const account = this.accounts.find((a) => a.businessId === businessId && a.network === network);
+    if (account) {
+      return { status: account.connected ? 'connected' : 'disconnected', providerAccountId: account.providerAccountId };
+    }
+    return { status: this.pending.has(key(businessId, network)) ? 'pending' : 'disconnected' };
+  }
+
+  async publish(request: PublishRequest): Promise<PublishResult> {
+    const parsed = PublishRequest.parse(request);
+    const existing = this.posts.find((p) => p.request.idempotencyKey === parsed.idempotencyKey);
+    if (existing) return { providerPostId: existing.providerPostId };
+
+    const account = this.accounts.find((a) => a.providerAccountId === parsed.providerAccountId);
+    if (!account?.connected || account.network !== parsed.network) {
+      throw new Error(`Account ${parsed.providerAccountId} is not connected on ${parsed.network}`);
+    }
+    const failure = this.failures.shift();
+    if (failure?.mode === 'reject') throw new Error(failure.error ?? 'Simulated publish failure');
+
+    const post: SimulatedPost = {
+      providerPostId: `post-sim-${this.nextId++}`,
+      request: parsed,
+      createdAt: this.now().toISOString(),
+    };
+    if (failure?.mode === 'fail_status') post.error = failure.error ?? 'Simulated publication failure';
+    this.posts.push(post);
+    if (failure?.mode === 'reject_after_create') throw new Error(failure.error ?? 'Simulated lost response');
+    return { providerPostId: post.providerPostId };
+  }
+
+  async getPublicationStatus(providerPostId: string): Promise<PublicationStatus> {
+    const post = this.posts.find((p) => p.providerPostId === providerPostId);
+    if (!post) throw new Error(`Unknown provider post id: ${providerPostId}`);
+    if (post.error !== undefined) return { status: 'failed', error: post.error };
+    return this.isPublished(post) ? { status: 'published', publishedAt: post.request.scheduledFor } : { status: 'scheduled' };
+  }
+
+  async getMetrics(request: MetricsRequest): Promise<PostMetrics> {
+    const { providerAccountId, from, to } = MetricsRequest.parse(request);
+    const [start, end] = [Date.parse(from), Date.parse(to)];
+    return this.posts
+      .filter((p) => p.request.providerAccountId === providerAccountId && this.isPublished(p))
+      .filter((p) => {
+        const at = Date.parse(p.request.scheduledFor);
+        return at >= start && at <= end;
+      })
+      .map((p) => ({ providerPostId: p.providerPostId, ...p.metrics }));
+  }
+
+  /** The owner finishes the connection flow; returns the provider account id. */
+  connect(businessId: string, network: Network, providerAccountId?: string): string {
+    const existing = this.accounts.find((a) => a.businessId === businessId && a.network === network);
+    if (existing) {
+      existing.connected = true;
+      return existing.providerAccountId;
+    }
+    const id = providerAccountId ?? `acc-sim-${network}-${this.nextId++}`;
+    this.accounts.push({ businessId, network, providerAccountId: id, connected: true });
+    this.pending.delete(key(businessId, network));
+    return id;
+  }
+
+  /** The channel drops (expired token, revoked access). */
+  disconnect(providerAccountId: string): void {
+    const account = this.accounts.find((a) => a.providerAccountId === providerAccountId);
+    if (!account) throw new Error(`Unknown provider account id: ${providerAccountId}`);
+    account.connected = false;
+  }
+
+  /** The next publish call that reaches a connected account fails this way. */
+  failNextPublish(failure: ScriptedPublishFailure): void {
+    this.failures.push(failure);
+  }
+
+  /** Fails a post that was already accepted. */
+  failPost(providerPostId: string, error: string): void {
+    this.post(providerPostId).error = error;
+  }
+
+  setMetrics(providerPostId: string, metrics: Metrics): void {
+    this.post(providerPostId).metrics = metrics;
+  }
+
+  /** Every post the provider accepted for this network, scheduled or not. */
+  postsOn(network: Network): SimulatedPost[] {
+    return this.posts.filter((p) => p.request.network === network);
+  }
+
+  /** Posts live on this network now. */
+  publishedOn(network: Network): SimulatedPost[] {
+    return this.postsOn(network).filter((p) => p.error === undefined && this.isPublished(p));
+  }
+
+  private isPublished(post: SimulatedPost): boolean {
+    return post.error === undefined && Date.parse(post.request.scheduledFor) <= this.now().getTime();
+  }
+
+  private post(providerPostId: string): SimulatedPost {
+    const post = this.posts.find((p) => p.providerPostId === providerPostId);
+    if (!post) throw new Error(`Unknown provider post id: ${providerPostId}`);
+    return post;
+  }
+}
+
+const key = (businessId: string, network: Network) => `${businessId}:${network}`;
