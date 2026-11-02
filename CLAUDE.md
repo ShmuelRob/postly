@@ -13,13 +13,14 @@ Requires Node 26 LTS (`.node-version`), with TypeScript 7 and Vitest 5.
 ```bash
 npm run check                                   # typecheck + module boundaries + all tests; run before finishing any change
 npm run lint:boundaries                         # dependency-cruiser import rules only
-npm test                                        # vitest run
+npm test                                        # vitest run (unit and e2e projects)
+npm run test:e2e                                # e2e project only; writes reports/e2e/index.html
 npx vitest run src/db/schema.test.ts            # one file
 npx vitest run -t "approval invariant"          # tests whose name matches
 npm run db:generate                             # drizzle-kit migration from src/db/schema.ts (migrations need human review)
 ```
 
-Code layout: `src/shared/state-machine.ts` is the generic transition-table engine; `src/contracts/` holds the machine definitions, the business profile, the model task schemas, and the provider interfaces; `src/db/schema.ts` is the Drizzle schema; `src/modules/<name>/index.ts` is each module's only public surface, with vendor SDKs only in that module's `adapters/` (rules in [src/modules/README.md](src/modules/README.md), config in `.dependency-cruiser.mjs`). CI (`.github/workflows/ci.yml`) runs `npm run check` on every PR and on main. Tests sit next to the code as `*.test.ts`. The contract tests copy their expected tables from the docs, so a doc change and its test change go together.
+Code layout: `src/shared/state-machine.ts` is the generic transition-table engine; `src/contracts/` holds the machine definitions, the business profile, the model task schemas, and the provider interfaces; `src/db/schema.ts` is the Drizzle schema; `src/modules/<name>/index.ts` is each module's only public surface, with vendor SDKs only in that module's `adapters/` (rules in [src/modules/README.md](src/modules/README.md), config in `.dependency-cruiser.mjs`). CI (`.github/workflows/ci.yml`) runs `npm run check` on every PR and on main. Tests sit next to the code as `*.test.ts`. End-to-end tests live in `test/e2e/` as `*.e2e.test.ts` and use `e2eTest` from `test/e2e/harness/`, which wires the app in-process with injected providers and records what the owner and the networks see into the HTML report. The contract tests copy their expected tables from the docs, so a doc change and its test change go together.
 
 ## Source-of-truth docs: read every session
 
