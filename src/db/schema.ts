@@ -1,0 +1,417 @@
+import { sql, type SQL } from 'drizzle-orm';
+import {
+  type AnyPgColumn,
+  boolean,
+  check,
+  date,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgPolicy,
+  pgRole,
+  pgTable,
+  real,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
+import { NETWORKS, POST_FORMATS, VISUAL_STYLES } from '../contracts/common.js';
+import { MODEL_TASK_NAMES, PREFERENCE_SCOPES } from '../contracts/model-tasks.js';
+import {
+  BUSINESS_STATES,
+  CHANNEL_CONNECTION_STATES,
+  CONVERSATION_STEP_VALUES,
+  POST_STATES,
+  PUBLICATION_STATES,
+  SUBSCRIPTION_STATES,
+  WEEKLY_UPDATE_STATES,
+} from '../contracts/state-machines/index.js';
+
+// Implements database-schema.md. jsonb columns are validated with the named
+// Zod schema from src/contracts on every write.
+
+// Roles
+
+/** Subject to RLS; every request path uses it. */
+export const appUser = pgRole('app_user').existing();
+/** Bypasses RLS; only for phone lookup, the scheduler, the console, and example-set runs. */
+export const appSystem = pgRole('app_system').existing();
+
+/** Row visible and writable only inside the business set by `set_config('app.business_id', ..., true)`. */
+function tenantIsolation(column: AnyPgColumn) {
+  const sameBusiness: SQL = sql`${column} = nullif(current_setting('app.business_id', true), '')::uuid`;
+  return pgPolicy('tenant_isolation', { for: 'all', to: [appUser], using: sameBusiness, withCheck: sameBusiness });
+}
+
+// Enums
+
+export const businessStatus = pgEnum('business_status', BUSINESS_STATES);
+export const conversationStep = pgEnum('conversation_step', CONVERSATION_STEP_VALUES);
+export const weeklyUpdateStatus = pgEnum('weekly_update_status', WEEKLY_UPDATE_STATES);
+export const postStatus = pgEnum('post_status', POST_STATES);
+export const publicationStatus = pgEnum('publication_status', PUBLICATION_STATES);
+export const channelConnectionStatus = pgEnum('channel_connection_status', CHANNEL_CONNECTION_STATES);
+export const subscriptionStatus = pgEnum('subscription_status', SUBSCRIPTION_STATES);
+export const network = pgEnum('network', NETWORKS);
+export const visualStyle = pgEnum('visual_style', VISUAL_STYLES);
+export const postFormat = pgEnum('post_format', POST_FORMATS);
+export const mediaKind = pgEnum('media_kind', ['logo', 'photo', 'voice', 'rendered']);
+export const mediaSource = pgEnum('media_source', ['owner', 'library', 'render']);
+export const messageDirection = pgEnum('message_direction', ['inbound', 'outbound']);
+export const messageKind = pgEnum('message_kind', ['text', 'voice', 'image', 'button_reply', 'buttons', 'template']);
+export const preferenceScope = pgEnum('preference_scope', PREFERENCE_SCOPES);
+export const modelTask = pgEnum('model_task', MODEL_TASK_NAMES);
+export const consoleItemKind = pgEnum('console_item_kind', [
+  'model_validation_failed',
+  'extraction_failed',
+  'draft_failed',
+  'publication_failed',
+  'channel_disconnected',
+  'unknown_number',
+  'handoff',
+]);
+export const consoleItemStatus = pgEnum('console_item_status', ['open', 'resolved']);
+
+// Column helpers
+
+const tz = (name: string) => timestamp(name, { withTimezone: true });
+const id = () => uuid('id').primaryKey().defaultRandom();
+const createdAt = () => tz('created_at').notNull().defaultNow();
+const updatedAt = () => tz('updated_at').notNull().defaultNow();
+const businessId = () =>
+  uuid('business_id')
+    .notNull()
+    .references(() => business.id, { onDelete: 'cascade' });
+const optionalBusinessId = () => uuid('business_id').references(() => business.id, { onDelete: 'cascade' });
+
+// Tables
+
+export const business = pgTable(
+  'business',
+  {
+    id: id(),
+    status: businessStatus('status').notNull().default('onboarding'),
+    name: text('name').notNull(),
+    /** BusinessProfile once active; BusinessProfileDraft during onboarding. */
+    profile: jsonb('profile').notNull().default({}),
+    style: visualStyle('style'),
+    approverPhone: text('approver_phone').notNull().unique(),
+    timezone: text('timezone').notNull().default('Asia/Jerusalem'),
+    cancelledAt: tz('cancelled_at'),
+    dataDeleteAfter: tz('data_delete_after'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.id)],
+);
+
+export const channelConnection = pgTable(
+  'channel_connection',
+  {
+    id: id(),
+    businessId: businessId(),
+    network: network('network').notNull(),
+    provider: text('provider').notNull(),
+    providerAccountId: text('provider_account_id'),
+    status: channelConnectionStatus('status').notNull().default('pending'),
+    verifiedAt: tz('verified_at'),
+    lastHealthCheckAt: tz('last_health_check_at'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique().on(t.businessId, t.network), tenantIsolation(t.businessId)],
+);
+
+export const conversationState = pgTable(
+  'conversation_state',
+  {
+    businessId: uuid('business_id')
+      .primaryKey()
+      .references(() => business.id, { onDelete: 'cascade' }),
+    step: conversationStep('step').notNull().default('intro'),
+    /** OpenQuestion or null. */
+    openQuestion: jsonb('open_question'),
+    handoffAt: tz('handoff_at'),
+    lastInboundAt: tz('last_inbound_at'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const message = pgTable(
+  'message',
+  {
+    id: id(),
+    /** Null for unknown numbers; those rows are visible only to app_system. */
+    businessId: optionalBusinessId(),
+    direction: messageDirection('direction').notNull(),
+    kind: messageKind('kind').notNull(),
+    provider: text('provider').notNull(),
+    providerMessageId: text('provider_message_id').notNull(),
+    fromPhone: text('from_phone').notNull(),
+    toPhone: text('to_phone').notNull(),
+    body: text('body'),
+    payload: jsonb('payload'),
+    mediaAssetIds: uuid('media_asset_ids').array().notNull().default([]),
+    processedAt: tz('processed_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.provider, t.providerMessageId), tenantIsolation(t.businessId)],
+);
+
+export const mediaAsset = pgTable(
+  'media_asset',
+  {
+    id: id(),
+    businessId: businessId(),
+    kind: mediaKind('kind').notNull(),
+    source: mediaSource('source').notNull(),
+    storagePath: text('storage_path').notNull(),
+    mimeType: text('mime_type').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    sha256: text('sha256').notNull(),
+    retainUntil: tz('retain_until'),
+    createdAt: createdAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const preferenceRule = pgTable(
+  'preference_rule',
+  {
+    id: id(),
+    businessId: businessId(),
+    scope: preferenceScope('scope').notNull(),
+    rule: text('rule').notNull(),
+    sourceMessageId: uuid('source_message_id').references(() => message.id),
+    sourcePostVersionId: uuid('source_post_version_id').references((): AnyPgColumn => postVersion.id),
+    active: boolean('active').notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const weeklyUpdate = pgTable(
+  'weekly_update',
+  {
+    id: id(),
+    businessId: businessId(),
+    weekStart: date('week_start').notNull(),
+    status: weeklyUpdateStatus('status').notNull().default('awaiting'),
+    originalText: text('original_text'),
+    transcript: text('transcript'),
+    mediaAssetIds: uuid('media_asset_ids').array().notNull().default([]),
+    /** FactExtractionOutput. */
+    extractedFacts: jsonb('extracted_facts'),
+    reminderSentAt: tz('reminder_sent_at'),
+    receivedAt: tz('received_at'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique().on(t.businessId, t.weekStart), tenantIsolation(t.businessId)],
+);
+
+export const post = pgTable(
+  'post',
+  {
+    id: id(),
+    businessId: businessId(),
+    weeklyUpdateId: uuid('weekly_update_id')
+      .notNull()
+      .references(() => weeklyUpdate.id),
+    position: integer('position').notNull(),
+    status: postStatus('status').notNull().default('planned'),
+    format: postFormat('format').notNull(),
+    /** PlannedPost. */
+    plan: jsonb('plan').notNull(),
+    currentVersionId: uuid('current_version_id').references((): AnyPgColumn => postVersion.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+/** Immutable once written; a change creates a new version. */
+export const postVersion = pgTable(
+  'post_version',
+  {
+    id: id(),
+    businessId: businessId(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => post.id, { onDelete: 'cascade' }),
+    versionNumber: integer('version_number').notNull(),
+    /** ChannelCaptions. */
+    captions: jsonb('captions').notNull(),
+    /** RenderedMedia: asset ids per network. */
+    renderedMedia: jsonb('rendered_media').notNull(),
+    /** FactSource[]. */
+    factSources: jsonb('fact_sources').notNull(),
+    factCheckPassed: boolean('fact_check_passed').notNull(),
+    contentHash: text('content_hash').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.postId, t.versionNumber), tenantIsolation(t.businessId)],
+);
+
+/** Immutable except for invalidated_at. */
+export const approval = pgTable(
+  'approval',
+  {
+    id: id(),
+    businessId: businessId(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => post.id),
+    postVersionId: uuid('post_version_id')
+      .notNull()
+      .references(() => postVersion.id),
+    approvedVersionHash: text('approved_version_hash').notNull(),
+    approverPhone: text('approver_phone').notNull(),
+    /** The button reply; unique so a tap is never counted twice. */
+    messageId: uuid('message_id')
+      .notNull()
+      .unique()
+      .references(() => message.id),
+    approvedAt: tz('approved_at').notNull(),
+    invalidatedAt: tz('invalidated_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const publication = pgTable(
+  'publication',
+  {
+    id: id(),
+    businessId: businessId(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => post.id),
+    approvalId: uuid('approval_id')
+      .notNull()
+      .references(() => approval.id),
+    /** Copied from the approval; checked again by the publishing job. */
+    approvedVersionHash: text('approved_version_hash').notNull(),
+    channelConnectionId: uuid('channel_connection_id')
+      .notNull()
+      .references(() => channelConnection.id),
+    network: network('network').notNull(),
+    scheduledFor: tz('scheduled_for').notNull(),
+    status: publicationStatus('status').notNull().default('scheduled'),
+    providerPostId: text('provider_post_id'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    publishedAt: tz('published_at'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique().on(t.approvalId, t.network), tenantIsolation(t.businessId)],
+);
+
+/** Payment card details are never stored. */
+export const subscription = pgTable(
+  'subscription',
+  {
+    id: id(),
+    businessId: businessId().unique(),
+    plan: text('plan').notNull(),
+    status: subscriptionStatus('status').notNull().default('trialing'),
+    provider: text('provider').notNull(),
+    providerCustomerId: text('provider_customer_id'),
+    providerSubscriptionId: text('provider_subscription_id'),
+    trialEndsAt: tz('trial_ends_at'),
+    currentPeriodEnd: tz('current_period_end'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const modelRun = pgTable(
+  'model_run',
+  {
+    id: id(),
+    /** Null for example-set runs; those rows are visible only to app_system. */
+    businessId: optionalBusinessId(),
+    task: modelTask('task').notNull(),
+    promptVersion: integer('prompt_version').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    attempt: integer('attempt').notNull().default(1),
+    input: jsonb('input').notNull(),
+    output: jsonb('output'),
+    valid: boolean('valid').notNull(),
+    error: text('error'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
+    durationMs: integer('duration_ms'),
+    createdAt: createdAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+export const consoleItem = pgTable(
+  'console_item',
+  {
+    id: id(),
+    /** Null for unknown numbers. */
+    businessId: optionalBusinessId(),
+    kind: consoleItemKind('kind').notNull(),
+    status: consoleItemStatus('status').notNull().default('open'),
+    referenceId: uuid('reference_id'),
+    details: jsonb('details').notNull().default({}),
+    resolvedAt: tz('resolved_at'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
+// System tables: no business_id.
+
+export const modelTaskConfig = pgTable('model_task_config', {
+  task: modelTask('task').primaryKey(),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  fallbackProvider: text('fallback_provider'),
+  fallbackModel: text('fallback_model'),
+  temperature: real('temperature').notNull(),
+  maxCostUsd: numeric('max_cost_usd', { precision: 10, scale: 6 }).notNull(),
+  maxRetries: integer('max_retries').notNull().default(2),
+  activePromptVersion: integer('active_prompt_version').notNull(),
+  updatedAt: updatedAt(),
+});
+
+/** Versions are immutable. */
+export const promptTemplate = pgTable(
+  'prompt_template',
+  {
+    id: id(),
+    task: modelTask('task').notNull(),
+    version: integer('version').notNull(),
+    template: text('template').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.task, t.version)],
+);
+
+/** Single row holding the global publishing pause. */
+export const systemControl = pgTable(
+  'system_control',
+  {
+    id: integer('id').primaryKey().default(1),
+    publishingPaused: boolean('publishing_paused').notNull().default(false),
+    pausedReason: text('paused_reason'),
+    pausedAt: tz('paused_at'),
+    pausedBy: text('paused_by'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [check('system_control_single_row', sql`${t.id} = 1`)],
+);
