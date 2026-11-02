@@ -70,3 +70,11 @@ Bold graphic elements and a sense of movement.
 ## Provisional example set
 
 Until the human supplies the real set, the example set holds six fictional Hebrew businesses: a florist, a bakery, a hair salon, a falafel stand, a pet shop, and a yoga studio. Each has a complete `BusinessProfile`, one weekly update in Hebrew, and 3 placeholder photos generated in code (gradients with simple shapes), so no third-party images enter the repository. Every entry is marked `provisional: true`.
+
+Each entry also states its expected outcomes, which the runner and later prompt evaluation compare against (decided 2026-11-02, queued for the human under H3):
+
+- **Facts:** the `fact_extraction` output the weekly update should produce (`id`, `type`, `value`, `sourceQuote`), where every `sourceQuote` appears verbatim in the update.
+- **Missing details:** what the agent should ask the owner about, empty when nothing is missing.
+- **Overlay texts:** the cover texts to render, each within the overlay text limit above.
+
+The file layout is described in `fixtures/example-set/README.md`.

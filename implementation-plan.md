@@ -48,6 +48,12 @@ Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the
 
 The tooling choices and operational defaults are recorded in [technical-design.md](technical-design.md) (Stack and Operational defaults), and the output sizes and fonts in [design-styles.md](design-styles.md). Still open: what happens to an update that arrives after the week cutoff; WP-31 raises it before it starts.
 
+Contract gaps found while building the simulators (WP-03). Each is a contract change that the named package proposes in the docs, and queues for the human, before its implementation:
+
+- `ModelProvider` requests carry no task name; the simulator matches the task by its output JSON Schema (`z.toJSONSchema` of the task's output). WP-21 either keeps that derivation in one shared helper or adds a task field.
+- `PaymentProvider` has no way to learn a `providerSubscriptionId` after payment (no webhook verification or lookup). WP-42 adds one.
+- There is no typed error for sending outside the 24-hour WhatsApp window. WP-22 adds one, and WP-35 tests it.
+
 ## Work packages
 
 Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the manager edits the status column.
