@@ -116,3 +116,5 @@ The provider returns raw output. Only the model layer validates it against the t
 | Method | Request | Response |
 | --- | --- | --- |
 | `render` | `style`, `format`, `photoUrls`, `overlayText`, optional `logoUrl`, `brandColors`, `networks` | Per network, a list of files (several for a carousel), each with `storagePath`, `width`, `height`, `mimeType` |
+
+The business context a render needs but `RenderRequest` does not carry (the business name for the no-logo fallback, the business languages for text direction, the storage prefix, and the `image_review` crops) is bound when the renderer is created: the design module's `forBusiness()` returns a `TemplateRenderer` for one business. A single post with more than one photo is rejected. Decided 2026-11-02 and queued for the human; moving these fields onto `RenderRequest` later is a contract change.
