@@ -21,6 +21,16 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
 
+## Operating mode
+
+Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the loop, and the brief below until the human changes it.
+
+- **Gates no longer block, with two exceptions.** A gate that spends real money (a paid vendor plan, a real payment) or deploys to any cloud environment (WP-44, anything that creates cloud resources) still waits for the human. Every other gate becomes a queued review: the work goes ahead, and the item is added to [human-review-queue.md](human-review-queue.md) with the PR, what to look at, and the gate it stands in for. The human reviews the queue at their own pace; a finding becomes a fix package.
+- **Human-owned tests (H5).** Until the human writes them, a test-author session that does not implement writes the approval and publishing tests on their own branch, the reviewer checks them against the docs, and they merge before the implementing session starts. The implementing session may not change them; a test it believes is wrong is reported, not edited. The tests are queued for the human.
+- **Human-authored content (H2, H3, H6, H7).** Sessions draft the Hebrew copy, templates, prompts, styles, and example set from the docs, mark them provisional, and queue them for the human.
+- **Reviewer session.** One long-running reviewer session, separate from every developer session, takes over loop steps 4 to 6: it verifies each pull request, reviews it by area, queues human-review items, approves, and squash-merges it into main. It never writes product code beyond trivial fixes it states in the PR.
+- **Vendor accounts.** Packages that need vendor test accounts or keys (WP-41) stay blocked until the human provides them, since agents do not create accounts.
+
 ## Human gates
 
 | Gate | What the human provides or approves | Blocks | State |
@@ -46,7 +56,7 @@ Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the mana
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| WP-01 | Guardrails: module folders under `src/modules/<name>/` with a public `index.ts`, import rules (vendors only in adapters, no cross-module internals, no DB access without a business context helper), CI workflow | Core | none | CI fails on a seeded boundary violation and passes on main | todo |
+| WP-01 | Guardrails: module folders under `src/modules/<name>/` with a public `index.ts`, import rules (vendors only in adapters, no cross-module internals, no DB access without a business context helper), CI workflow | Core | none | CI fails on a seeded boundary violation and passes on main | in_progress |
 | WP-02 | End-to-end harness: Vitest `e2e` project, the in-process app wiring with simulators, and the HTML report writer | Core | WP-01 | A sample test produces a report the human can open | todo |
 | WP-03 | Simulators for `MessagingProvider`, `PublishingProvider`, `ModelProvider` (scripted fixtures per task), and `PaymentProvider`, plus shared contract tests that later run against real adapters | Parallel | WP-01 | Contract tests pass against every simulator | todo |
 
@@ -100,9 +110,9 @@ The manager is one long-running Claude session that owns this plan. It does not 
 1. **Pick.** List packages whose dependencies are `done` and whose gates have passed. Take at most one core package if no core session is running, and fill free parallel slots (up to three) with parallel packages that touch disjoint files.
 2. **Start.** Start one session per package in its own worktree with the brief below. Set the package to `in_progress`.
 3. **Wait.** Do nothing until a session reports. Never poll.
-4. **Verify.** On a report: run `npm run check` on the branch, open the end-to-end report, and start a separate review agent that did not write the code, split by area (security, tenant isolation, failure cases) where the package touches them.
-5. **Gate.** If the package touches a human-review area, or adds or changes an end-to-end test, show the human the diff summary, the test, and its report, and wait for approval. Set the package to `review`.
-6. **Merge.** After approval, merge the branch into main, set the package to `done`, and commit the status change.
+4. **Verify.** (Reviewer session under the [operating mode](#operating-mode).) On a report: run `npm run check` on the branch, open the end-to-end report, and start a separate review agent that did not write the code, split by area (security, tenant isolation, failure cases) where the package touches them.
+5. **Gate.** If the package touches a human-review area, or adds or changes an end-to-end test, show the human the diff summary, the test, and its report. Under the operating mode, add an entry to the review queue instead of waiting, unless the gate spends money or deploys. Set the package to `review`.
+6. **Merge.** After approval (the reviewer's, under the operating mode), squash-merge the pull request into main. The manager then sets the package to `done` and commits the status change.
 7. **Repeat** from step 1. When nothing is ready and nothing is running, list the open human gates and decisions to the human and stop.
 
 A session that reports a doc gap or a failing end-to-end test is not retried blindly: the manager brings it to the human, updates the docs and their Hebrew companions once decided, and then restarts the package.
@@ -115,7 +125,7 @@ Read first: CLAUDE.md, PRD.md, technical-design.md, agentic-development.md, <con
 Scope: <files and folders this package may change>. Anything else: report, do not change.
 Steps: confirm the docs cover the work; write failing tests; implement; add or update the end-to-end test; run npm run check.
 Done when: <done criterion from the table>.
-Human gates: <gates>. Stop before implementation if human-owned tests are not approved.
+Human gates: <gates>. Under the operating mode, queue them; stop only for money or deployment, or if the human-owned tests are not yet merged.
 Deliver: branch wp/<id>-<slug>, a pull request, the end-to-end report sent with SendUserFile, and a short report of anything left open.
 ```
 
