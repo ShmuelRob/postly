@@ -22,8 +22,7 @@ Each style is a set of strict rules applied by code to fixed HTML templates. Not
 - With brand colors, the first color replaces the style's accent color and the second replaces its secondary color. Text color is recomputed so contrast stays at least 4.5:1 (WCAG AA).
 - Without a logo, the business name is set as text in the style's headline font at the logo position.
 - The logo is scaled to fit a 160 x 160 box and never upscaled beyond its native size.
-- Explicit line breaks (`
-`) in overlay text: Dynamic keeps them; Clean and Warm currently collapse them into a space. Keeping them in every style is a follow-up.
+- Explicit line breaks (`\n`) in overlay text: Dynamic keeps them; Clean and Warm currently collapse them into a space. Keeping them in every style is a follow-up.
 - Graphic elements (accent bars, stripes) have no contrast rule yet, so a pale brand color can make them faint. Open for the final spec.
 
 ## Styles
