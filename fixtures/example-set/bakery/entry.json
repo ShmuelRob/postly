@@ -1,0 +1,58 @@
+{
+  "provisional": true,
+  "profile": {
+    "name": "מאפיית הבוקר",
+    "field": "מאפייה שכונתית",
+    "mainProducts": ["לחמים", "חלות", "בורקסים", "עוגות יום הולדת"],
+    "location": {
+      "city": "חיפה",
+      "address": "רחוב מסדה 8, חיפה",
+      "hours": "א׳-ה׳ 6:30-18:00, ו׳ 6:00-14:00",
+      "fulfillment": ["pickup", "delivery"]
+    },
+    "targetAudience": "משפחות ועובדים בשכונת הדר שקונים מאפה טרי בבוקר",
+    "differentiator": "אופים במקום מארבע בבוקר, בלי חומרים משמרים",
+    "languages": ["he"],
+    "tone": { "register": "warm", "address": "plural", "emoji": true },
+    "contentTypes": ["products", "promotions", "behind_the_scenes"],
+    "formats": ["single"],
+    "channels": ["instagram", "facebook"],
+    "postsPerWeek": 4,
+    "schedule": { "publishOnShabbatAndHolidays": false, "days": [0, 1, 3, 5], "hours": ["07:30"] },
+    "brand": { "colors": ["#B5651D", "#F5DEB3"] },
+    "style": "clean",
+    "callToAction": "order_online",
+    "contact": { "phone": "+97248000002", "website": "https://bakery.example.com", "orderUrl": "https://bakery.example.com/order" },
+    "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
+    "fixedHashtags": ["#מאפייתהבוקר"],
+    "approverPhone": "+972500000102"
+  },
+  "photos": [
+    {
+      "file": "photos/challah.svg",
+      "description": "Sweet raisin challah on a wooden board (placeholder: circles)",
+      "placeholder": { "width": 1080, "height": 1350, "colors": ["#F5DEB3", "#B5651D", "#FFF8EC"], "motif": "circles", "seed": 201 }
+    },
+    {
+      "file": "photos/bourekas-tray.svg",
+      "description": "Tray of bourekas fresh from the oven (placeholder: stripes)",
+      "placeholder": { "width": 1600, "height": 1200, "colors": ["#E9C46A", "#8C4A1A", "#FFF1D6"], "motif": "stripes", "seed": 202 }
+    },
+    {
+      "file": "photos/oven.svg",
+      "description": "Baker at the oven early in the morning (placeholder: arches)",
+      "placeholder": { "width": 1200, "height": 1200, "colors": ["#3D2B1F", "#D98E04", "#FFE3A3"], "motif": "arches", "seed": 203 }
+    }
+  ],
+  "expected": {
+    "facts": [
+      { "id": "challah", "type": "product", "value": "חלה מתוקה עם צימוקים", "sourceQuote": "חלה מתוקה עם צימוקים" },
+      { "id": "challah-price", "type": "price", "value": "28 ₪", "sourceQuote": "חלה מתוקה עם צימוקים ב-28 ₪" },
+      { "id": "bourekas-deal", "type": "promotion", "value": "3 בורקסים ב-20 ₪", "sourceQuote": "3 בורקסים ב-20 ₪" },
+      { "id": "deal-day", "type": "date", "value": "יום שישי", "sourceQuote": "ביום שישי מבצע" },
+      { "id": "order-phone", "type": "phone", "value": "04-8000002", "sourceQuote": "בטלפון 04-8000002" }
+    ],
+    "missingDetails": [],
+    "overlayTexts": ["חלה מתוקה עם צימוקים", "3 בורקסים ב-20 ₪"]
+  }
+}

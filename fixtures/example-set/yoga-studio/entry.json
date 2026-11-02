@@ -1,0 +1,57 @@
+{
+  "provisional": true,
+  "profile": {
+    "name": "סטודיו נשימה",
+    "field": "סטודיו ליוגה",
+    "mainProducts": ["שיעורי יוגה", "יוגה להריון", "סדנאות נשימה"],
+    "location": {
+      "city": "רחובות",
+      "address": "רחוב הדקל 22, רחובות",
+      "hours": "א׳-ה׳ 7:00-21:30, ו׳ 8:00-12:00",
+      "fulfillment": ["pickup"]
+    },
+    "targetAudience": "נשים וגברים בכל הגילאים שמחפשים תרגול רגוע בקבוצות קטנות",
+    "differentiator": "קבוצות של עד 10 מתאמנים ומורות עם הכשרה ביוגה טיפולית",
+    "languages": ["he"],
+    "tone": { "register": "warm", "address": "plural", "emoji": false },
+    "contentTypes": ["products", "tips", "testimonials"],
+    "formats": ["single"],
+    "channels": ["instagram", "facebook"],
+    "postsPerWeek": 2,
+    "schedule": { "publishOnShabbatAndHolidays": false, "days": [0, 3], "hours": ["08:00"] },
+    "brand": { "colors": ["#4A6B5D", "#E9DCC9"] },
+    "style": "warm",
+    "callToAction": "message",
+    "contact": { "whatsapp": "+972500000106", "website": "https://yoga.example.com" },
+    "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים", "הבטחות רפואיות"],
+    "fixedHashtags": ["#סטודיונשימה"],
+    "approverPhone": "+972500000106"
+  },
+  "photos": [
+    {
+      "file": "photos/prenatal-class.svg",
+      "description": "Prenatal yoga class on mats (placeholder: arches)",
+      "placeholder": { "width": 1080, "height": 1350, "colors": ["#E9DCC9", "#4A6B5D", "#FFFFFF"], "motif": "arches", "seed": 601 }
+    },
+    {
+      "file": "photos/studio.svg",
+      "description": "Empty studio in morning light (placeholder: rings)",
+      "placeholder": { "width": 1600, "height": 1200, "colors": ["#F6EFE6", "#A3B18A", "#4A6B5D"], "motif": "rings", "seed": 602 }
+    },
+    {
+      "file": "photos/mats.svg",
+      "description": "Rolled mats and blocks (placeholder: petals)",
+      "placeholder": { "width": 1200, "height": 1200, "colors": ["#A3B18A", "#344E41", "#E9DCC9"], "motif": "petals", "seed": 603 }
+    }
+  ],
+  "expected": {
+    "facts": [
+      { "id": "prenatal-class", "type": "product", "value": "שיעור יוגה לנשים בהריון", "sourceQuote": "שיעור יוגה לנשים בהריון" },
+      { "id": "class-time", "type": "time", "value": "ימי שני 18:30", "sourceQuote": "בימי שני ב-18:30" },
+      { "id": "punch-card-price", "type": "price", "value": "550 ₪ ל-10 שיעורים", "sourceQuote": "כרטיסייה של 10 שיעורים ב-550 ₪" },
+      { "id": "testimonial", "type": "testimonial", "value": "אחרי חודש אצלכם הגב שלי כמו חדש", "sourceQuote": "אחרי חודש אצלכם הגב שלי כמו חדש" }
+    ],
+    "missingDetails": ["מתי מתחיל השיעור הראשון של יוגה להריון"],
+    "overlayTexts": ["יוגה להריון בימי שני", "10 שיעורים ב-550 ₪"]
+  }
+}
