@@ -56,16 +56,16 @@ Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the mana
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| WP-01 | Guardrails: module folders under `src/modules/<name>/` with a public `index.ts`, import rules (vendors only in adapters, no cross-module internals, no DB access without a business context helper), CI workflow | Core | none | CI fails on a seeded boundary violation and passes on main | in_progress |
-| WP-02 | End-to-end harness: Vitest `e2e` project, the in-process app wiring with simulators, and the HTML report writer | Core | WP-01 | A sample test produces a report the human can open | todo |
-| WP-03 | Simulators for `MessagingProvider`, `PublishingProvider`, `ModelProvider` (scripted fixtures per task), and `PaymentProvider`, plus shared contract tests that later run against real adapters | Parallel | WP-01 | Contract tests pass against every simulator | todo |
+| WP-01 | Guardrails: module folders under `src/modules/<name>/` with a public `index.ts`, import rules (vendors only in adapters, no cross-module internals, no DB access without a business context helper), CI workflow | Core | none | CI fails on a seeded boundary violation and passes on main | done |
+| WP-02 | End-to-end harness: Vitest `e2e` project, the in-process app wiring with simulators, and the HTML report writer | Core | WP-01 | A sample test produces a report the human can open | in_progress |
+| WP-03 | Simulators for `MessagingProvider`, `PublishingProvider`, `ModelProvider` (scripted fixtures per task), and `PaymentProvider`, plus shared contract tests that later run against real adapters | Parallel | WP-01 | Contract tests pass against every simulator | in_progress |
 
 ### Milestone 1: design engine and Hebrew example set
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| WP-10 | Example-set format and the provisional set: fixture layout, loader, Zod schema for entries, six fictional businesses, code-generated placeholder photos | Parallel | WP-01 | Loader validates every provisional entry | todo |
-| WP-11 | Design engine core: `TemplateRenderer` with Playwright and sharp, RTL layout, crop, logo and caption placement, per-network output | Parallel | WP-01, H2 (provisional) | Renders a test fixture in every style and network, checked by snapshot | todo |
+| WP-10 | Example-set format and the provisional set: fixture layout, loader, Zod schema for entries, six fictional businesses, code-generated placeholder photos | Parallel | WP-01 | Loader validates every provisional entry | in_progress |
+| WP-11 | Design engine core: `TemplateRenderer` with Playwright and sharp, RTL layout, crop, logo and caption placement, per-network output | Parallel | WP-01, H2 (provisional) | Renders a test fixture in every style and network, checked by snapshot | in_progress |
 | WP-12 | The three style templates (one session per style once WP-11 is merged) | Parallel | WP-11, H2 | Each style renders the example set within its rules | todo |
 | WP-13 | Example-set runner: renders every example in every style into a screenshot gallery report | Parallel | WP-10, WP-12 | The human reviews the gallery on the provisional set; milestone 1 closes once it passes on the final styles and the real set | todo |
 
