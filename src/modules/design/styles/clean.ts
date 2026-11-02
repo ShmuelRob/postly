@@ -1,5 +1,5 @@
 // Clean (design-styles.md): bold typography, plenty of white space, few elements.
-// Minimal template for WP-11; WP-12 owns the final rules.
+// Rules are asserted on the laid-out page in clean.test.ts, including the example set.
 
 import { ensureContrast } from '../color.js';
 import { fontCss } from '../fonts.js';
