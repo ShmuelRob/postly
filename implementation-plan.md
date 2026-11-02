@@ -106,6 +106,7 @@ Each flow ends with an end-to-end test from an inbound WhatsApp message to what 
 | WP-42 | Billing: placeholder `PaymentProvider`, payment link in WhatsApp, subscription machine | Parallel | WP-22, WP-23 | End-to-end: payment link sent, status changes applied | todo |
 | WP-43 | Cancellation and data deletion schedule, monthly report | Core | WP-34 | End-to-end: cancellation disconnects channels immediately | todo |
 | WP-44 | Deployment: one image, web and worker on Cloud Run, Cloud SQL, Cloud Storage, secret manager, monitoring | Parallel | WP-22, WP-23, H8 | Staging runs the end-to-end suite with test accounts | todo |
+| WP-45 | Local playground (React, local only, never deployed and kept out of the production image): a WhatsApp-style chat where the human plays the owner through the messaging simulator (text, voice notes as audio files, photos, reply buttons), a mock Instagram and Facebook feed showing what reached the publishing simulator, and a state panel (business, conversation and post states, the review queue). Starts with scripted simulator data; each flow becomes playable as WP-30 to WP-34 land | Parallel | WP-02, WP-03, WP-22, WP-23 (WP-30 to close) | The human can run `npm run playground` and play onboarding end to end on simulators, covered by an end-to-end test that drives the UI | todo |
 
 ## Session manager
 
@@ -142,4 +143,4 @@ Waves are what can run together. The core lane and the parallel lane run side by
 1. WP-01 alone, since every package builds on its folders and rules.
 2. Core lane: WP-02, then WP-20, WP-21, WP-22, WP-23. Parallel lane, at the same time: WP-03, WP-10, and WP-11.
 3. Parallel lane: the three style sessions of WP-12, then WP-13. This produces the first gallery for review.
-4. Phase 3 in order on the core lane, with WP-40 and WP-41 on the parallel lane alongside it.
+4. Phase 3 in order on the core lane, with WP-45, WP-40, and WP-41 on the parallel lane alongside it. WP-45 comes first, so the human can test each flow locally as it lands.
