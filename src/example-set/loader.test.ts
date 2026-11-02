@@ -207,7 +207,8 @@ describe('the provisional example set', () => {
       for (const photo of entry.photos) {
         const svg = placeholderPhotoSvg(photo.placeholder!);
         if (process.env.UPDATE_PLACEHOLDERS === '1') await writeFile(photo.path, svg);
-        expect(await readFile(photo.path, 'utf8'), photo.path).toBe(svg);
+        // Line endings may differ on a Windows checkout.
+        expect((await readFile(photo.path, 'utf8')).replace(/\r\n/g, '\n'), photo.path).toBe(svg);
       }
     }
   });
