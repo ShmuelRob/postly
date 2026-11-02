@@ -8,9 +8,10 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "lint:boundaries": "depcruise src --config .dependency-cruiser.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run test",
+    "check": "npm run typecheck && npm run lint:boundaries && npm run test",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
@@ -18,7 +19,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@swc/core": "1.16.18",
     "@types/node": "^26.6.6",
+    "dependency-cruiser": "18.7.0",
     "drizzle-kit": "^0.31.11",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
