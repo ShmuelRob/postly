@@ -22,6 +22,9 @@ Each style is a set of strict rules applied by code to fixed HTML templates. Not
 - With brand colors, the first color replaces the style's accent color and the second replaces its secondary color. Text color is recomputed so contrast stays at least 4.5:1 (WCAG AA).
 - Without a logo, the business name is set as text in the style's headline font at the logo position.
 - The logo is scaled to fit a 160 x 160 box and never upscaled beyond its native size.
+- Overlay text keeps explicit line breaks (`
+`) in every style.
+- Graphic elements (accent bars, stripes) have no contrast rule yet, so a pale brand color can make them faint. Open for the final spec.
 
 ## Styles
 
@@ -37,7 +40,8 @@ Bold typography, plenty of white space, few elements.
 | Overlay size | 72 px, minimum 52 px |
 | Frame | None |
 | Accent | A 12 px accent bar on the band's start edge |
-| Logo | Band, end side, vertically centered |
+| Logo | Band, end side, vertically centered; on carousel photo slides, the bottom end corner. Without a logo, the name sits on a background-colored chip |
+| Unused for now | The second brand color and Heebo 400; there is no secondary text yet |
 
 ### Warm
 
@@ -50,8 +54,9 @@ Earth tones and textures.
 | Layout | Photo inset with the frame; the overlay text sits on a paper-texture card overlapping the bottom of the photo |
 | Overlay size | 64 px, minimum 46 px |
 | Frame | 32 px background-colored margin with 24 px rounded photo corners |
-| Texture | A subtle paper grain over the background, stored as a repository asset |
-| Logo | Top corner on the start side, on a background-colored circle |
+| Card | `#FBF6EE`, 16 px corner radius; the secondary color tints a short rule and the card edge |
+| Texture | A subtle paper grain over the background, generated in code (SVG noise), so no image asset is needed |
+| Logo | Top corner on the start side, on a 232 px background-colored circle |
 
 ### Dynamic
 
@@ -64,7 +69,8 @@ Bold graphic elements and a sense of movement.
 | Layout | Full-bleed photo; the overlay text sits on an accent-colored band rotated by -4 degrees across the lower third |
 | Overlay size | 80 px, minimum 56 px |
 | Frame | None |
-| Graphic elements | Two diagonal stripes in the secondary color on the opposite corner from the band |
+| Graphic elements | Two diagonal stripes in the secondary color in the top start corner (the logo takes the top end) |
+| Unused for now | Rubik 500; there is no secondary text yet |
 | Logo | Top corner on the end side, white |
 
 ## Provisional example set
