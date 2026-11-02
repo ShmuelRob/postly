@@ -37,7 +37,7 @@ export const dynamic: StyleTemplate = {
       .band { position: absolute; top: ${Math.round(canvas.height * 0.64)}px; left: ${-canvas.width * 0.1}px; width: ${canvas.width * 1.2}px;
         padding: 34px ${canvas.width * 0.1 + safeArea + ROTATION_MARGIN}px; background: ${palette.accent};
         transform: rotate(${BAND_ANGLE}deg); box-shadow: 0 16px 0 ${shadow}; }
-      .overlay { ${fontCss(this.fonts.headline)} line-height: 1.1; color: ${text}; text-align: start; }
+      .overlay { ${fontCss(this.fonts.headline)} line-height: 1.1; color: ${text}; text-align: start; white-space: pre-line; }
       .stripe { position: absolute; width: 520px; height: 34px; background: ${palette.secondary ?? palette.accent};
         transform: rotate(${stripeAngle}deg); }
       .stripe-1 { top: 120px; inset-inline-start: -150px; }
