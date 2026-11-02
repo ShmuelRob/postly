@@ -1,0 +1,58 @@
+{
+  "provisional": true,
+  "profile": {
+    "name": "פרחי השקד",
+    "field": "חנות פרחים",
+    "mainProducts": ["זרי פרחים", "עציצים", "סידורי פרחים לאירועים"],
+    "location": {
+      "city": "כפר סבא",
+      "address": "רחוב הנרקיס 12, כפר סבא",
+      "hours": "א׳-ה׳ 9:00-19:00, ו׳ 8:00-14:00",
+      "fulfillment": ["pickup", "delivery"]
+    },
+    "targetAudience": "תושבי כפר סבא והסביבה שקונים פרחים לבית ולמתנה",
+    "differentiator": "פרחים טריים שמגיעים כל בוקר, וזרים שמורכבים במקום לפי בקשה",
+    "languages": ["he"],
+    "tone": { "register": "warm", "address": "plural", "emoji": true },
+    "contentTypes": ["products", "promotions", "holidays_and_events"],
+    "formats": ["single", "carousel"],
+    "channels": ["instagram", "facebook"],
+    "postsPerWeek": 3,
+    "schedule": { "publishOnShabbatAndHolidays": false, "days": [0, 2, 4], "hours": ["10:00", "18:00"] },
+    "brand": { "colors": ["#7A3E5D", "#E8B4C8"] },
+    "style": "warm",
+    "callToAction": "message",
+    "contact": { "phone": "+97297000001", "whatsapp": "+972500000101" },
+    "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
+    "fixedHashtags": ["#פרחיהשקד", "#כפרסבא"],
+    "approverPhone": "+972500000101"
+  },
+  "photos": [
+    {
+      "file": "photos/peonies.svg",
+      "description": "Bouquet of pink peonies (placeholder: petals)",
+      "placeholder": { "width": 1080, "height": 1350, "colors": ["#F7C6D9", "#7A3E5D", "#FFF4F8"], "motif": "petals", "seed": 101 }
+    },
+    {
+      "file": "photos/shop-window.svg",
+      "description": "Shop window with buckets of flowers (placeholder: dots)",
+      "placeholder": { "width": 1600, "height": 1200, "colors": ["#FCE9D4", "#C97B84", "#FFFFFF"], "motif": "dots", "seed": 102 }
+    },
+    {
+      "file": "photos/arrangement.svg",
+      "description": "Table arrangement seen from above (placeholder: rings)",
+      "placeholder": { "width": 1200, "height": 1200, "colors": ["#E8B4C8", "#5C2A44", "#FDF0F5"], "motif": "rings", "seed": 103 }
+    }
+  ],
+  "expected": {
+    "facts": [
+      { "id": "peonies", "type": "product", "value": "זר אדמוניות ורודות מהולנד", "sourceQuote": "הגיעו אדמוניות ורודות מהולנד" },
+      { "id": "peonies-price", "type": "price", "value": "120 ₪", "sourceQuote": "זר אדמוניות ב-120 ₪" },
+      { "id": "bouquet-discount", "type": "discount_percent", "value": "15%", "sourceQuote": "15% הנחה על כל זרי הפרחים" },
+      { "id": "discount-days", "type": "date_range", "value": "יום ראשון עד יום שלישי", "sourceQuote": "מיום ראשון עד יום שלישי" },
+      { "id": "thursday-hours", "type": "time", "value": "ביום חמישי עד 20:00", "sourceQuote": "ביום חמישי אנחנו פתוחים עד 20:00" }
+    ],
+    "missingDetails": [],
+    "overlayTexts": ["אדמוניות טריות מהולנד", "15% הנחה\nעל כל הזרים"]
+  }
+}

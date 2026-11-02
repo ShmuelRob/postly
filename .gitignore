@@ -25,3 +25,6 @@ lerna-debug.log*
 
 # Rendered output from the design snapshot tests
 /test-output
+
+# End-to-end reports
+/reports

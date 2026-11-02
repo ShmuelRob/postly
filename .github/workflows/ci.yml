@@ -26,3 +26,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # Typecheck, module boundary rules, and all tests.
       - run: npm run check
+      # The end-to-end report (WhatsApp transcript, rendered images, publishing log), pass or fail.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-report
+          path: reports/e2e/
+          if-no-files-found: ignore

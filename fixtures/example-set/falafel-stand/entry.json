@@ -1,0 +1,58 @@
+{
+  "provisional": true,
+  "profile": {
+    "name": "הפלאפל של אבי",
+    "field": "דוכן פלאפל",
+    "mainProducts": ["פלאפל בפיתה", "סביח", "צ׳יפס"],
+    "location": {
+      "city": "באר שבע",
+      "address": "רחוב העצמאות 3, באר שבע",
+      "hours": "א׳-ה׳ 10:00-22:00, ו׳ 10:00-14:00",
+      "fulfillment": ["pickup"]
+    },
+    "targetAudience": "סטודנטים ועובדים באזור העיר העתיקה",
+    "differentiator": "פלאפל מטוגן מול העיניים וסלטים שמכינים כל בוקר",
+    "languages": ["he"],
+    "tone": { "register": "humorous", "address": "plural", "emoji": true },
+    "contentTypes": ["products", "promotions", "behind_the_scenes"],
+    "formats": ["single"],
+    "channels": ["instagram", "facebook"],
+    "postsPerWeek": 5,
+    "schedule": { "publishOnShabbatAndHolidays": false, "days": [], "hours": ["11:30"] },
+    "brand": { "colors": ["#E85D04", "#FFBA08"] },
+    "style": "dynamic",
+    "callToAction": "visit",
+    "contact": { "phone": "+972500000104" },
+    "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
+    "fixedHashtags": ["#הפלאפלשלאבי", "#באר_שבע"],
+    "approverPhone": "+972500000104"
+  },
+  "photos": [
+    {
+      "file": "photos/sabich.svg",
+      "description": "Sabich in pita, close-up (placeholder: circles)",
+      "placeholder": { "width": 1080, "height": 1350, "colors": ["#FFBA08", "#9D0208", "#FFF3D1"], "motif": "circles", "seed": 401 }
+    },
+    {
+      "file": "photos/fryer.svg",
+      "description": "Falafel balls in the fryer (placeholder: dots)",
+      "placeholder": { "width": 1600, "height": 1200, "colors": ["#6A3E00", "#E85D04", "#FFD166"], "motif": "dots", "seed": 402 }
+    },
+    {
+      "file": "photos/stand.svg",
+      "description": "The stand at lunchtime (placeholder: stripes)",
+      "placeholder": { "width": 1200, "height": 1200, "colors": ["#2B9348", "#FFBA08", "#FFFFFF"], "motif": "stripes", "seed": 403 }
+    }
+  ],
+  "expected": {
+    "facts": [
+      { "id": "sabich", "type": "product", "value": "סביח בפיתה", "sourceQuote": "סביח חדש בפיתה" },
+      { "id": "sabich-price", "type": "price", "value": "22 ₪", "sourceQuote": "סביח חדש בפיתה ב-22 ₪" },
+      { "id": "lunch-deal", "type": "promotion", "value": "פלאפל בפיתה ושתייה ב-25 ₪", "sourceQuote": "פלאפל בפיתה ושתייה ב-25 ₪" },
+      { "id": "lunch-hours", "type": "time", "value": "12:00-15:00", "sourceQuote": "בין 12:00 ל-15:00" },
+      { "id": "friday-close", "type": "time", "value": "ביום שישי עד 14:00", "sourceQuote": "ביום שישי סוגרים ב-14:00" }
+    ],
+    "missingDetails": [],
+    "overlayTexts": ["סביח חדש בפיתה!", "פלאפל ושתייה ב-25 ₪"]
+  }
+}
