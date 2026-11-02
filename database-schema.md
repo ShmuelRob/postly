@@ -19,6 +19,11 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 - The `app_system` role bypasses RLS. It is used only for: resolving an inbound phone number to a business, the scheduler that fans jobs out per business, the console, and the example-set runner. Every other code path uses `app_user`.
 - Rows with a null `business_id` (messages from unknown numbers, example-set model runs) are visible only to `app_system`.
 - Tables without `business_id` are system tables and are not readable by `app_user` beyond what the model layer and publishing job need (`model_task_config`, `prompt_template`, `system_control`).
+- Both roles are separate logins created by the first migration, each with its own connection pool; their passwords are set outside migrations. Neither is a member of the other or owns any table, so no statement inside a transaction can switch to a stronger role. A separate migration role owns the tables, and every business-owned table has `FORCE ROW LEVEL SECURITY`, so the owner is filtered too.
+- `app_user` may read, insert, update, and delete business-owned tables, with two exceptions that enforce immutability: it may only insert `post_version`, and on `approval` it may only insert and update `invalidated_at`. It may only read the system tables. `app_system` may do all four on every table.
+- Every new table needs explicit grants and, if business-owned, `FORCE ROW LEVEL SECURITY` in its migration. There are no default privileges, so a table without grants fails closed.
+- In code, `withBusiness(businessId, fn)` from `src/db/index.ts` opens an `app_user` transaction with `app.business_id` set, and `withSystem(purpose, fn)` an `app_system` one, where `purpose` names one of the four uses above. No other way to query leaves `src/db/`.
+- **Accepted risk:** Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, and `discard` anywhere outside `src/db/`.
 
 ## Enums
 

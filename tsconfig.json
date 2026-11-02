@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test/e2e", "*.config.ts"]
+  "include": ["src", "test/e2e", "test/db", "*.config.ts"]
 }

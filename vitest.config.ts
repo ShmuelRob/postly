@@ -9,7 +9,16 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
-          exclude: ['test/**/*.e2e.test.ts', 'test/fixtures/**'],
+          exclude: ['test/**/*.e2e.test.ts', 'test/fixtures/**', '**/*.db.test.ts'],
+        },
+      },
+      {
+        test: {
+          // Against a real Postgres, started once per run by test/db/global-setup.ts.
+          name: 'db',
+          include: ['src/**/*.db.test.ts'],
+          globalSetup: ['./test/db/global-setup.ts'],
+          hookTimeout: 120_000,
         },
       },
       {

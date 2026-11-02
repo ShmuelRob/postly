@@ -33,7 +33,8 @@ function cruise(cwd: string): CruiseResult {
   return JSON.parse(run.stdout) as CruiseResult;
 }
 
-describe('module boundaries', () => {
+// Each cruise takes over a second, and more when the db and design projects run alongside.
+describe('module boundaries', { timeout: 30_000 }, () => {
   it('flags every seeded violation and nothing else', () => {
     const result = cruise(`${repoRoot}test/fixtures/boundaries`);
     const found = result.summary.violations
