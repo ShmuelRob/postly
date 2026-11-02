@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint:boundaries": "depcruise src --config .dependency-cruiser.mjs",
     "test": "vitest run",
+    "test:e2e": "vitest run --project e2e",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint:boundaries && npm run test",
     "db:generate": "drizzle-kit generate"
