@@ -22,3 +22,6 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Rendered output from the design snapshot tests
+/test-output

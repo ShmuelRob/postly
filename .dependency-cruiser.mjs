@@ -13,6 +13,7 @@ const vendorPackages = {
     '@google-cloud/aiplatform',
     '@google-cloud/speech',
   ],
+  design: ['playwright', 'playwright-core', '@playwright/.+', 'sharp', '@img/.+'],
   // billing: the payment vendor is still open (technical-design.md); add it here.
 };
 
