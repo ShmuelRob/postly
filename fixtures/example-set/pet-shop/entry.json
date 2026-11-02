@@ -1,0 +1,59 @@
+{
+  "provisional": true,
+  "profile": {
+    "name": "חיות וחברים",
+    "field": "חנות לחיות מחמד",
+    "mainProducts": ["מזון לכלבים ולחתולים", "צעצועים", "ציוד טיפוח"],
+    "location": {
+      "city": "מודיעין",
+      "address": "רחוב הגפן 5, מודיעין",
+      "hours": "א׳-ה׳ 9:00-20:00, ו׳ 9:00-14:00",
+      "fulfillment": ["pickup", "delivery"]
+    },
+    "targetAudience": "בעלי כלבים וחתולים במודיעין",
+    "differentiator": "משלוח עד הבית באותו יום וייעוץ תזונה חינם",
+    "languages": ["he"],
+    "tone": { "register": "humorous", "address": "plural", "emoji": true },
+    "contentTypes": ["products", "promotions", "tips", "holidays_and_events"],
+    "formats": ["single", "carousel"],
+    "channels": ["facebook"],
+    "postsPerWeek": 3,
+    "schedule": { "publishOnShabbatAndHolidays": false, "days": [], "hours": [] },
+    "brand": { "colors": [] },
+    "style": "dynamic",
+    "callToAction": "call",
+    "contact": { "phone": "+97289000005", "whatsapp": "+972500000105" },
+    "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
+    "fixedHashtags": [],
+    "approverPhone": "+972500000105"
+  },
+  "photos": [
+    {
+      "file": "photos/dog-food.svg",
+      "description": "Stack of dog food bags (placeholder: rings)",
+      "placeholder": { "width": 1080, "height": 1350, "colors": ["#8ECAE6", "#023047", "#FFB703"], "motif": "rings", "seed": 501 }
+    },
+    {
+      "file": "photos/cat-toys.svg",
+      "description": "Basket of cat toys (placeholder: dots)",
+      "placeholder": { "width": 1600, "height": 1200, "colors": ["#FFB703", "#FB8500", "#FFFFFF"], "motif": "dots", "seed": 502 }
+    },
+    {
+      "file": "photos/adoption-day.svg",
+      "description": "Puppies at an adoption day (placeholder: petals)",
+      "placeholder": { "width": 1200, "height": 1200, "colors": ["#A7C957", "#386641", "#F2E8CF"], "motif": "petals", "seed": 503 }
+    }
+  ],
+  "expected": {
+    "facts": [
+      { "id": "dog-food", "type": "product", "value": "מזון לכלבים בשק של 12 ק״ג", "sourceQuote": "מזון לכלבים בשק של 12 ק״ג" },
+      { "id": "dog-food-price", "type": "price", "value": "189 ₪", "sourceQuote": "בשק של 12 ק״ג ב-189 ₪" },
+      { "id": "cat-toys-discount", "type": "discount_percent", "value": "20%", "sourceQuote": "20% הנחה על כל הצעצועים לחתולים" },
+      { "id": "discount-until", "type": "date", "value": "עד יום חמישי", "sourceQuote": "עד יום חמישי" },
+      { "id": "adoption-date", "type": "date", "value": "10.11", "sourceQuote": "ב-10.11 יש יום אימוץ" },
+      { "id": "adoption-hours", "type": "time", "value": "10:00-13:00", "sourceQuote": "מ-10:00 עד 13:00" }
+    ],
+    "missingDetails": [],
+    "overlayTexts": ["יום אימוץ ב-10.11", "20% הנחה\nעל צעצועים לחתולים"]
+  }
+}

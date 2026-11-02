@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+<defs>
+<linearGradient id="bg" x1="0.5" y1="0" x2="0.5" y2="1">
+<stop offset="0" stop-color="#A7C957"/>
+<stop offset="1" stop-color="#386641"/>
+</linearGradient>
+</defs>
+<rect width="1200" height="1200" fill="url(#bg)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(49.5 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(100.9 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(152.3 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(203.7 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(255.2 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(306.6 650 648.8)"/>
+<ellipse cx="650" cy="437.9" rx="94.9" ry="210.9" fill="#F2E8CF" fill-opacity="0.7" transform="rotate(358 650 648.8)"/>
+<circle cx="650" cy="648.8" r="73.8" fill="#386641"/>
+</svg>
