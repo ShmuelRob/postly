@@ -10,7 +10,7 @@ import * as schema from './schema.js';
 // or delete another business's rows on any business-owned table, and without a business context
 // nothing is visible or writable.
 
-const db = createDatabase(inject('databaseUrl'), { max: 4 });
+const db = createDatabase(inject('databaseUrls'), { max: 4 });
 afterAll(() => db.close());
 
 /** One valid row per business-owned table (except business), in insert order, for business `b`. */
@@ -147,9 +147,15 @@ it('covers every business-owned table in the schema', () => {
   expect([...businessOwned].sort()).toEqual(covered.sort());
 });
 
+/** Tables app_user may only insert into (database-schema.md: immutable rows). */
+const immutable = new Set(['post_version', 'approval']);
+/** A column app_user may update in place on each table. */
+const touchColumn = (name: string) => (name === 'approval' ? 'invalidated_at' : keyOf(name));
+
 describe.each(businessOwned)('%s', (name) => {
   const table = sql.identifier(name);
   const key = sql.identifier(keyOf(name));
+  const touch = sql.identifier(touchColumn(name));
   const owner = sql.identifier(name === 'business' ? 'id' : 'business_id');
 
   it('shows a business only its own rows', async () => {
@@ -167,38 +173,73 @@ describe.each(businessOwned)('%s', (name) => {
 
   it("cannot update or delete another business's row", async () => {
     const other = b.keys.get(name)!;
-    const updated = await db.withBusiness(a.id, (tx) =>
-      count(tx, sql`update ${table} set ${key} = ${key} where ${key} = ${other}`),
-    );
-    const deleted = await db.withBusiness(a.id, (tx) => count(tx, sql`delete from ${table} where ${key} = ${other}`));
-    expect([updated, deleted]).toEqual([0, 0]);
+    const update = () => db.withBusiness(a.id, (tx) => count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${other}`));
+    const remove = () => db.withBusiness(a.id, (tx) => count(tx, sql`delete from ${table} where ${key} = ${other}`));
+    if (name === 'post_version') await expectDbError(update(), /permission denied/);
+    else expect(await update()).toBe(0);
+    if (immutable.has(name)) await expectDbError(remove(), /permission denied/);
+    else expect(await remove()).toBe(0);
     const still = await db.withSystem('console', (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${other}`));
     expect(still).toBe(1);
   });
 
-  it('can update its own row', async () => {
+  it.skipIf(name === 'post_version')('can update its own row', async () => {
     const own = a.keys.get(name)!;
     const updated = await db.withBusiness(a.id, (tx) =>
-      count(tx, sql`update ${table} set ${key} = ${key} where ${key} = ${own}`),
+      count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${own}`),
     );
     expect(updated).toBe(1);
   });
 
   it.skipIf(name === 'business')('cannot move its own row to another business', async () => {
     const own = a.keys.get(name)!;
-    await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql`update ${table} set business_id = ${b.id} where ${key} = ${own}`)), /row-level security/);
+    await expectDbError(
+      db.withBusiness(a.id, (tx) => tx.execute(sql`update ${table} set business_id = ${b.id} where ${key} = ${own}`)),
+      immutable.has(name) ? /permission denied/ : /row-level security/,
+    );
+  });
+});
+
+describe('immutable rows', () => {
+  it('post_version cannot be updated or deleted, even by its own business', async () => {
+    const own = a.keys.get('post_version')!;
+    await expectDbError(
+      db.withBusiness(a.id, (tx) => tx.execute(sql`update post_version set content_hash = 'x' where id = ${own}`)),
+      /permission denied/,
+    );
+    await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql`delete from post_version where id = ${own}`)), /permission denied/);
+  });
+
+  it('approval allows only invalidated_at to change', async () => {
+    const own = a.keys.get('approval')!;
+    await expectDbError(
+      db.withBusiness(a.id, (tx) => tx.execute(sql`update approval set approved_version_hash = 'x' where id = ${own}`)),
+      /permission denied/,
+    );
+    const n = await db.withBusiness(a.id, (tx) => count(tx, sql`update approval set invalidated_at = now() where id = ${own}`));
+    expect(n).toBe(1);
   });
 });
 
 describe('inserts', () => {
   it('rejects a business other than the context business', async () => {
-    await expectDbError(db.withBusiness(a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972599999999' })), /row-level security/);
+    await expectDbError(
+      db.withBusiness(a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972599999999' })),
+      /row-level security/,
+    );
   });
 
   it.each(rowsFor(randomUUID()).map(([t]) => tableName(t)))('rejects a %s row for another business', async (name) => {
-    // The target business has no rows yet, so nothing but RLS can refuse the insert.
+    // The target business has no rows yet, so no unique key refuses first; the RLS message is asserted.
     const [table, row] = rowsFor(empty).find(([t]) => tableName(t) === name)!;
     await expectDbError(db.withBusiness(a.id, (tx) => tx.insert(table).values(row)), /row-level security/);
+  });
+
+  it('rejects a row with a null business_id', async () => {
+    await expectDbError(
+      db.withBusiness(a.id, (tx) => tx.insert(schema.consoleItem).values({ kind: 'unknown_number' })),
+      /row-level security/,
+    );
   });
 
   it('accepts a full set of rows for the context business', async () => {
@@ -211,24 +252,21 @@ describe('inserts', () => {
 });
 
 describe('without a business context', () => {
-  const raw = postgres(inject('databaseUrl'), { max: 1, onnotice: () => {} });
+  // The app_user login itself, with no withBusiness() around it.
+  const raw = postgres(inject('databaseUrls').businessUrl, { max: 1, onnotice: () => {} });
   afterAll(() => raw.end());
 
   it.each(businessOwned)('sees no %s rows', async (name) => {
-    const rows = await raw.begin(async (tx) => {
-      await tx`set local role app_user`;
-      return tx`select 1 from ${tx(name)}`;
-    });
+    const rows = await raw`select 1 from ${raw(name)}`;
     expect(rows.count).toBe(0);
   });
 
-  it('cannot insert', async () => {
-    await expect(
-      raw.begin(async (tx) => {
-        await tx`set local role app_user`;
-        await tx`insert into console_item (business_id, kind) values (${a.id}, 'handoff')`;
-      }),
-    ).rejects.toThrow(/row-level security/);
+  it('cannot insert, update, or delete', async () => {
+    await expect(raw`insert into console_item (business_id, kind) values (${a.id}, 'handoff')`).rejects.toThrow(
+      /row-level security/,
+    );
+    expect((await raw`update console_item set status = status where business_id = ${a.id}`).count).toBe(0);
+    expect((await raw`delete from console_item where business_id = ${a.id}`).count).toBe(0);
   });
 });
 
@@ -249,19 +287,83 @@ describe('system tables', () => {
   });
 });
 
+describe('escapes from inside withBusiness()', () => {
+  const visibleOfB = (tx: Tx) => count(tx, sql`select 1 from business where id = ${b.id}`);
+
+  it('runs as app_user, which is neither a superuser nor exempt from RLS', async () => {
+    const [row] = await db.withBusiness(a.id, (tx) =>
+      tx.execute(
+        sql`select current_user as u, (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as strong`,
+      ),
+    );
+    expect(row).toEqual({ u: 'app_user', strong: false });
+  });
+
+  it('reset role stays app_user and sees nothing of B', async () => {
+    const n = await db.withBusiness(a.id, async (tx) => {
+      await tx.execute(sql`reset role`);
+      return visibleOfB(tx);
+    });
+    expect(n).toBe(0);
+  });
+
+  it.each(['set local role app_system', 'set role app_system', 'set session authorization app_system'])(
+    '%s is refused',
+    async (statement) => {
+      await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql.raw(statement))), /permission denied/);
+    },
+  );
+
+  it('set role to the table owner is refused', async () => {
+    await expectDbError(
+      db.withBusiness(a.id, async (tx) => {
+        const [row] = await tx.execute(sql`select tableowner as o from pg_tables where tablename = 'business'`);
+        await tx.execute(sql`set role ${sql.identifier(String(row!.o))}`);
+      }),
+      /permission denied/,
+    );
+  });
+
+  it('a session-level setting left on a pooled connection does not carry into the next withBusiness()', async () => {
+    const single = createDatabase(inject('databaseUrls'), { max: 1 });
+    try {
+      await single.withBusiness(a.id, (tx) => tx.execute(sql`select set_config('app.business_id', ${b.id}, false)`));
+      const [row] = await single.withBusiness(a.id, (tx) =>
+        tx.execute(sql`select current_setting('app.business_id') as v, current_user as u`),
+      );
+      expect(row).toEqual({ v: a.id, u: 'app_user' });
+      expect(await single.withBusiness(a.id, visibleOfB)).toBe(0);
+    } finally {
+      await single.close();
+    }
+  });
+
+  it('known gap: raw set_config to another business is caught only by the source guard', async () => {
+    // database-schema.md, "Accepted risk": Postgres cannot stop a role from changing its own custom
+    // settings, so src/db/raw-sql-guard.test.ts bans it outside src/db/. This pins the behavior.
+    const n = await db.withBusiness(a.id, async (tx) => {
+      await tx.execute(sql`select set_config('app.business_id', ${b.id}, true)`);
+      return visibleOfB(tx);
+    });
+    expect(n).toBe(1);
+  });
+});
+
 describe('withBusiness', () => {
   it('rejects a business id that is not a uuid', async () => {
     await expect(db.withBusiness("' or true --", async () => 1)).rejects.toThrow();
   });
 
-  it('does not leak the context into the next transaction on the same connection', async () => {
-    const single = createDatabase(inject('databaseUrl'), { max: 1 });
+  it('ends the business context with the transaction', async () => {
+    const single = createDatabase(inject('databaseUrls'), { max: 1 });
     try {
       await single.withBusiness(a.id, async () => {});
-      const [row] = await single.withSystem('console', (tx) =>
-        tx.execute(sql`select coalesce(current_setting('app.business_id', true), '') as v, current_user as u`),
-      );
-      expect(row).toEqual({ v: '', u: 'app_system' });
+      const [row] = await single.withBusiness(a.id, async (tx) => {
+        // Clear the context set by this call, then read what the previous transaction left behind.
+        await tx.execute(sql`select set_config('app.business_id', '', true)`);
+        return tx.execute(sql`select count(*)::int as n from business`);
+      });
+      expect(row).toEqual({ n: 0 });
     } finally {
       await single.close();
     }

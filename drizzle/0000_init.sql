@@ -1,17 +1,17 @@
 -- Hand-written (WP-20): roles from database-schema.md, "Tenant isolation". They must exist before
--- the policies below. Both are NOLOGIN group roles; the connection's login role is a member of both
--- and switches with SET LOCAL ROLE inside each transaction (see src/db/index.ts).
+-- the policies below. Each is its own login (passwords are set outside migrations); neither owns
+-- the tables or is a member of the other, so a transaction cannot switch roles. The migration
+-- role owns the tables, and FORCE ROW LEVEL SECURITY (0002) keeps RLS on even for it.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-    CREATE ROLE app_user NOLOGIN NOBYPASSRLS;
+    CREATE ROLE app_user LOGIN NOBYPASSRLS NOINHERIT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_system') THEN
-    CREATE ROLE app_system NOLOGIN BYPASSRLS;
+    CREATE ROLE app_system LOGIN BYPASSRLS NOINHERIT;
   END IF;
 END
 $$;--> statement-breakpoint
-GRANT app_user, app_system TO CURRENT_USER;--> statement-breakpoint
 CREATE TYPE "public"."business_status" AS ENUM('onboarding', 'active', 'paused', 'cancelled');--> statement-breakpoint
 CREATE TYPE "public"."channel_connection_status" AS ENUM('pending', 'connected', 'verified', 'disconnected', 'revoked');--> statement-breakpoint
 CREATE TYPE "public"."console_item_kind" AS ENUM('model_validation_failed', 'extraction_failed', 'draft_failed', 'publication_failed', 'channel_disconnected', 'unknown_number', 'handoff');--> statement-breakpoint
