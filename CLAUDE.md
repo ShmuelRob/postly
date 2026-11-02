@@ -37,7 +37,7 @@ The contract docs refine the technical design and are equally binding. Read the 
 1. **Check against the docs.** Before writing any code, confirm the change matches the three docs above. If the request, existing code, or a needed decision conflicts with or is missing from the docs, stop and resolve it in the docs first (ask the user when the right answer is not clear), then write code that follows the updated docs. Never let code drift ahead of the docs.
 2. **TDD.** Write failing tests before the implementation, then write the code to make them pass.
 3. **End-to-end tests are the most trusted.** A feature is done only when an end-to-end test covers its flow, running the real code against simulators and asserting on what the owner and the networks would see. Show the user every end-to-end test you add or change, together with a run of it: the WhatsApp conversation, screenshots of rendered posts, and the result (send screenshots and reports with SendUserFile). Never skip, weaken, or delete a failing end-to-end test to make a change pass; report it instead.
-4. **Human-owned tests.** For the approval and publishing code paths (including the check that only an approved version hash goes live), the human writes the tests or approves them before any implementation is written.
+4. **Human-owned tests.** For the approval and publishing code paths (including the check that only an approved version hash goes live), the human writes the tests or approves them before any implementation is written. Under the current operating mode in [implementation-plan.md](implementation-plan.md#operating-mode), a separate test-author session writes them, they merge before implementation, and they are queued for the human in [human-review-queue.md](human-review-queue.md).
 
 When a doc changes, update its Hebrew companion in `docs/`: [docs/product-spec.he.md](docs/product-spec.he.md) is the full Hebrew mirror of the PRD; the other docs have short `*.summary.he.md` companions. Every new document needs a Hebrew summary companion.
 
@@ -59,6 +59,6 @@ Modules: Messaging, Workflow, Model layer, Content, Design, Publishing, Business
 - All code, comments, commits, PRs, and technical docs are in English. User-facing product content (WhatsApp messages, captions) is in the business's chosen language, Hebrew by default.
 - Local and test environments use simulators for WhatsApp, publishing, models, and payments. Use only test accounts and test keys; never touch real customer channels or data.
 - Core (state machine, data model, main flow) is worked on by one agent at a time. Independent modules (design engine, vendor adapters, console) may be parallelized in separate worktrees once contracts exist.
-- Flag for human review any change touching: approval/publishing code, RLS and tenant isolation, tokens/secrets/customer media, database migrations, or customer-facing prompts.
+- Flag for human review (an entry in [human-review-queue.md](human-review-queue.md)) any change touching: approval/publishing code, RLS and tenant isolation, tokens/secrets/customer media, database migrations, or customer-facing prompts.
 - Contracts (state machine, DB schema, Zod schemas, provider interfaces) are human-written and approved before agents implement against them.
 - First milestone: the design engine and a Hebrew example set, without WhatsApp or publishing.

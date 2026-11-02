@@ -38,7 +38,7 @@ A human reviews every change that touches:
 - Database migrations.
 - Prompts that run against customers.
 
-The human writes the tests for the approval and publishing code, or approves them before an agent writes the implementation. Tests written by the same agent after the code tend to confirm what it already did.
+The human writes the tests for the approval and publishing code, or approves them before an agent writes the implementation. Tests written by the same agent after the code tend to confirm what it already did. While the human has not written them, a separate agent that does not implement writes them first, under the operating mode in [implementation-plan.md](implementation-plan.md#operating-mode), and the human reviews them from the review queue.
 
 ## Testing
 
