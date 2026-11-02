@@ -19,6 +19,8 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 - The `app_system` role bypasses RLS. It is used only for: resolving an inbound phone number to a business, the scheduler that fans jobs out per business, the console, and the example-set runner. Every other code path uses `app_user`.
 - Rows with a null `business_id` (messages from unknown numbers, example-set model runs) are visible only to `app_system`.
 - Tables without `business_id` are system tables and are not readable by `app_user` beyond what the model layer and publishing job need (`model_task_config`, `prompt_template`, `system_control`).
+- Both roles are `NOLOGIN` group roles created by the first migration. The application's login role is a member of both and switches with `SET LOCAL ROLE` at the start of each transaction, so the role and `app.business_id` end with the transaction. `app_user` may read, insert, update, and delete business-owned tables and may only read the system tables; `app_system` may do all four on every table.
+- In code, `withBusiness(businessId, fn)` from `src/db/index.ts` opens the `app_user` transaction and `withSystem(purpose, fn)` the `app_system` one, where `purpose` names one of the four uses above. No other way to query leaves `src/db/`.
 
 ## Enums
 
