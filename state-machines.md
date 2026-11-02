@@ -1,6 +1,6 @@
 # Postly State Machines
 
-Status: draft contract, pending human approval.
+Status: approved contract (2026-11-02).
 
 Every business, conversation, post, and external connection in Postly moves through a deterministic state machine defined in code. Models never change state directly: a model output becomes an event only after code validates it. This document is the source of truth for states, events, and guards; the code in `src/contracts/state-machines/` implements it one to one.
 

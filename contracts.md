@@ -1,6 +1,6 @@
 # Postly Contracts
 
-Status: draft contract, pending human approval.
+Status: approved contract (2026-11-02).
 
 This document defines the Zod schemas for model tasks, the business profile, and the internal provider interfaces. The code in `src/contracts/` implements it one to one. Field-level details that are easy to read in code (string lengths, exact regexes) live in the code; this document fixes names, shapes, and rules.
 

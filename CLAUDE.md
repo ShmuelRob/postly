@@ -28,7 +28,9 @@ Before any task, read all three:
 - [technical-design.md](technical-design.md): stack, modules, data model, internal interfaces, failure handling.
 - [agentic-development.md](agentic-development.md): language rules, work division, human-review areas.
 
-The contract docs refine the technical design and are equally binding. Read the one that covers your change: [state-machines.md](state-machines.md) (states, events, guards), [database-schema.md](database-schema.md) (tables, RLS), and [contracts.md](contracts.md) (Zod schemas for the profile, model tasks, and provider interfaces). Code in `src/contracts/` and `src/db/schema.ts` mirrors them one to one.
+The contract docs refine the technical design and are equally binding. Read the one that covers your change: [state-machines.md](state-machines.md) (states, events, guards), [database-schema.md](database-schema.md) (tables, RLS), [contracts.md](contracts.md) (Zod schemas for the profile, model tasks, and provider interfaces), and [design-styles.md](design-styles.md) (style rules and output sizes for the design engine; provisional). Code in `src/contracts/` and `src/db/schema.ts` mirrors them one to one.
+
+[implementation-plan.md](implementation-plan.md) lists the work packages, their lanes and human gates, and the session-manager loop. A work session reads its own package there; only the manager session edits package status.
 
 ## Workflow: docs first, tests first, code last
 

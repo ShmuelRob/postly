@@ -28,6 +28,12 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
 | Monitoring and alerting | Required | Open |
+| Module boundaries | dependency-cruiser rules, enforced in CI | Decided |
+| CI | GitHub Actions: typecheck, unit and contract tests, end-to-end suite; a failure blocks merging | Decided |
+| Test database | Postgres in Docker through Testcontainers, so roles and RLS behave as in production | Decided |
+| Holiday calendar | `@hebcal/core` with the Israel schedule, computed in `business.timezone` | Decided |
+| Fonts | Hebrew fonts under the SIL Open Font License, stored in the repository; see [design-styles.md](design-styles.md) | Decided |
+| End-to-end reports | A static HTML report per run: WhatsApp transcript, rendered images, publishing simulator log, and pass or fail | Decided |
 
 The worker must run continuously, so Cloud Run needs at least one active instance for it.
 
@@ -101,6 +107,21 @@ Request and response schemas for each interface are in [contracts.md](contracts.
 - `PaymentProvider`: create payment link, get subscription status, cancel subscription.
 - `TemplateRenderer`: render a post version to a file for each network.
 
+## Operational defaults
+
+These are defaults stored in configuration, so they can change without a code change. Times are in `business.timezone`.
+
+| Setting | Default |
+| --- | --- |
+| Message burst merge | Inbound messages from one number are merged until 20 seconds pass without a new one |
+| Model output retries | `model_task_config.max_retries` is 2, so 3 attempts in total before routing to the console |
+| Publication retries | 3 attempts in total, 5 and then 15 minutes apart, each preceded by a provider status check |
+| Business week | Sunday 00:00 to Saturday 23:59; the `weekly_update` row is created at Sunday 00:00 |
+| Weekly reminder | Monday 10:00, if the week is still `awaiting` |
+| Week cutoff | Thursday 12:00: a week still `reminded` moves to `skipped` (`WEEK_ENDED`) |
+| Channel health check | Daily at 06:00 |
+| No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, by the business's city when `@hebcal/core` knows it, otherwise Jerusalem |
+
 ## Failure handling required in Phase 1
 
 - The 24-hour window closes mid-flow: send an approved template, or wait for the owner.
@@ -127,8 +148,7 @@ Request and response schemas for each interface are in [contracts.md](contracts.
 
 ## Still required before core development
 
-- Human approval of the drafted state machines ([state-machines.md](state-machines.md)), database schema ([database-schema.md](database-schema.md)), and Zod contracts ([contracts.md](contracts.md)).
-- Three complete style templates, with licensed Hebrew fonts.
+- Final style spec and a real Hebrew example set, replacing the provisional ones in [design-styles.md](design-styles.md).
 - Conversation copy, WhatsApp template text, and channel connection guidance.
-- Success metrics, acceptance criteria, and a real Hebrew example set.
+- Success metrics and acceptance criteria.
 - Console specification, monitoring choice, and media retention policy.
