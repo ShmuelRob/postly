@@ -1,6 +1,6 @@
 # Postly Database Schema
 
-Status: draft contract, pending human approval. Migrations generated from it also require human review.
+Status: approved contract (2026-11-02). Migrations generated from it require human review.
 
 Postgres with row-level security, accessed through Drizzle. The code in `src/db/schema.ts` implements this document one to one. State columns use the enums defined in [state-machines.md](state-machines.md).
 
