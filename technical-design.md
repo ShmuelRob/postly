@@ -142,7 +142,7 @@ These are defaults stored in configuration, so they can change without a code ch
 
 ## Environments
 
-- Local and test environments use simulators for WhatsApp, publishing, models, and payments.
+- Local and test environments use simulators for WhatsApp, publishing, models, and payments. A local playground (WP-45) lets a human play the business owner against those simulators in a browser; it is never deployed.
 - Staging uses test accounts and test keys only.
 - Production access is limited and separate from agent environments.
 
