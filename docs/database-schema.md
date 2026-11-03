@@ -23,6 +23,8 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 - `app_user` may read, insert, update, and delete business-owned tables, with two exceptions that enforce immutability: it may only insert `post_version`, and on `approval` it may only insert and update `invalidated_at`. It may only read the system tables. `app_system` may do all four on every table.
 - Every new table needs explicit grants and, if business-owned, `FORCE ROW LEVEL SECURITY` in its migration. There are no default privileges, so a table without grants fails closed.
 - In code, `withBusiness(businessId, fn)` from `src/db/index.ts` opens an `app_user` transaction with `app.business_id` set, and `withSystem(purpose, fn)` an `app_system` one, where `purpose` names one of the four uses above. No other way to query leaves `src/db/`.
+- **Least privilege (decided 2026-11-03, built in WP-24):** grants move from one `app_user` and one `app_system` to a role per kind of operation, for example a messaging role, a drafting role, a publishing role, and one system role per `withSystem` purpose, each granted only the tables and verbs it uses.
+- **Same-business references (decided 2026-11-03, built in WP-24 before WP-33):** every foreign key between business-owned tables is composite, `(business_id, id)`, so a row can only reference a parent of its own business.
 - **Accepted risk:** Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, and `discard` anywhere outside `src/db/`.
 
 ## Enums

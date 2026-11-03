@@ -110,6 +110,8 @@ Stored in `post.status`. This is the machine that protects the approval rule.
 
 `published` and `cancelled` are terminal.
 
+When the owner sent several photos for a planned single post, the draft asks the owner to choose carousel, one photo, or a post per photo through `DETAIL_MISSING` and `awaiting_clarification`; the answer arrives as `DETAIL_PROVIDED`. A post per photo creates new `planned` posts in code, outside this machine.
+
 ### Approval guard
 
 `APPROVED` is accepted only when all of these hold:

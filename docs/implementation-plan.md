@@ -46,7 +46,9 @@ Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the
 
 ## Decisions
 
-The tooling choices and operational defaults are recorded in [technical-design.md](technical-design.md) (Stack and Operational defaults), and the output sizes and fonts in [design-styles.md](design-styles.md). Still open: what happens to an update that arrives after the week cutoff; WP-31 raises it before it starts.
+The tooling choices and operational defaults are recorded in [technical-design.md](technical-design.md) (Stack and Operational defaults), and the output sizes and fonts in [design-styles.md](design-styles.md). Human decisions on 2026-11-03 (review queue items 1 to 7): H2 styles accepted for now, to be made professional later (WP-14); H3 the provisional set is the working set until the human brings a better one; H5 the test-author approach is accepted; H6 drafted copy is fine for the demo.
+
+Still open: what happens to an update that arrives after the week cutoff; WP-31 raises it before it starts.
 
 Contract gaps found while building the simulators (WP-03). Each is a contract change that the named package proposes in the docs, and queues for the human, before its implementation:
 
@@ -74,6 +76,8 @@ Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the mana
 | WP-11 | Design engine core: `TemplateRenderer` with Playwright and sharp, RTL layout, crop, logo and caption placement, per-network output | Parallel | WP-01, H2 (provisional) | Renders a test fixture in every style and network, checked by snapshot | done |
 | WP-12 | The three style templates (one session per style once WP-11 is merged) | Parallel | WP-11, H2 | Each style renders the example set within its rules | done |
 | WP-13 | Example-set runner: renders every example in every style into a screenshot gallery report | Parallel | WP-10, WP-12 | The human reviews the gallery on the provisional set; milestone 1 closes once it passes on the final styles and the real set | todo |
+| WP-14 | Design research and style upgrade: research what makes social posts effective (look first for existing skills and published rules), write the findings into design-styles.md, then update the three styles | Parallel | WP-12 | design-styles.md carries the researched rules and the styles render the example set within them | todo |
+| WP-15 | Cleanup from reviews: shared `pre-line` for overlay text, shared style-test helpers, snapshot name collisions, fixture phones to 0501234567 / +972501234567, versioned gitignored e2e reports per run, a faster `boundaries.test.ts`, the link-checker fixture test | Parallel | WP-12 | `npm run check` passes and the listed items are closed | todo |
 
 ### Phase 2: core platform
 
@@ -83,6 +87,7 @@ Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the mana
 | WP-21 | Model layer: task registry, versioned prompts, config table, Zod validation with retries, `model_run` records, console routing | Core | WP-20, WP-03 | Invalid simulator output retries and lands in `console_item`; H7 passed for any prompt | todo |
 | WP-22 | Messaging module: Fastify webhook, verification, deduplication, burst merge, sending, 24-hour window, unknown numbers to the console | Core | WP-20, WP-03 | End-to-end: duplicate and unknown-number messages behave as specified | todo |
 | WP-23 | Workflow runtime: apply an event with its guards inside one transaction, pg-boss worker wiring, handoff flag, pause flags | Core | WP-20 | Invalid transitions are rejected and logged; handoff stops automatic replies | todo |
+| WP-24 | Database hardening: a role per operation (least privilege) and composite `(business_id, id)` foreign keys, per database-schema.md | Core | WP-20 | Tests prove each role can reach only its tables and verbs, and a cross-business reference is rejected; before WP-33 | todo |
 
 ### Phase 3: product flows
 
@@ -92,7 +97,7 @@ Each flow ends with an end-to-end test from an inbound WhatsApp message to what 
 | --- | --- | --- | --- | --- | --- |
 | WP-30 | Onboarding: intro, profile questions with extraction, brand assets, style samples, profile review, channel connection and test, business activation | Core | WP-21, WP-22, WP-23, WP-12, H6 | End-to-end onboarding in Hebrew, including voice answers | todo |
 | WP-31 | Weekly update: week rows, reminder template, transcription, fact extraction with verbatim quote check, weekly planning | Core | WP-30, H6 | End-to-end: update in, plan stored; no update leads to reminder then a skipped week | todo |
-| WP-32 | Drafts: caption writing, code fact check, `post_version` with content hash, rendering, sending with buttons, change requests, preference rules | Core | WP-31 | End-to-end: a mismatched price blocks sending; a change creates a new version and a saved rule | todo |
+| WP-32 | Drafts: caption writing, code fact check, `post_version` with content hash, rendering, sending with buttons, change requests, preference rules, the several-photos choice (carousel, one photo, a post per photo) | Core | WP-31 | End-to-end: a mismatched price blocks sending; a change creates a new version and a saved rule | todo |
 | WP-33 | Approval: button-only approval, approver number check, hash match, invalidation on any new version | Core | WP-32, H5 | Human-owned approval tests pass | todo |
 | WP-34 | Scheduling and publishing: time proposals per profile and holidays, publications per channel, publishing job with the publishing guard and pause checks, retries with a provider status check, confirmation templates | Core | WP-33, H5, H6 | Human-owned publishing tests pass; end-to-end shows posts reaching the publishing simulator only after approval | todo |
 | WP-35 | Failure cases from the technical design: closed 24-hour window, no response, late approval, one channel failing, channel disconnect with daily health check, unknown number, failed model validation | Core | WP-34 | One end-to-end test per case | todo |
