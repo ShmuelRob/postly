@@ -2,7 +2,7 @@
 
 Status: active. Contracts approved on 2026-11-02; styles and example set are provisional.
 
-This plan splits Phase 1 into work packages that coding-agent sessions build one package at a time. A manager session runs the loop described in [Session manager](#session-manager): it starts a session for each package that is ready, verifies the result, brings human gates to the human, and repeats until every package is done. The plan follows [PRD.md](PRD.md), [technical-design.md](technical-design.md), and [agentic-development.md](agentic-development.md). When it conflicts with them, they win and this plan is fixed.
+This plan splits Phase 1 into work packages that coding-agent sessions build one package at a time. A manager session runs the loop described in [Session manager](#session-manager): it starts a session for each package that is ready, verifies the result, brings human gates to the human, and repeats until every package is done. The plan follows [PRD.md](../PRD.md), [technical-design.md](technical-design.md), and [agentic-development.md](agentic-development.md). When it conflicts with them, they win and this plan is fixed.
 
 ## Rules every session follows
 
