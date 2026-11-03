@@ -14,6 +14,7 @@ describePaymentProviderContract('simulator', () => {
       const link = await provider.createPaymentLink({ businessId, plan: 'basic' });
       return provider.completePayment(link.providerCustomerId);
     },
+    webhookFor: async (id) => provider.webhook(id),
   };
 });
 
@@ -39,6 +40,18 @@ describe('PaymentSimulator', () => {
     const link = await sim.createPaymentLink({ businessId, plan: 'basic' });
     const id = sim.completePayment(link.providerCustomerId, { status: 'trialing' });
     expect((await sim.getSubscriptionStatus(id)).status).toBe('trialing');
+  });
+
+  it('gives each webhook a new event id and reports the latest status', async () => {
+    const sim = new PaymentSimulator({ now: () => at });
+    const link = await sim.createPaymentLink({ businessId, plan: 'basic' });
+    const id = sim.completePayment(link.providerCustomerId);
+    const first = await sim.verifyWebhook(sim.webhook(id));
+    sim.setStatus(id, 'past_due');
+    const second = await sim.verifyWebhook(sim.webhook(id));
+    expect(first).toMatchObject({ businessId, providerCustomerId: link.providerCustomerId, status: 'active' });
+    expect(second.status).toBe('past_due');
+    expect(second.providerEventId).not.toBe(first.providerEventId);
   });
 
   it('rejects completing a payment for an unknown customer', () => {
