@@ -1,4 +1,4 @@
-// Workflow: state machines for onboarding, conversation, and posts.
+// Workflow: state machines for onboarding, the weekly update, conversation, and posts.
 // Public surface of the module: other code imports only from this file (see ../README.md).
 
 export type { MachineName } from './machines.js';
@@ -24,3 +24,6 @@ export {
   type OnboardingDeps,
 } from './onboarding.js';
 export * as onboardingCopy from './onboarding-copy.js';
+export { createWeeklyUpdates, type WeeklyDeps, type WeeklyUpdates } from './weekly.js';
+export { localWeek, type LocalWeek } from './week.js';
+export * as weeklyCopy from './weekly-copy.js';

@@ -17,23 +17,28 @@ export interface ModelLayerDeps {
   resolveMediaUrl?: MediaUrlResolver;
 }
 
-export interface RunOptions {
+export interface RunOptions<Output = unknown> {
   /** The row the task is about (a message, weekly update, or post), stored on the console item. */
   referenceId?: string;
+  /**
+   * A code check the schema cannot express (contracts.md): returns null to accept the output or a
+   * reason to reject it. A rejection counts as a failed attempt, like a schema failure.
+   */
+  check?: (output: Output) => string | null;
 }
 
 export interface ModelLayer {
   /**
    * Runs one model task for one business: the active prompt version and the model from
-   * `model_task_config`, the task's output schema, up to `max_retries` retries, and one `model_run`
-   * row per attempt. Returns only output that passed the schema. After the last failed attempt the
-   * task lands in `console_item` and this throws `ModelTaskFailedError`.
+   * `model_task_config`, the task's output schema and code check, up to `max_retries` retries, and
+   * one `model_run` row per attempt. Returns only output that passed both. After the last failed
+   * attempt the task lands in `console_item` and this throws `ModelTaskFailedError`.
    */
   run<T extends ModelTaskName>(
     businessId: string,
     task: T,
     input: ModelTaskInput<T>,
-    options?: RunOptions,
+    options?: RunOptions<ModelTaskOutput<T>>,
   ): Promise<ModelTaskOutput<T>>;
 }
 
@@ -128,6 +133,8 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
       for (let n = 1; n <= config.maxRetries + 1; n++) {
         const started = performance.now();
         const outcome = await attempt(businessId, task, parsedInput, config, template.template, target);
+        const rejected = outcome.valid && options.check ? options.check(outcome.output as never) : null;
+        if (rejected !== null) Object.assign(outcome, { valid: false, error: `code check: ${rejected}` });
         const durationMs = Math.round(performance.now() - started);
         const rows = await deps.db.withBusiness('model', businessId, (tx) =>
           tx

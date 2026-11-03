@@ -67,8 +67,9 @@ Fact types are `price`, `discount_percent`, `date`, `date_range`, `time`, `addre
 
 Code checks that the schema cannot express:
 
-- `fact_extraction`: every `sourceQuote` appears verbatim in the source text or transcript, and `testimonial` facts come only from text the owner sent.
+- `fact_extraction`: every `sourceQuote` appears verbatim in the source text or transcript (whitespace runs count as one space), and the quote of a `testimonial` fact appears in the typed text the owner sent.
 - `weekly_planning`: the number of posts equals `postsPerWeek`, every `factIds` entry exists, and every format is allowed by the profile.
+- A failed code check counts as a failed attempt: the model layer takes the check as `RunOptions.check`, retries, and then routes to the console, as for a schema failure.
 - `caption_writing`: every price, discount, date, time, address, and phone number in a caption matches a fact in `usedFactIds` or the profile. This code comparison is the fact check; the `fact_check` model task is optional and only adds mismatches.
 
 ## Provider interfaces

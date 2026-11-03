@@ -98,6 +98,28 @@ describe('model layer run', () => {
     expect(item?.details).toMatchObject({ task: 'intent_detection', promptVersion: 1, attempts: 3, modelRunIds: runs.map((r) => r.id) });
   });
 
+  it('counts a failed code check as a failed attempt and retries (RunOptions.check)', async () => {
+    const low = { intent: 'weekly_update', confidence: 0.1 } as const;
+    sim.script('intent_detection', low, validIntent);
+    const check = (output: { confidence: number }) => (output.confidence < 0.5 ? 'confidence too low' : null);
+    await expect(layer().run(businessId, 'intent_detection', intent, { check })).resolves.toEqual(validIntent);
+
+    const runs = await runsOf(businessId);
+    expect(runs.map((r) => [r.valid, r.error])).toEqual([
+      [false, 'code check: confidence too low'],
+      [true, null],
+    ]);
+  });
+
+  it('routes to the console when the code check fails every attempt', async () => {
+    sim.script('intent_detection', validIntent, validIntent, validIntent);
+    const error = await layer()
+      .run(businessId, 'intent_detection', intent, { check: () => 'never passes' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModelTaskFailedError);
+    expect((error as ModelTaskFailedError).reason).toBe('code check: never passes');
+  });
+
   it('counts a provider failure as an attempt', async () => {
     sim.failNext('intent_detection', new Error('quota'));
     sim.script('intent_detection', validIntent);

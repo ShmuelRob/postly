@@ -85,10 +85,10 @@ Stored in `weekly_update.status`. A row is created at the start of each business
 | `reminded` | `UPDATE_RECEIVED` | `received` | |
 | `reminded` | `WEEK_ENDED` | `skipped` | No update arrived |
 | `received` | `FACTS_EXTRACTED` | `planned` | Extraction output passed schema validation |
-| `received` | `EXTRACTION_FAILED` | `needs_review` | Retries are exhausted |
+| `received` | `EXTRACTION_FAILED` | `needs_review` | Extraction or planning retries are exhausted |
 | `needs_review` | `FACTS_EXTRACTED` | `planned` | Team action from the console |
 
-`planned` and `skipped` are terminal. A week with `skipped` publishes no content.
+`planned` and `skipped` are terminal. A week with `skipped` publishes no content. `FACTS_EXTRACTED` stores the plan: the extracted facts and one `post` row per planned post, in the same transaction. An update that arrives after the week moved to `skipped` opens the next week's row early and is applied there (WP-31, [technical-design.md](technical-design.md#weekly-update-flow)).
 
 ## Post
 
