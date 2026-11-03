@@ -13,7 +13,11 @@ import {
   type TemplateRenderer,
 } from '../../../src/contracts/providers/index.js';
 import type { Network } from '../../../src/contracts/common.js';
-import type { E2eRecord, ImageAttachment, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
+import { modelTasks, type ModelTaskName } from '../../../src/contracts/model-tasks.js';
+import type {
+  ConsoleEntry,
+  E2eRecord,
+  ModelCallEntry, ImageAttachment, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
 
 /** Every external service the app talks to. Tests pass simulators (WP-03) or in-test fakes. */
 export interface Providers {
@@ -70,6 +74,10 @@ export interface E2eRun {
   networkPosts(network?: Network): PublishingEntry[];
   /** Files the renderer produced, oldest first. */
   renders(): RenderedImage[];
+  /** Calls that reached the model provider, oldest first. */
+  modelCalls(): ModelCallEntry[];
+  /** Adds items the team console holds to the report; the test reads them from where the app stored them. */
+  recordConsoleItems(items: Omit<ConsoleEntry, 'at'>[]): void;
   close(): Promise<void>;
 }
 
@@ -89,7 +97,7 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
   const providers: Providers = {
     messaging: recordMessaging(options.providers.messaging, record, now, attach),
     publishing: recordPublishing(options.providers.publishing, record, now, attach),
-    model: options.providers.model,
+    model: recordModel(options.providers.model, record, now),
     payment: options.providers.payment,
     renderer: recordRenderer(options.providers.renderer, record, now, attach),
   };
@@ -136,6 +144,11 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
     owner,
     networkPosts: (network) => record.publishing.filter((p) => network === undefined || p.network === network),
     renders: () => [...record.renders],
+    modelCalls: () => [...(record.modelCalls ?? [])],
+    recordConsoleItems: (items) => {
+      record.consoleItems ??= [];
+      record.consoleItems.push(...items.map((item) => ({ at: now(), ...item })));
+    },
     close: async () => {
       await app.close?.();
     },
@@ -143,6 +156,33 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
 }
 
 type Attach = (ref: string) => Promise<ImageAttachment>;
+
+function recordModel(inner: ModelProvider, record: E2eRecord, now: () => string): ModelProvider {
+  const log = (entry: ModelCallEntry) => (record.modelCalls ??= []).push(entry);
+  const structured =
+    (method: 'generateStructured' | 'analyzeImage') =>
+    async (request: { task: ModelTaskName }) => {
+      try {
+        const result = await (inner[method] as (r: unknown) => ReturnType<ModelProvider['generateStructured']>)(request);
+        const check = modelTasks[request.task].output.safeParse(result.output);
+        log({ at: now(), method, task: request.task, output: result.output, valid: check.success, ...(check.success ? {} : { error: check.error.issues.map((i) => i.message).join('; ') }) });
+        return result;
+      } catch (error) {
+        log({ at: now(), method, task: request.task, valid: false, error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    };
+  return {
+    name: inner.name,
+    generateStructured: structured('generateStructured'),
+    analyzeImage: structured('analyzeImage'),
+    async transcribeAudio(request) {
+      const result = await inner.transcribeAudio(request);
+      log({ at: now(), method: 'transcribeAudio', task: 'transcription', output: result, valid: true });
+      return result;
+    },
+  };
+}
 
 function recordMessaging(inner: MessagingProvider, record: E2eRecord, now: () => string, attach: Attach): MessagingProvider {
   return {

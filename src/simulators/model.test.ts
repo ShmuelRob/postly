@@ -62,6 +62,7 @@ const sampleInputs: { [T in ModelTaskName]: ModelTaskInput<T> } = {
 };
 
 const request = (task: ModelTaskName, input: unknown = sampleInputs[task]) => ({
+  task,
   model: 'simulator-model',
   prompt: `${task} v1`,
   input,
@@ -152,6 +153,7 @@ describe('ModelSimulator scripting', () => {
     const sim = new ModelSimulator();
     sim.script('image_review', { usable: false, score: 0.2, issues: ['blurry'] });
     const result = await sim.analyzeImage({
+      task: 'image_review',
       model: 'simulator-model',
       prompt: 'image_review v1',
       imageUrl: 'https://storage.example.test/photo.jpg',
@@ -161,10 +163,10 @@ describe('ModelSimulator scripting', () => {
     expect(sim.callsFor('image_review')[0]?.method).toBe('analyzeImage');
   });
 
-  it('throws for an output schema it does not know', async () => {
+  it('throws when the output schema does not match the task', async () => {
     const sim = new ModelSimulator();
     await expect(sim.generateStructured({ ...request('fact_check'), outputJsonSchema: { type: 'string' } })).rejects.toThrow(
-      /unknown model task/i,
+      /does not match task/i,
     );
   });
 

@@ -45,15 +45,35 @@ export interface PublishingEntry {
   outcome: { ok: true; providerPostId: string } | { ok: false; error: string };
 }
 
+/** One call that reached the model provider, and whether its output passed the task schema. */
+export interface ModelCallEntry {
+  at: string;
+  method: 'generateStructured' | 'analyzeImage' | 'transcribeAudio';
+  task: string;
+  /** Raw provider output, or undefined when the call failed. */
+  output?: unknown;
+  valid: boolean;
+  error?: string;
+}
+
+/** One item routed to the team console, as the team would see it. */
+export interface ConsoleEntry {
+  at: string;
+  kind: string;
+  details: unknown;
+}
+
 /** Everything one end-to-end test recorded about what the owner and the networks would see. */
 export interface E2eRecord {
   transcript: TranscriptEntry[];
   renders: RenderedImage[];
   publishing: PublishingEntry[];
+  modelCalls?: ModelCallEntry[];
+  consoleItems?: ConsoleEntry[];
 }
 
 export function emptyRecord(): E2eRecord {
-  return { transcript: [], renders: [], publishing: [] };
+  return { transcript: [], renders: [], publishing: [], modelCalls: [], consoleItems: [] };
 }
 
 declare module 'vitest' {

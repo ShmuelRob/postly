@@ -25,6 +25,9 @@ export default defineConfig({
         test: {
           name: 'e2e',
           include: ['test/e2e/**/*.e2e.test.ts'],
+          // The same migrated Postgres as the db project, for flows that store what the app did.
+          globalSetup: ['./test/db/global-setup.ts'],
+          hookTimeout: 120_000,
         },
       },
     ],

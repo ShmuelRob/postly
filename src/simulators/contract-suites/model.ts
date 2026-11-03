@@ -37,6 +37,7 @@ export function describeModelProviderContract(
     it('returns structured output with usage for generateStructured', async () => {
       const task = modelTasks.intent_detection;
       const result = await ctx.provider.generateStructured({
+        task: 'intent_detection',
         model: ctx.model,
         prompt: 'Classify the intent of the owner message.',
         input: task.input.parse({ text: 'יש לנו מבצע השבוע', step: 'idle', draftsOpen: false }),
@@ -50,6 +51,7 @@ export function describeModelProviderContract(
     it('returns structured output with usage for analyzeImage', async () => {
       const task = modelTasks.image_review;
       const result = await ctx.provider.analyzeImage({
+        task: 'image_review',
         model: ctx.model,
         prompt: 'Review this photo for use in a post.',
         imageUrl: ctx.imageUrl,
@@ -71,6 +73,7 @@ export function describeModelProviderContract(
     it('rejects a request outside the contract shape', async () => {
       await expect(
         ctx.provider.generateStructured({
+          task: 'intent_detection',
           model: ctx.model,
           prompt: '',
           input: {},
