@@ -97,11 +97,11 @@ Each vendor is reached only through its interface. Requests and responses that c
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `generateStructured` | `model`, `prompt`, `input`, JSON schema of the output, `temperature` | Raw `output`, `inputTokens`, `outputTokens`, `costUsd` |
-| `analyzeImage` | `model`, `prompt`, `imageUrl`, JSON schema of the output | Same as `generateStructured` |
+| `generateStructured` | `task`, `model`, `prompt`, `input`, JSON schema of the output, `temperature` | Raw `output`, `inputTokens`, `outputTokens`, `costUsd` |
+| `analyzeImage` | `task`, `model`, `prompt`, `imageUrl`, JSON schema of the output | Same as `generateStructured` |
 | `transcribeAudio` | `model`, `audioUrl`, `languageHint` | `text`, `language`, `costUsd` |
 
-The provider returns raw output. Only the model layer validates it against the task schema.
+The provider returns raw output. Only the model layer validates it against the task schema. `task` names the model task the request serves (one of the tasks above); a real adapter may ignore it, and the simulator uses it to pick its scripted output and checks that the JSON schema is that task's output schema.
 
 ### `PaymentProvider`
 

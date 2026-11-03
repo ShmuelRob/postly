@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { Language } from '../contracts/common.js';
 import {
-  MODEL_TASK_NAMES,
   type ModelTaskInput,
   type ModelTaskName,
   type ModelTaskOutput,
@@ -19,9 +18,8 @@ import {
 import { defaultOutput } from './model-fixtures.js';
 
 /**
- * The JSON schema the simulator expects for a task's output. The simulator
- * identifies the task by matching the request's `outputJsonSchema` against
- * this, so the model layer must derive it the same way.
+ * The JSON schema of a task's output. Requests name their task, and the
+ * simulator checks that `outputJsonSchema` equals this for that task.
  */
 export function taskOutputJsonSchema(task: ModelTaskName): Record<string, unknown> {
   return z.toJSONSchema(modelTasks[task].output) as Record<string, unknown>;
@@ -63,7 +61,6 @@ export class ModelSimulator implements ModelProvider {
   private readonly overrides = new Map<ModelTaskName, Fixture<ModelTaskName>>();
   private readonly transcriptQueue: Transcript[] = [];
   private readonly transcriptsByUrl = new Map<string, Transcript>();
-  private readonly schemas = MODEL_TASK_NAMES.map((task) => ({ task, schema: taskOutputJsonSchema(task) }));
 
   constructor(options: ModelSimulatorOptions = {}) {
     this.useDefaults = options.defaults ?? true;
@@ -71,7 +68,7 @@ export class ModelSimulator implements ModelProvider {
 
   async generateStructured(request: GenerateStructuredRequest): Promise<StructuredResult> {
     const parsed = GenerateStructuredRequest.parse(request);
-    const call: ModelCall = { method: 'generateStructured', task: this.taskOf(parsed.outputJsonSchema), request: parsed };
+    const call: ModelCall = { method: 'generateStructured', task: this.taskOf(parsed.task, parsed.outputJsonSchema), request: parsed };
     this.calls.push(call);
     call.result = this.respond(call.task, parsed.input);
     return call.result;
@@ -79,7 +76,7 @@ export class ModelSimulator implements ModelProvider {
 
   async analyzeImage(request: AnalyzeImageRequest): Promise<StructuredResult> {
     const parsed = AnalyzeImageRequest.parse(request);
-    const call: ModelCall = { method: 'analyzeImage', task: this.taskOf(parsed.outputJsonSchema), request: parsed };
+    const call: ModelCall = { method: 'analyzeImage', task: this.taskOf(parsed.task, parsed.outputJsonSchema), request: parsed };
     this.calls.push(call);
     call.result = this.respond(call.task, { imageUrl: parsed.imageUrl });
     return call.result;
@@ -162,10 +159,11 @@ export class ModelSimulator implements ModelProvider {
     return modelTasks[task].output.parse((fixture as (i: unknown) => unknown)(parsedInput));
   }
 
-  private taskOf(outputJsonSchema: Record<string, unknown>): ModelTaskName {
-    const match = this.schemas.find((s) => isDeepStrictEqual(s.schema, outputJsonSchema));
-    if (!match) throw new Error('Unknown model task: the output JSON schema matches no task in modelTasks');
-    return match.task;
+  private taskOf(task: ModelTaskName, outputJsonSchema: Record<string, unknown>): ModelTaskName {
+    if (!isDeepStrictEqual(taskOutputJsonSchema(task), outputJsonSchema)) {
+      throw new Error(`The output JSON schema does not match task ${task}`);
+    }
+    return task;
   }
 
   private queue(task: ModelTaskName): Scripted[] {

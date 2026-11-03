@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { Language, Url } from '../common.js';
+import { MODEL_TASK_NAMES } from '../model-tasks.js';
+
+/** The model task a request serves. Adapters may ignore it; simulators and logs use it. */
+const task = z.enum(MODEL_TASK_NAMES);
 
 const usage = {
   inputTokens: z.int().min(0),
@@ -8,6 +12,7 @@ const usage = {
 };
 
 export const GenerateStructuredRequest = z.object({
+  task,
   model: z.string().min(1),
   prompt: z.string().min(1),
   input: z.unknown(),
@@ -18,6 +23,7 @@ export const GenerateStructuredRequest = z.object({
 export type GenerateStructuredRequest = z.infer<typeof GenerateStructuredRequest>;
 
 export const AnalyzeImageRequest = z.object({
+  task,
   model: z.string().min(1),
   prompt: z.string().min(1),
   imageUrl: Url,

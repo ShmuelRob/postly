@@ -1,6 +1,14 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { E2eRecord, ImageAttachment, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
+import type {
+  ConsoleEntry,
+  E2eRecord,
+  ImageAttachment,
+  ModelCallEntry,
+  PublishingEntry,
+  RenderedImage,
+  TranscriptEntry,
+} from './record.js';
 
 export interface ReportTest {
   name: string;
@@ -68,7 +76,15 @@ function renderTest(test: ReportTest): string {
   <h2><span class="badge">${esc(test.state)}</span> ${esc(test.name)}</h2>
   <p class="meta">${esc(test.file)}${esc(duration)}</p>
   ${errors}
-  ${r ? renderTranscript(r.transcript) + renderRenders(r.renders) + renderPublishing(r.publishing) : ''}
+  ${
+    r
+      ? renderTranscript(r.transcript) +
+        renderRenders(r.renders) +
+        renderPublishing(r.publishing) +
+        renderModelCalls(r.modelCalls ?? []) +
+        renderConsole(r.consoleItems ?? [])
+      : ''
+  }
 </article>`;
 }
 
@@ -130,6 +146,30 @@ function renderPublishing(entries: PublishingEntry[]): string {
 <tbody>${rows}</tbody></table></section>`;
 }
 
+function renderModelCalls(calls: ModelCallEntry[]): string {
+  if (!calls.length) return '';
+  const rows = calls
+    .map((c) => {
+      const verdict = c.valid ? '<span class="ok">valid</span>' : `<span class="fail">invalid${c.error ? `: ${esc(c.error)}` : ''}</span>`;
+      return `<tr><td>${esc(c.at)}</td><td>${esc(c.task)}<br><span class="meta">${esc(c.method)}</span></td>
+  <td><pre dir="auto">${esc(JSON.stringify(c.output ?? null, null, 2))}</pre></td><td>${verdict}</td></tr>`;
+    })
+    .join('');
+  return `<section><h3>Model calls</h3><table>
+<thead><tr><th>At</th><th>Task</th><th>Raw output</th><th>Schema</th></tr></thead>
+<tbody>${rows}</tbody></table></section>`;
+}
+
+function renderConsole(items: ConsoleEntry[]): string {
+  if (!items.length) return '';
+  const rows = items
+    .map((i) => `<tr><td>${esc(i.at)}</td><td>${esc(i.kind)}</td><td><pre dir="auto">${esc(JSON.stringify(i.details, null, 2))}</pre></td></tr>`)
+    .join('');
+  return `<section><h3>Team console</h3><table>
+<thead><tr><th>At</th><th>Kind</th><th>Details</th></tr></thead>
+<tbody>${rows}</tbody></table></section>`;
+}
+
 function img(image: ImageAttachment): string {
   if (!image.src?.startsWith('data:image/')) {
     return `<p class="note">[image not available: ${esc(image.ref)}]</p>`;
@@ -183,6 +223,7 @@ figcaption { font-size: 13px; color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; vertical-align: top; border-top: 1px solid var(--line); padding: 6px; }
 td p { margin: 0 0 4px; white-space: pre-wrap; }
+td pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; margin-right: 4px; }
 .ok { color: var(--pass); } .fail { color: var(--fail); }
 @media (max-width: 600px) { table, tbody, tr, td { display: block; } thead { display: none; } td { border-top: none; } tr { border-top: 1px solid var(--line); padding: 6px 0; } }
