@@ -104,7 +104,7 @@ Request and response schemas for each interface are in [contracts.md](contracts.
 - `MessagingProvider`: send text, send template, send buttons, receive media, verify webhook.
 - `PublishingProvider`: create connection link, get connection status, publish, get publication status, get metrics.
 - `ModelProvider`: generate structured output, analyze image, transcribe audio.
-- `PaymentProvider`: create payment link, get subscription status, cancel subscription.
+- `PaymentProvider`: create payment link, get subscription status, cancel subscription, verify a signed status webhook.
 - `TemplateRenderer`: render a post version to a file for each network.
 
 ## Operational defaults

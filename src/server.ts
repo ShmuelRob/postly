@@ -1,8 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerBillingRoutes, type Billing } from './modules/billing/index.js';
 import { registerMessagingRoutes, type Messaging } from './modules/messaging/index.js';
 
 export interface ServerOptions {
   messaging: Messaging;
+  /** Adds the payment provider's webhook route. */
+  billing?: Billing;
   publicBaseUrl: string;
   /**
    * Sweeps inbound messages never processed at startup and then at this interval (technical-design.md,
@@ -28,6 +31,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     });
     app.addHook('onClose', async () => stop());
   }
+  if (options.billing) registerBillingRoutes(app, { billing: options.billing, publicBaseUrl: options.publicBaseUrl });
   app.addHook('onClose', () => options.messaging.close());
   return app;
 }
