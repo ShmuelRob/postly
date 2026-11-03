@@ -95,7 +95,7 @@ Each flow ends with an end-to-end test from an inbound WhatsApp message to what 
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| WP-30 | Onboarding: intro, profile questions with extraction, brand assets, style samples, profile review, channel connection and test, business activation | Core | WP-21, WP-22, WP-23, WP-12, H6 | End-to-end onboarding in Hebrew, including voice answers | in_progress |
+| WP-30 | Onboarding: intro, profile questions with extraction, brand assets, style samples, profile review, channel connection and test, business activation | Core | WP-21, WP-22, WP-23, WP-12, H6 | End-to-end onboarding in Hebrew, including voice answers | done |
 | WP-31 | Weekly update: week rows, reminder template, transcription, fact extraction with verbatim quote check, weekly planning | Core | WP-30, H6 | End-to-end: update in, plan stored; no update leads to reminder then a skipped week | todo |
 | WP-32 | Drafts: caption writing, code fact check, `post_version` with content hash, rendering, sending with buttons, change requests, preference rules, the several-photos choice (carousel, one photo, a post per photo) | Core | WP-31 | End-to-end: a mismatched price blocks sending; a change creates a new version and a saved rule | todo |
 | WP-33 | Approval: button-only approval, approver number check, hash match, invalidation on any new version | Core | WP-32, WP-24, H5 | Human-owned approval tests pass | todo |
@@ -106,9 +106,9 @@ Each flow ends with an end-to-end test from an inbound WhatsApp message to what 
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
-| WP-40 | Console (React): conversations, drafts, console items, handoff, retries, business and global pause | Parallel | WP-23 | Each console action is covered by a test through the console API | in_progress |
+| WP-40 | Console (React): conversations, drafts, console items, handoff, retries, business and global pause | Parallel | WP-23 | Each console action is covered by a test through the console API | done |
 | WP-41 | Real adapters: Twilio, Zernio, Google models; one session each | Parallel | WP-03, vendor decisions, H8 | Shared contract tests pass against the vendor's test account | todo |
-| WP-42 | Billing: placeholder `PaymentProvider`, payment link in WhatsApp, subscription machine | Parallel | WP-22, WP-23 | End-to-end: payment link sent, status changes applied | in_progress |
+| WP-42 | Billing: placeholder `PaymentProvider`, payment link in WhatsApp, subscription machine | Parallel | WP-22, WP-23 | End-to-end: payment link sent, status changes applied | done |
 | WP-43 | Cancellation and data deletion schedule, monthly report | Core | WP-34 | End-to-end: cancellation disconnects channels immediately | todo |
 | WP-44 | Deployment: one image, web and worker on Cloud Run, Cloud SQL, Cloud Storage, secret manager, monitoring | Parallel | WP-22, WP-23, H8 | Staging runs the end-to-end suite with test accounts | todo |
 | WP-45 | Local playground (React, local only, never deployed and kept out of the production image): a WhatsApp-style chat where the human plays the owner through the messaging simulator (text, voice notes as audio files, photos, reply buttons), a mock Instagram and Facebook feed showing what reached the publishing simulator, and a state panel (business, conversation and post states, the review queue). Starts with scripted simulator data; each flow becomes playable as WP-30 to WP-34 land | Parallel | WP-02, WP-03, WP-22, WP-23 (WP-30 to close) | The human can run `npm run playground` and play onboarding end to end on simulators, covered by an end-to-end test that drives the UI | in_progress |
