@@ -22,10 +22,10 @@
     "brand": { "colors": ["#7A3E5D", "#E8B4C8"] },
     "style": "warm",
     "callToAction": "message",
-    "contact": { "phone": "+97297000001", "whatsapp": "+972500000101" },
+    "contact": { "phone": "+972501234567", "whatsapp": "+972501234567" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
     "fixedHashtags": ["#פרחיהשקד", "#כפרסבא"],
-    "approverPhone": "+972500000101"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {

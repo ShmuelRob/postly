@@ -40,3 +40,7 @@ After changing a `placeholder` spec or the generator, rewrite the committed SVGs
 ```bash
 UPDATE_PLACEHOLDERS=1 npx vitest run src/example-set
 ```
+
+## Phone numbers
+
+Every phone in the example set and in the tests is fake: `0501234567` locally, `+972501234567` in E.164. Entries never carry a real-looking number. Where a test needs distinct numbers per business (for example tenant isolation), use the `050123456X` variants (`+97250123456X`, X = 0 to 9).
