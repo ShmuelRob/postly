@@ -46,7 +46,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries, pauses, model settings |
 | `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
 
-**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col)` is an update of that column only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
+**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
 
 | Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | phone_lookup | scheduler | console | example_set |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `media_asset` | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
 | `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
 | `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  | S | S |  |
-| `post` |  | SIU | SU | S | SU | SU |  |  | S |  | S | SU |  |
+| `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
 | `post_version` |  |  | SI | S | S | S |  |  | S |  |  | S |  |
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
 | `publication` |  |  |  |  |  | SIU |  |  | S |  | S | SU |  |
@@ -68,14 +68,15 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  | SI | S |
 | `system_control` |  |  |  |  |  | S |  |  |  |  | S | SU |  |
 
-- **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role.
+- **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
+- **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
 - **Deletes:** only `business_data` deletes, and only preference rules and media. Data deletion after cancellation (WP-43) adds its own role.
 - **Creating a business:** `workflow` inserts the `business` row inside `withBusiness('workflow', newId, ...)`, so RLS checks the new row against the new id. No system role inserts businesses.
 - A module that needs a table or verb its role lacks changes this matrix first (docs first), then a new migration.
 
 ### In code
 
-`createDatabase(urls)` in `src/db/index.ts` takes one connection string per login, `urls.business[role]` and `urls.system[purpose]`, and opens each pool on first use. `withBusiness(role, businessId, fn)` runs `fn` in one transaction on that role's login with `app.business_id` set. `withSystem(purpose, fn)` runs it on that purpose's system login. An unknown role or purpose is rejected before any connection is made. No other way to query leaves `src/db/`. `loginFor(roleOrPurpose)` gives the login name, for deployment and test setup.
+`createDatabase(urls)` in `src/db/index.ts` takes one connection string per login, `urls.business[role]` and `urls.system[purpose]`, and opens each pool on first use. `withBusiness(role, businessId, fn)` runs `fn` in one transaction on that role's login with `app.business_id` set. `withSystem(purpose, fn)` runs it on that purpose's system login. An unknown role or purpose is rejected before any connection is made. `createDatabase` refuses to start unless every role and purpose has a URL whose user name is `loginFor(role)`, so a missing URL never falls back to the `PG*` environment variables or to another login. Each pool holds at most 3 connections by default. No other way to query leaves `src/db/`. `loginFor(roleOrPurpose)` gives the login name, for deployment and test setup.
 
 ### Same-business references
 
@@ -99,7 +100,7 @@ Nullable reference columns use the default `MATCH SIMPLE`: a null reference is n
 
 ### Accepted risk
 
-Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, and `discard` anywhere outside `src/db/`. Switching role is impossible regardless, since no login is a member of another role.
+Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, `discard`, and `create temp`/`create temporary` anywhere outside `src/db/`. Switching role is impossible regardless, since no login is a member of another role.
 
 ## Enums
 

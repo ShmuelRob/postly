@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 // database-schema.md, "Accepted risk": inside withBusiness() a transaction could still change its
-// own session state, most of all app.business_id. Postgres cannot forbid that, so no code outside
+// own session state, most of all app.business_id, or leave a temporary table on the pooled connection. Postgres cannot forbid that, so no code outside
 // src/db/ may contain SQL that sets roles, settings, or session state.
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -14,6 +14,7 @@ const BANNED: { name: string; pattern: RegExp }[] = [
   { name: 'set app.*', pattern: /\bset\s+"?app\./i },
   { name: 'reset', pattern: /\breset\s+(role|all|session|"?app\.)/i },
   { name: 'set_config', pattern: /\bset_config\s*\(/i },
+  { name: 'create temp', pattern: /\bcreate\s+(temp|temporary)\b/i },
   { name: 'discard', pattern: /\bdiscard\s+(all|plans|sequences|temp|temporary)\b/i },
 ];
 
@@ -49,6 +50,7 @@ describe('raw SQL guard', () => {
       .map((v) => `${v.file}: ${v.rule}`)
       .sort();
     expect(found).toEqual([
+      'src/modules/x/create-temp.ts: create temp',
       'src/modules/x/discard.ts: discard',
       'src/modules/x/reset.ts: reset',
       'src/modules/x/set-app.ts: set app.*',

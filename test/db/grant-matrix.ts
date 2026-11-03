@@ -1,7 +1,7 @@
 import type { BusinessRole, SystemPurpose } from '../../src/db/index.js';
 
 // The grant matrix from database-schema.md, "Least privilege", copied without the backticks: a doc change and
-// this table change together. S select, I insert, U update, D delete, U(col) update of col only.
+// this table change together. S select, I insert, U update, D delete, U(col, ...) update of those columns only.
 const MATRIX = `
 | Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | phone_lookup | scheduler | console | example_set |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -12,7 +12,7 @@ const MATRIX = `
 | media_asset | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
 | preference_rule |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
 | weekly_update |  | SIU | SU |  |  |  |  |  |  |  | S | S |  |
-| post |  | SIU | SU | S | SU | SU |  |  | S |  | S | SU |  |
+| post |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
 | post_version |  |  | SI | S | S | S |  |  | S |  |  | S |  |
 | approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
 | publication |  |  |  |  |  | SIU |  |  | S |  | S | SU |  |
@@ -46,8 +46,8 @@ export const grants = new Map<string, Map<Role, Grant>>(
     const perRole = new Map<Role, Grant>();
     MATRIX_ROLES.forEach((role, i) => {
       const cell = byRole[i] ?? '';
-      const updateColumns = [...cell.matchAll(/U\(([a-z_]+)\)/g)].map((m) => m[1]!);
-      const letters = cell.replace(/U\([a-z_]+\)/g, '').replace(/\s/g, '');
+      const updateColumns = [...cell.matchAll(/U\(([a-z_, ]+)\)/g)].flatMap((m) => m[1]!.split(',').map((c) => c.trim()));
+      const letters = cell.replace(/U\([a-z_, ]+\)/g, '').replace(/\s/g, '');
       perRole.set(role, { verbs: new Set([...letters].map((l) => VERBS[l]!)), updateColumns });
     });
     return [table!, perRole];

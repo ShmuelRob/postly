@@ -67,13 +67,27 @@ export interface Database {
 
 const BusinessId = z.uuid();
 
+/** Throws unless url logs in as loginFor(role); postgres() would read PG* env vars for a missing one. */
+function checkUrl(role: BusinessRole | SystemPurpose, url: string | undefined): void {
+  let user: string | undefined;
+  try {
+    user = url ? decodeURIComponent(new URL(url).username) : undefined;
+  } catch {
+    user = undefined;
+  }
+  if (user !== loginFor(role)) throw new Error(`database URL for ${role} must log in as ${loginFor(role)}`);
+}
+
+/** Opens nothing until first use; every role and purpose needs its own URL (database-schema.md, "In code"). */
 export function createDatabase(urls: DatabaseUrls, options: { max?: number } = {}): Database {
+  for (const role of BUSINESS_ROLES) checkUrl(role, urls.business?.[role]);
+  for (const purpose of SYSTEM_PURPOSES) checkUrl(purpose, urls.system?.[purpose]);
   const clients = new Map<string, postgres.Sql>();
   const dbs = new Map<string, Db>();
   const open = (url: string): Db => {
     let db = dbs.get(url);
     if (!db) {
-      const client = postgres(url, { max: options.max ?? 10, onnotice: () => {} });
+      const client = postgres(url, { max: options.max ?? 3, onnotice: () => {} });
       clients.set(url, client);
       db = drizzle(client, { schema });
       dbs.set(url, db);

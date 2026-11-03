@@ -4,7 +4,7 @@ import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { grants, has, MATRIX_ROLES, type Role, type Verb } from '../../test/db/grant-matrix.js';
-import { BUSINESS_ROLES, createDatabase, loginFor, SYSTEM_PURPOSES } from './index.js';
+import { BUSINESS_ROLES, createDatabase, loginFor, SYSTEM_PURPOSES, type Tx } from './index.js';
 import * as schema from './schema.js';
 
 // Least privilege from database-schema.md: one login per role, each reaching only the tables and
@@ -82,6 +82,20 @@ describe('logins', () => {
     expect(rows).toEqual([]);
   });
 
+  it('no login and not PUBLIC may create temporary tables', async () => {
+    // A temp table stays on the pooled connection and shadows the real table for the next business.
+    const pub = await catalog`
+      select 1 from pg_database d, aclexplode(d.datacl) a
+      where d.datname = current_database() and a.grantee = 0 and a.privilege_type = 'TEMPORARY'`;
+    expect(pub.count).toBe(0);
+    const [row] = await catalog`select datacl is not null as acl from pg_database where datname = current_database()`;
+    expect(row?.acl).toBe(true);
+    const rows = await catalog`
+      select r as login from unnest(${LOGINS}::text[]) as r
+      where has_database_privilege(r, current_database(), 'TEMPORARY')`;
+    expect(rows).toEqual([]);
+  });
+
   it('nothing is granted to public on any table', async () => {
     const rows = await catalog`
       select table_name from information_schema.role_table_grants
@@ -110,6 +124,15 @@ describe.each(ROLES)('%s', (role) => {
     expect(updatable.map((r) => r.c).sort()).toEqual([...expectedColumns].sort());
   });
 
+  it('is refused creating a temporary table', async () => {
+    const zero = '00000000-0000-4000-8000-000000000000';
+    const create = (tx: Tx) => tx.execute(sql`create temp table message (like public.message)`);
+    const run = (BUSINESS_ROLES as readonly string[]).includes(role)
+      ? db.withBusiness(role as (typeof BUSINESS_ROLES)[number], zero, create)
+      : db.withSystem(role as (typeof SYSTEM_PURPOSES)[number], create);
+    expect(await dbError(run)).toMatch(/permission denied to create temporary tables/);
+  });
+
   it('is refused a select on every table outside its matrix, and allowed on the rest', async () => {
     const zero = '00000000-0000-4000-8000-000000000000';
     const run = (table: string) =>
@@ -135,6 +158,16 @@ describe('withBusiness and withSystem', () => {
       const [row] = await db.withSystem(purpose, (tx) => tx.execute(sql`select current_user as u`));
       expect(row).toEqual({ u: loginFor(purpose) });
     }
+  });
+
+  it('createDatabase requires a URL for every role, logging in as that role', () => {
+    const { workflow: _, ...missing } = urls.business;
+    expect(() => createDatabase({ ...urls, business: missing as typeof urls.business })).toThrow(/workflow/);
+    expect(() => createDatabase({ ...urls, system: { ...urls.system, console: '' } })).toThrow(/console/);
+    expect(() => createDatabase({ ...urls, business: { ...urls.business, approval: urls.business.publishing } })).toThrow(
+      /approval.*app_approval/,
+    );
+    expect(() => createDatabase({ ...urls, system: { ...urls.system, scheduler: urls.business.workflow } })).toThrow(/scheduler/);
   });
 
   it('reject an unknown role or purpose before connecting', async () => {
