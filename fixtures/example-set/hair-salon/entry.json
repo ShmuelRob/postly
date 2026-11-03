@@ -22,10 +22,10 @@
     "brand": { "colors": ["#1F1F1F", "#C9A27E"] },
     "style": "clean",
     "callToAction": "message",
-    "contact": { "whatsapp": "+972500000103" },
+    "contact": { "whatsapp": "+972501234567" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים", "מחירים של מספרות אחרות"],
     "fixedHashtags": ["#סטודיולילך", "#שיערהרצליה"],
-    "approverPhone": "+972500000103"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {

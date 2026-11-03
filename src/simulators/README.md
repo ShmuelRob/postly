@@ -13,7 +13,7 @@ Every simulator takes an optional `now: () => Date` so tests control time.
 
 ## Model task identification
 
-`ModelProvider` requests carry no task name, so `ModelSimulator` identifies the task by matching `outputJsonSchema` against `taskOutputJsonSchema(task)`, which is `z.toJSONSchema(modelTasks[task].output)`. The model layer must derive the schema the same way. Unscripted calls get input-aware defaults from `model-fixtures.ts` that pass the code checks in contracts.md (verbatim source quotes, post count equal to `postsPerWeek`, allowed formats, the requested networks).
+`ModelProvider` requests name their `task`. `ModelSimulator` serves that task and rejects a request whose `outputJsonSchema` is not `taskOutputJsonSchema(task)`, which is `z.toJSONSchema(modelTasks[task].output)`. Unscripted calls get input-aware defaults from `model-fixtures.ts` that pass the code checks in contracts.md (verbatim source quotes, post count equal to `postsPerWeek`, allowed formats, the requested networks).
 
 ## Contract suites
 

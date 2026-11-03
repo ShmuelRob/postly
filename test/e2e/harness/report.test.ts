@@ -152,3 +152,20 @@ describe('writeReport', () => {
     expect(readFileSync(path, 'utf8')).toContain('יש לנו צבעונים חדשים');
   });
 });
+
+describe('versioned runs', () => {
+  it('writes each run to its own folder, keeps latest, and lists runs newest first', async () => {
+    const { writeRunReport } = await import('./report.js');
+    const root = mkdtempSync(join(tmpdir(), 'runs-'));
+
+    writeRunReport(root, run([test()]), '2026-11-02T10-00-00Z', 'abc1234');
+    writeRunReport(root, run([test({ state: 'failed', errors: ['boom'] })]), '2026-11-03T10-00-00Z', 'def5678');
+    expect(readFileSync(join(root, '2026-11-02T10-00-00Z-abc1234', 'index.html'), 'utf8')).toContain('passed');
+    expect(readFileSync(join(root, 'latest', 'index.html'), 'utf8')).toContain('boom');
+    const index = readFileSync(join(root, 'index.html'), 'utf8');
+    expect(index.indexOf('def5678')).toBeGreaterThan(-1);
+    expect(index.indexOf('def5678')).toBeLessThan(index.indexOf('abc1234'));
+    expect(index).toContain('href="2026-11-03T10-00-00Z-def5678/index.html"');
+    rmSync(root, { recursive: true, force: true });
+  });
+});

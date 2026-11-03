@@ -28,7 +28,7 @@ describe('MessagingSimulator', () => {
       mediaUrl: 'https://storage.example.test/draft.jpg',
       buttons: [{ id: 'approve', title: 'אישור' }],
     });
-    await sim.sendText({ to: '+972509999999', text: 'someone else' });
+    await sim.sendText({ to: '+972501234563', text: 'someone else' });
 
     expect(sim.sentTo(owner).map((m) => m.kind)).toEqual(['text', 'buttons']);
     expect(sim.sentTo(owner)[1]).toMatchObject({ kind: 'buttons', request: { text: 'הטיוטה מוכנה' } });
@@ -36,7 +36,7 @@ describe('MessagingSimulator', () => {
   });
 
   it('builds signed webhooks for every inbound kind', async () => {
-    const sim = new MessagingSimulator({ businessNumber: '+972521111111' });
+    const sim = new MessagingSimulator({ businessNumber: '+972501234562' });
     const voiceId = sim.addMedia('audio/ogg', new Uint8Array([1, 2, 3]));
     const request = sim.webhook(
       sim.inboundText(owner, 'יש לנו צבעונים חדשים'),
@@ -47,7 +47,7 @@ describe('MessagingSimulator', () => {
 
     const messages = await sim.verifyWebhook(request);
     expect(messages.map((m) => m.content.kind)).toEqual(['text', 'voice', 'image', 'button_reply']);
-    expect(messages.every((m) => m.to === '+972521111111' && m.provider === 'simulator')).toBe(true);
+    expect(messages.every((m) => m.to === '+972501234562' && m.provider === 'simulator')).toBe(true);
     expect(new Set(messages.map((m) => m.providerMessageId)).size).toBe(4);
     expect(messages[3]?.content).toEqual({
       kind: 'button_reply',
