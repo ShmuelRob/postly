@@ -4,7 +4,7 @@ import { startE2eRun, type AppFactory, type Providers } from './app.js';
 import { emptyRecord } from './record.js';
 
 const OWNER = '+972501234567';
-const BUSINESS = '+972521111111';
+const BUSINESS = '+972501234562';
 const payload = { action: 'approve', postId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', versionHash: 'a'.repeat(64) } as const;
 
 function providers(overrides: Partial<Providers> = {}): Providers {

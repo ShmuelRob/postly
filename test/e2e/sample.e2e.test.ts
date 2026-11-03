@@ -16,7 +16,7 @@ import type {
 import { e2eTest, placeholderPng, type AppFactory, type MediaReader, type Providers } from './harness/index.js';
 
 const OWNER = '+972501234567';
-const BUSINESS = '+972521111111';
+const BUSINESS = '+972501234562';
 const STORAGE = 'https://storage.example.test/';
 const POST_ID = '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e';
 const VERSION_HASH = 'a'.repeat(64);
