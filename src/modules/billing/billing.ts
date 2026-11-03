@@ -24,7 +24,7 @@ export const BILLING_COPY = {
 export type WebhookOutcome =
   /** The status changed; `notified` is false when the 24-hour window was closed. */
   | { kind: 'applied'; from: SubscriptionState; to: SubscriptionState; notified: boolean }
-  /** Same status as stored, a repeated callback included: nothing changes, nothing is sent. */
+  /** The provider's current status equals the stored one (a stale, replayed or parallel callback): nothing changes, nothing is sent. */
   | { kind: 'unchanged'; status: SubscriptionState }
   /** No transition from the stored status to the reported one (state-machines.md, Subscription). */
   | { kind: 'rejected'; from: SubscriptionState; reported: SubscriptionState }
@@ -41,7 +41,7 @@ export interface BillingOptions {
 export interface Billing {
   /** Creates the payment link, stores the subscription row, and sends the link to the approver in WhatsApp. */
   sendPaymentLink(businessId: string): Promise<{ url: string }>;
-  /** Verifies the provider's callback and applies it; throws InvalidWebhookSignatureError when it does not verify. */
+  /** Verifies the provider's callback, then applies the provider's current status; throws InvalidWebhookSignatureError when it does not verify. */
   handleWebhook(request: WebhookRequest): Promise<WebhookOutcome>;
 }
 
@@ -80,20 +80,33 @@ export function createBilling(options: BillingOptions): Billing {
     }
   }
 
+  /**
+   * The callback is only a trigger (contracts.md, PaymentProvider): the status comes from the provider
+   * now, read while the subscription row is locked, so a stale, replayed or parallel callback applies
+   * at most the current status once.
+   */
   function apply(event: PaymentEvent): Promise<WebhookOutcome> {
     return db.withBusiness('billing', event.businessId, async (tx): Promise<WebhookOutcome> => {
-      const [row] = await tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, event.businessId));
+      const [row] = await tx
+        .select()
+        .from(schema.subscription)
+        .where(eq(schema.subscription.businessId, event.businessId))
+        .for('update');
       if (!row || row.providerCustomerId !== event.providerCustomerId) return { kind: 'unknown_subscription' };
-      if (row.status === event.status) return { kind: 'unchanged', status: row.status };
-      const name = eventFor(row.status, event.status);
-      if (!name) return { kind: 'rejected', from: row.status, reported: event.status };
+      if (row.providerSubscriptionId !== null && row.providerSubscriptionId !== event.providerSubscriptionId) {
+        return { kind: 'unknown_subscription' };
+      }
+      const current = await provider.getSubscriptionStatus(event.providerSubscriptionId);
+      if (row.status === current.status) return { kind: 'unchanged', status: row.status };
+      const name = eventFor(row.status, current.status);
+      if (!name) return { kind: 'rejected', from: row.status, reported: current.status };
       const to = transition(subscriptionMachine, row.status, name);
       await tx
         .update(schema.subscription)
         .set({
           status: to,
           providerSubscriptionId: event.providerSubscriptionId,
-          ...(event.currentPeriodEnd === undefined ? {} : { currentPeriodEnd: new Date(event.currentPeriodEnd) }),
+          ...(current.currentPeriodEnd === undefined ? {} : { currentPeriodEnd: new Date(current.currentPeriodEnd) }),
           updatedAt: new Date(),
         })
         .where(eq(schema.subscription.id, row.id));

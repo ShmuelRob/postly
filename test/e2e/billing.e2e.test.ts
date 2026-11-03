@@ -47,6 +47,7 @@ function setup(businessId: string) {
   const statuses: number[] = [];
   let sendLink = async () => {};
   let deliverPaymentWebhook = async (_id: string, _tamper?: boolean) => {};
+  let deliverHook = async (_hook: ReturnType<PaymentSimulator['webhook']>) => {};
 
   const app: AppFactory = ({ messaging: provider }) => {
     // The workflow is not part of this flow: the owner's messages only open the 24-hour window.
@@ -60,6 +61,10 @@ function setup(businessId: string) {
       const hook = payment.webhook(subscriptionId);
       const body = tamper ? hook.body.replace('"past_due"', '"active"') : hook.body;
       const res = await server.inject({ method: 'POST', url: PAYMENT_WEBHOOK_PATH, headers: hook.headers, payload: body });
+      statuses.push(res.statusCode);
+    };
+    deliverHook = async (hook) => {
+      const res = await server.inject({ method: 'POST', url: PAYMENT_WEBHOOK_PATH, headers: hook.headers, payload: hook.body });
       statuses.push(res.statusCode);
     };
     return {
@@ -78,6 +83,7 @@ function setup(businessId: string) {
     statuses,
     sendLink: () => sendLink(),
     deliverPaymentWebhook: (id: string, tamper?: boolean) => deliverPaymentWebhook(id, tamper),
+    deliverHook: (hook: ReturnType<PaymentSimulator['webhook']>) => deliverHook(hook),
   };
 }
 
@@ -149,4 +155,28 @@ e2eTest('a cancelled subscription stays cancelled', async ({ e2e }) => {
 
   expect((await stored(businessId))?.status).toBe('cancelled');
   expect(run.owner.received().map((m) => m.text).slice(1)).toEqual([BILLING_COPY.active, BILLING_COPY.cancelled]);
+}, 30_000);
+
+e2eTest('a stale callback and parallel deliveries apply the current status once', async ({ e2e }) => {
+  const businessId = await newBusiness();
+  const ctx = setup(businessId);
+  const run = await e2e.start({ providers: ctx.providers, app: ctx.app, ownerPhone: OWNER, businessPhone: BUSINESS_PHONE });
+
+  await run.owner.sendsText('שלחו לי קישור לתשלום');
+  await ctx.sendLink();
+  const subscriptionId = ctx.payment.completePayment(ctx.payment.links[0]!.link.providerCustomerId);
+  const paid = ctx.payment.webhook(subscriptionId);
+
+  // The provider delivers the same "active" callback twice at once: one change, one notice.
+  await Promise.all([ctx.deliverHook(paid), ctx.deliverHook(paid)]);
+  expect((await stored(businessId))?.status).toBe('active');
+
+  // A renewal fails, then the old "active" callback is retried late: the provider still says past_due.
+  ctx.payment.setStatus(subscriptionId, 'past_due');
+  await ctx.deliverPaymentWebhook(subscriptionId);
+  await ctx.deliverHook(paid);
+
+  expect(ctx.statuses).toEqual([200, 200, 200, 200]);
+  expect((await stored(businessId))?.status).toBe('past_due');
+  expect(run.owner.received().map((m) => m.text).slice(1)).toEqual([BILLING_COPY.active, BILLING_COPY.past_due]);
 }, 30_000);
