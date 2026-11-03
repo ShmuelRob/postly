@@ -1,11 +1,12 @@
 import { relative } from 'node:path';
 import type { Reporter, TestModule } from 'vitest/node';
 import './record.js';
-import { writeReport, type ReportTest } from './report.js';
+import { execFileSync } from 'node:child_process';
+import { writeRunReport, type ReportTest } from './report.js';
 
 const E2E_PROJECT = 'e2e';
 
-/** Writes the static HTML report for every run that includes e2e tests. Output: $E2E_REPORT_DIR or reports/e2e. */
+/** Writes the static HTML report for every run that includes e2e tests. Output root: $E2E_REPORT_DIR or reports/e2e (one folder per run, plus latest/ and a runs index). */
 export default class E2eReporter implements Reporter {
   onTestRunEnd(testModules: ReadonlyArray<TestModule>): void {
     const tests: ReportTest[] = [];
@@ -26,8 +27,17 @@ export default class E2eReporter implements Reporter {
       }
     }
     if (!tests.length) return;
-    const dir = process.env.E2E_REPORT_DIR ?? 'reports/e2e';
-    const path = writeReport(dir, { title: 'Postly end-to-end report', generatedAt: new Date().toISOString(), tests });
+    const root = process.env.E2E_REPORT_DIR ?? 'reports/e2e';
+    const stamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z').replaceAll(':', '-');
+    const path = writeRunReport(root, { title: 'Postly end-to-end report', generatedAt: new Date().toISOString(), tests }, stamp, shortSha());
     console.log(`\nE2E report: ${path}`);
+  }
+}
+
+function shortSha(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'nogit';
   }
 }

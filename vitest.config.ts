@@ -13,7 +13,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'test/**/*.test.ts', 'scripts/**/*.test.ts'],
           exclude: ['test/**/*.e2e.test.ts', 'test/fixtures/**', '**/*.db.test.ts', ...browserTests],
         },
       },
@@ -39,6 +39,9 @@ export default defineConfig({
         test: {
           name: 'e2e',
           include: ['test/e2e/**/*.e2e.test.ts'],
+          // The same migrated Postgres as the db project, for flows that store what the app did.
+          globalSetup: ['./test/db/global-setup.ts'],
+          hookTimeout: 120_000,
         },
       },
     ],

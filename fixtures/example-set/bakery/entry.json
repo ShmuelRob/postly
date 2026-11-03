@@ -22,10 +22,10 @@
     "brand": { "colors": ["#B5651D", "#F5DEB3"] },
     "style": "clean",
     "callToAction": "order_online",
-    "contact": { "phone": "+97248000002", "website": "https://bakery.example.com", "orderUrl": "https://bakery.example.com/order" },
+    "contact": { "phone": "+972501234567", "website": "https://bakery.example.com", "orderUrl": "https://bakery.example.com/order" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
     "fixedHashtags": ["#מאפייתהבוקר"],
-    "approverPhone": "+972500000102"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {
@@ -50,7 +50,7 @@
       { "id": "challah-price", "type": "price", "value": "28 ₪", "sourceQuote": "חלה מתוקה עם צימוקים ב-28 ₪" },
       { "id": "bourekas-deal", "type": "promotion", "value": "3 בורקסים ב-20 ₪", "sourceQuote": "3 בורקסים ב-20 ₪" },
       { "id": "deal-day", "type": "date", "value": "יום שישי", "sourceQuote": "ביום שישי מבצע" },
-      { "id": "order-phone", "type": "phone", "value": "04-8000002", "sourceQuote": "בטלפון 04-8000002" }
+      { "id": "order-phone", "type": "phone", "value": "050-1234567", "sourceQuote": "בטלפון 050-1234567" }
     ],
     "missingDetails": [],
     "overlayTexts": ["חלה מתוקה עם צימוקים", "3 בורקסים ב-20 ₪"]

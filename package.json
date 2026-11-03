@@ -14,6 +14,7 @@
     "test:e2e": "vitest run --project e2e",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint:links && npm run lint:boundaries && npm run test",
+    "gallery": "vitest run --config vitest.gallery.config.ts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

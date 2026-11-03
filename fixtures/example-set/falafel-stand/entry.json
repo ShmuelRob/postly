@@ -22,10 +22,10 @@
     "brand": { "colors": ["#E85D04", "#FFBA08"] },
     "style": "dynamic",
     "callToAction": "visit",
-    "contact": { "phone": "+972500000104" },
+    "contact": { "phone": "+972501234567" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
     "fixedHashtags": ["#הפלאפלשלאבי", "#באר_שבע"],
-    "approverPhone": "+972500000104"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {

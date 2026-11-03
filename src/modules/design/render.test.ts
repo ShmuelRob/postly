@@ -29,7 +29,7 @@ beforeAll(() => {
 
 afterAll(async () => {
   await renderer.close();
-});
+}, 30_000);
 
 function request(overrides: Partial<RenderRequest> = {}): RenderRequest {
   return {
