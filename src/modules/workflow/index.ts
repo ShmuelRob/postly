@@ -9,9 +9,7 @@ export {
   type EventResult,
   type EventSource,
   type Guard,
-  type PauseState,
   type RejectionLog,
   type Workflow,
   type WorkflowLogger,
 } from './workflow.js';
-export { createMemoryQueue, createPgBossQueue, JOB_NAMES, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions } from './worker.js';

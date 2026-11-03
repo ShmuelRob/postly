@@ -3,7 +3,10 @@ import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { MACHINE_STORES, type MachineName } from './machines.js';
 
-/** Where an event came from. Inbound events are not applied while a person handles the conversation. */
+/**
+ * Where an event came from. Inbound events on the owner-facing machines (those the workflow role
+ * updates) are not applied while a person handles the conversation.
+ */
 export type EventSource = 'inbound' | 'system' | 'console';
 
 /**
@@ -47,22 +50,18 @@ export const consoleLogger: WorkflowLogger = {
   rejected: (entry) => console.warn(JSON.stringify({ level: 'warn', msg: 'workflow event rejected', ...entry })),
 };
 
-export interface PauseState {
-  global: boolean;
-  business: boolean;
-}
-
 export interface Workflow {
-  /** Applies one event in one withBusiness() transaction: lock, check, guard, save. All or nothing. */
+  /**
+   * Applies one event in one withBusiness() transaction, as the role that owns the machine's table:
+   * lock, check, guard, save. All or nothing.
+   */
   apply(businessId: string, request: EventRequest): Promise<EventResult>;
   /** Marks the conversation as handled by a person and opens a `handoff` console item. */
   startHandoff(businessId: string, details?: Record<string, unknown>): Promise<void>;
-  /** Clears the flag (a console action); the current step resumes unchanged. */
+  /** Clears the flag and resolves the console item, as the console; the current step resumes unchanged. */
   clearHandoff(businessId: string): Promise<void>;
   /** False while a person handles the conversation: send no automatic replies. */
   mayAutoReply(businessId: string): Promise<boolean>;
-  /** Pause flags the publishing job reads right before it calls the provider. */
-  pauseState(businessId: string): Promise<PauseState>;
   /** Sets or clears the global publishing pause (`system_control`), a console action. */
   setGlobalPause(paused: boolean, by: string, reason?: string): Promise<void>;
 }
@@ -80,8 +79,9 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
     async apply(businessId, request) {
       const store = MACHINE_STORES[request.machine];
       const transitions = store.machine.transitions as Record<string, Record<string, string> | undefined>;
-      const result = await db.withBusiness(businessId, async (tx): Promise<EventResult> => {
-        if (request.source === 'inbound' && (await handoffAt(tx, businessId))) return { ok: false, reason: 'handoff' };
+      const checkHandoff = request.source === 'inbound' && store.role === 'workflow';
+      const result = await db.withBusiness(store.role, businessId, async (tx): Promise<EventResult> => {
+        if (checkHandoff && (await handoffAt(tx, businessId))) return { ok: false, reason: 'handoff' };
         const from = await store.load(tx, request.id);
         if (from === undefined) return { ok: false, reason: 'not_found' };
         const to = transitions[from]?.[request.event];
@@ -100,7 +100,7 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
     },
 
     async startHandoff(businessId, details = {}) {
-      await db.withBusiness(businessId, async (tx) => {
+      await db.withBusiness('workflow', businessId, async (tx) => {
         const t = schema.conversationState;
         const [row] = await tx
           .update(t)
@@ -113,7 +113,8 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
     },
 
     async clearHandoff(businessId) {
-      await db.withBusiness(businessId, async (tx) => {
+      // The team clears a handoff from the console; workflow may not update console items.
+      await db.withSystem('console', async (tx) => {
         await tx
           .update(schema.conversationState)
           .set({ handoffAt: null, updatedAt: new Date() })
@@ -127,15 +128,7 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
     },
 
     async mayAutoReply(businessId) {
-      return db.withBusiness(businessId, async (tx) => (await handoffAt(tx, businessId)) === null);
-    },
-
-    async pauseState(businessId) {
-      return db.withBusiness(businessId, async (tx) => {
-        const [control] = await tx.select({ paused: schema.systemControl.publishingPaused }).from(schema.systemControl);
-        const [biz] = await tx.select({ status: schema.business.status }).from(schema.business).where(eq(schema.business.id, businessId));
-        return { global: control?.paused ?? false, business: biz?.status === 'paused' };
-      });
+      return db.withBusiness('workflow', businessId, async (tx) => (await handoffAt(tx, businessId)) === null);
     },
 
     async setGlobalPause(paused, by, reason) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createMemoryQueue, startWorker } from './index.js';
+import { createMemoryQueue, startWorker } from './jobs.js';
 
-describe('worker', () => {
+describe('job queue', () => {
   it('runs a registered handler with the job data', async () => {
     const seen: unknown[] = [];
     const queue = await startWorker(createMemoryQueue(), { ping: async (data) => void seen.push(data) });

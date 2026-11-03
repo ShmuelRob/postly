@@ -24,7 +24,7 @@ TypeScript in strict mode, Fastify, Postgres with row-level security, Drizzle, p
 | Area | Working mode |
 | --- | --- |
 | Independent modules after contracts are set: design engine, vendor adapters, console | Parallel agents, each in its own worktree |
-| Core: state machine, data model, main flow | One agent at a time, no parallel work |
+| Core: state machine, data model, main flow | One agent at a time per set of files; several in parallel only when their files are disjoint (allowed by the human on 2026-11-03), each rebasing on the others' merges |
 | Review of agent-written code | A separate agent that did not write it, fanned out by area: security, tenant isolation, failure cases |
 | Hebrew content quality: captions and templates | Human judgment, with an example set agents run against |
 

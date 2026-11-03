@@ -25,13 +25,13 @@ const databaseDrivers = [
   'postgres',
   '@electric-sql/pglite',
   'drizzle-orm/node-postgres',
+  'pg-boss',
   'drizzle-orm/postgres-js',
   'drizzle-orm/pglite',
   'drizzle-orm/neon-serverless',
 ];
 
 // Matches a bare specifier when unresolved, or its node_modules path when resolved.
-// Matches a bare name (not installed) and an installed package (`node_modules/<name>/...`).
 const packagePattern = (names) => `(^|(^|/)node_modules/)(${names.join('|')})(/|$)`;
 
 const vendorRules = Object.entries(vendorPackages).map(([owner, names]) => ({

@@ -6,8 +6,8 @@ import postgres from 'postgres';
 export const MIGRATIONS_FOLDER = fileURLToPath(new URL('../../drizzle', import.meta.url));
 
 /**
- * Applies the migrations in drizzle/ as the migration role. It must be able to create roles (the first
- * migration creates the app_user and app_system logins) and owns every table.
+ * Applies the migrations in drizzle/ as the migration role. It must be able to create roles (the
+ * migrations create one login per role in database-schema.md) and owns every table.
  */
 export async function runMigrations(url: string): Promise<void> {
   const client = postgres(url, { max: 1, onnotice: () => {} });

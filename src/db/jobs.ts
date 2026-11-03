@@ -1,7 +1,8 @@
 import { PgBoss } from 'pg-boss';
 
-// Background jobs (technical-design.md: pg-boss). Handlers are registered by name; the queue behind
-// them is an interface, so tests run the same registrations in memory.
+// Background jobs (technical-design.md: pg-boss). pg-boss opens its own connections, so it lives in
+// src/db/ with the other drivers. Handlers are registered by name; the queue behind them is an
+// interface, so tests run the same registrations in memory.
 
 export type JobHandler<T = unknown> = (data: T) => Promise<void>;
 
@@ -10,9 +11,6 @@ export interface JobQueue {
   send<T>(name: string, data: T, options?: { startAfter?: Date }): Promise<void>;
   stop(): Promise<void>;
 }
-
-/** Job names known to the worker. Each package adds its names here together with a handler. */
-export const JOB_NAMES = [] as const satisfies readonly string[];
 
 export interface PgBossQueueOptions {
   connectionString: string;

@@ -13,7 +13,7 @@ const workflow = createWorkflow(db, { rejected: (entry) => logged.push(entry) })
 
 async function newBusiness(step: 'intro' | 'idle' = 'idle', status: 'onboarding' | 'active' = 'active') {
   const id = randomUUID();
-  await db.withSystem('console', async (tx) => {
+  await db.withBusiness('workflow', id, async (tx) => {
     await tx.insert(schema.business).values({ id, name: 'b', status, approverPhone: `+9725${Math.floor(Math.random() * 1e8)}` });
     await tx.insert(schema.conversationState).values({ businessId: id, step });
   });
@@ -21,7 +21,7 @@ async function newBusiness(step: 'intro' | 'idle' = 'idle', status: 'onboarding'
 }
 
 const stepOf = (id: string) =>
-  db.withBusiness(id, async (tx) => (await tx.select().from(schema.conversationState).where(eq(schema.conversationState.businessId, id)))[0]);
+  db.withBusiness('workflow', id, async (tx) => (await tx.select().from(schema.conversationState).where(eq(schema.conversationState.businessId, id)))[0]);
 
 beforeEach(() => void (logged.length = 0));
 
@@ -78,7 +78,7 @@ describe('apply', () => {
       },
     });
     await expect(failing).rejects.toThrow('boom');
-    const items = await db.withBusiness(b, (tx) => tx.select().from(schema.consoleItem));
+    const items = await db.withBusiness('workflow', b, (tx) => tx.select().from(schema.consoleItem));
     expect(items).toEqual([]);
     expect((await stepOf(b))?.step).toBe('idle');
   });
@@ -113,13 +113,13 @@ describe('handoff', () => {
       reason: 'handoff',
     });
     expect(logged[0]).toMatchObject({ reason: 'handoff', source: 'inbound' });
-    const open = await db.withBusiness(b, (tx) => tx.select().from(schema.consoleItem));
+    const open = await db.withBusiness('workflow', b, (tx) => tx.select().from(schema.consoleItem));
     expect(open).toMatchObject([{ kind: 'handoff', status: 'open', details: { reason: 'owner asked for a person' } }]);
 
     await workflow.clearHandoff(b);
     expect(await workflow.mayAutoReply(b)).toBe(true);
     expect((await stepOf(b))?.step).toBe('idle');
-    const items = await db.withBusiness(b, (tx) => tx.select().from(schema.consoleItem));
+    const items = await db.withBusiness('workflow', b, (tx) => tx.select().from(schema.consoleItem));
     expect(items).toMatchObject([{ kind: 'handoff', status: 'resolved' }]);
     expect(await workflow.apply(b, { machine: 'conversation', id: b, event: 'UPDATE_RECEIVED', source: 'inbound' })).toMatchObject({ ok: true });
   });
@@ -132,20 +132,16 @@ describe('handoff', () => {
 });
 
 describe('pause', () => {
-  it('reports the business pause from the business machine and the global pause from system_control', async () => {
+  it('pauses a business through the business machine and sets the global pause in system_control', async () => {
     const b = await newBusiness();
-    expect(await workflow.pauseState(b)).toEqual({ global: false, business: false });
     expect(await workflow.apply(b, { machine: 'business', id: b, event: 'PAUSE', source: 'console' })).toMatchObject({ ok: true, to: 'paused' });
-    expect(await workflow.pauseState(b)).toEqual({ global: false, business: true });
-
+    const control = () => db.withSystem('console', async (tx) => (await tx.select().from(schema.systemControl))[0]);
     await workflow.setGlobalPause(true, 'team@postly', 'provider outage');
     try {
-      expect(await workflow.pauseState(b)).toEqual({ global: true, business: true });
-      const [row] = await db.withSystem('console', (tx) => tx.select().from(schema.systemControl));
-      expect(row).toMatchObject({ publishingPaused: true, pausedBy: 'team@postly', pausedReason: 'provider outage' });
+      expect(await control()).toMatchObject({ publishingPaused: true, pausedBy: 'team@postly', pausedReason: 'provider outage' });
     } finally {
       await workflow.setGlobalPause(false, 'team@postly');
     }
-    expect(await workflow.pauseState(b)).toEqual({ global: false, business: true });
+    expect(await control()).toMatchObject({ publishingPaused: false, pausedBy: null, pausedReason: null });
   });
 });

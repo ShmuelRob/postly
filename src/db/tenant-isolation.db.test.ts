@@ -3,88 +3,19 @@ import { sql, type SQL } from 'drizzle-orm';
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
-import { createDatabase, type Tx } from './index.js';
+import { roleWith } from '../../test/db/grant-matrix.js';
+import { expectDbError, inserter, newBusiness, rowsFor, seed, type Seeded, tableName } from '../../test/db/rows.js';
+import { BUSINESS_ROLES, type BusinessRole, createDatabase, loginFor, type Tx } from './index.js';
 import * as schema from './schema.js';
 
-// Tenant isolation from database-schema.md: as app_user, one business cannot read, insert, update,
-// or delete another business's rows on any business-owned table, and without a business context
-// nothing is visible or writable.
+// Tenant isolation from database-schema.md: under every business role, one business cannot read,
+// insert, update, or delete another business's rows on any business-owned table, and without a
+// business context nothing is visible or writable. Each check runs as the role the grant matrix
+// gives that verb on that table; least-privilege.db.test.ts proves the other roles are refused.
 
-const db = createDatabase(inject('databaseUrls'), { max: 4 });
+const urls = inject('databaseUrls');
+const db = createDatabase(urls, { max: 2 });
 afterAll(() => db.close());
-
-/** One valid row per business-owned table (except business), in insert order, for business `b`. */
-function rowsFor(b: string): [PgTable, Record<string, unknown>][] {
-  const k = () => randomUUID();
-  const [channel, msg, media, rule, week, post, version, approval, publication, sub, run, item] = Array.from({ length: 12 }, k);
-  const tag = k();
-  return [
-    [schema.channelConnection, { id: channel, businessId: b, network: 'instagram', provider: 'zernio' }],
-    [schema.conversationState, { businessId: b }],
-    [
-      schema.message,
-      {
-        id: msg,
-        businessId: b,
-        direction: 'inbound',
-        kind: 'button_reply',
-        provider: 'sim',
-        providerMessageId: tag,
-        fromPhone: '+972501234560',
-        toPhone: '+972501234561',
-      },
-    ],
-    [schema.mediaAsset, { id: media, businessId: b, kind: 'photo', source: 'owner', storagePath: `p/${tag}`, mimeType: 'image/jpeg', sha256: 'x' }],
-    [schema.preferenceRule, { id: rule, businessId: b, scope: 'caption', rule: 'r', sourceMessageId: msg }],
-    [schema.weeklyUpdate, { id: week, businessId: b, weekStart: '2026-11-01' }],
-    [schema.post, { id: post, businessId: b, weeklyUpdateId: week, position: 1, format: 'single', plan: {} }],
-    [
-      schema.postVersion,
-      {
-        id: version,
-        businessId: b,
-        postId: post,
-        versionNumber: 1,
-        captions: {},
-        renderedMedia: {},
-        factSources: [],
-        factCheckPassed: true,
-        contentHash: 'h',
-      },
-    ],
-    [
-      schema.approval,
-      {
-        id: approval,
-        businessId: b,
-        postId: post,
-        postVersionId: version,
-        approvedVersionHash: 'h',
-        approverPhone: '+972501234560',
-        messageId: msg,
-        approvedAt: new Date(),
-      },
-    ],
-    [
-      schema.publication,
-      {
-        id: publication,
-        businessId: b,
-        postId: post,
-        approvalId: approval,
-        approvedVersionHash: 'h',
-        channelConnectionId: channel,
-        network: 'instagram',
-        scheduledFor: new Date(),
-      },
-    ],
-    [schema.subscription, { id: sub, businessId: b, plan: 'basic', provider: 'placeholder' }],
-    [schema.modelRun, { id: run, businessId: b, task: 'fact_extraction', promptVersion: 1, provider: 'sim', model: 'm', input: {}, valid: true }],
-    [schema.consoleItem, { id: item, businessId: b, kind: 'handoff' }],
-  ];
-}
-
-const tableName = (t: PgTable) => getTableConfig(t).name;
 
 const businessOwned = Object.values(schema as Record<string, unknown>)
   .filter((v): v is PgTable => v instanceof PgTable)
@@ -94,42 +25,10 @@ const businessOwned = Object.values(schema as Record<string, unknown>)
 
 /** The column that identifies a row: id, or business_id for conversation_state. */
 const keyOf = (name: string) => (name === 'conversation_state' ? 'business_id' : 'id');
+/** A column the updating role may set in place on each table. */
+const touchColumn = (name: string) => (name === 'approval' ? 'invalidated_at' : keyOf(name));
 
-let phone = 0;
-async function newBusiness() {
-  const id = randomUUID();
-  const approverPhone = `+97250${Date.now() % 1e6}${phone++}`;
-  await db.withSystem('console', (tx) => tx.insert(schema.business).values({ id, name: `b-${id}`, approverPhone }));
-  return id;
-}
-
-/** A business and the key of its row in each business-owned table. */
-type Seeded = { id: string; keys: Map<string, string> };
-
-async function seed(): Promise<Seeded> {
-  const id = await newBusiness();
-  const keys = new Map<string, string>([['business', id]]);
-  await db.withSystem('console', async (tx) => {
-    for (const [table, row] of rowsFor(id)) {
-      await tx.insert(table).values(row);
-      const name = tableName(table);
-      keys.set(name, String(row[name === 'conversation_state' ? 'businessId' : 'id']));
-    }
-  });
-  return { id, keys };
-}
-
-/** Drizzle wraps the Postgres error; its message is in cause. */
-async function expectDbError(run: Promise<unknown>, pattern: RegExp) {
-  const error = await run.then(
-    () => undefined,
-    (e: unknown) => e,
-  );
-  expect(error).toBeInstanceOf(Error);
-  const cause = (error as Error).cause;
-  expect(cause instanceof Error ? cause.message : (error as Error).message).toMatch(pattern);
-}
-
+const roleFor = (name: string, verb: 'SELECT' | 'UPDATE' | 'DELETE') => roleWith(name, verb, BUSINESS_ROLES) as BusinessRole | undefined;
 const count = async (tx: Tx, query: SQL) => (await tx.execute(query)).count;
 
 let a: Seeded;
@@ -137,9 +36,9 @@ let b: Seeded;
 let empty: string;
 
 beforeAll(async () => {
-  a = await seed();
-  b = await seed();
-  empty = await newBusiness();
+  a = await seed(db);
+  b = await seed(db);
+  empty = await newBusiness(db);
 });
 
 it('covers every business-owned table in the schema', () => {
@@ -147,19 +46,17 @@ it('covers every business-owned table in the schema', () => {
   expect([...businessOwned].sort()).toEqual(covered.sort());
 });
 
-/** Tables app_user may only insert into (database-schema.md: immutable rows). */
-const immutable = new Set(['post_version', 'approval']);
-/** A column app_user may update in place on each table. */
-const touchColumn = (name: string) => (name === 'approval' ? 'invalidated_at' : keyOf(name));
-
 describe.each(businessOwned)('%s', (name) => {
   const table = sql.identifier(name);
   const key = sql.identifier(keyOf(name));
   const touch = sql.identifier(touchColumn(name));
   const owner = sql.identifier(name === 'business' ? 'id' : 'business_id');
+  const reader = roleFor(name, 'SELECT')!;
+  const updater = roleFor(name, 'UPDATE');
+  const deleter = roleFor(name, 'DELETE');
 
   it('shows a business only its own rows', async () => {
-    const owners = await db.withBusiness(a.id, async (tx) =>
+    const owners = await db.withBusiness(reader, a.id, async (tx) =>
       (await tx.execute(sql`select ${owner} as o from ${table}`)).map((r) => r.o),
     );
     expect(owners).toContain(a.id);
@@ -167,56 +64,56 @@ describe.each(businessOwned)('%s', (name) => {
   });
 
   it("cannot read another business's row", async () => {
-    const n = await db.withBusiness(a.id, (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${b.keys.get(name)}`));
+    const n = await db.withBusiness(reader, a.id, (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${b.keys.get(name)}`));
     expect(n).toBe(0);
   });
 
-  it("cannot update or delete another business's row", async () => {
+  it.skipIf(!updater)("cannot update another business's row", async () => {
     const other = b.keys.get(name)!;
-    const update = () => db.withBusiness(a.id, (tx) => count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${other}`));
-    const remove = () => db.withBusiness(a.id, (tx) => count(tx, sql`delete from ${table} where ${key} = ${other}`));
-    if (name === 'post_version') await expectDbError(update(), /permission denied/);
-    else expect(await update()).toBe(0);
-    if (immutable.has(name)) await expectDbError(remove(), /permission denied/);
-    else expect(await remove()).toBe(0);
+    const n = await db.withBusiness(updater!, a.id, (tx) => count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${other}`));
+    expect(n).toBe(0);
+  });
+
+  it.skipIf(!deleter)("cannot delete another business's row", async () => {
+    const other = b.keys.get(name)!;
+    expect(await db.withBusiness(deleter!, a.id, (tx) => count(tx, sql`delete from ${table} where ${key} = ${other}`))).toBe(0);
     const still = await db.withSystem('console', (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${other}`));
     expect(still).toBe(1);
   });
 
-  it.skipIf(name === 'post_version')('can update its own row', async () => {
+  it.skipIf(!updater)('can update its own row', async () => {
     const own = a.keys.get(name)!;
-    const updated = await db.withBusiness(a.id, (tx) =>
-      count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${own}`),
-    );
-    expect(updated).toBe(1);
+    const n = await db.withBusiness(updater!, a.id, (tx) => count(tx, sql`update ${table} set ${touch} = ${touch} where ${key} = ${own}`));
+    expect(n).toBe(1);
   });
 
-  it.skipIf(name === 'business')('cannot move its own row to another business', async () => {
+  it.skipIf(!updater || name === 'business')('cannot move its own row to another business', async () => {
     const own = a.keys.get(name)!;
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.execute(sql`update ${table} set business_id = ${b.id} where ${key} = ${own}`)),
-      immutable.has(name) ? /permission denied/ : /row-level security/,
+      db.withBusiness(updater!, a.id, (tx) => tx.execute(sql`update ${table} set business_id = ${b.id} where ${key} = ${own}`)),
+      name === 'approval' ? /permission denied/ : /row-level security/,
     );
   });
 });
 
 describe('immutable rows', () => {
-  it('post_version cannot be updated or deleted, even by its own business', async () => {
+  it.each(BUSINESS_ROLES)('post_version cannot be updated or deleted by %s, even in its own business', async (role) => {
     const own = a.keys.get('post_version')!;
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.execute(sql`update post_version set content_hash = 'x' where id = ${own}`)),
+      db.withBusiness(role, a.id, (tx) => tx.execute(sql`update post_version set content_hash = 'x' where id = ${own}`)),
       /permission denied/,
     );
-    await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql`delete from post_version where id = ${own}`)), /permission denied/);
+    await expectDbError(db.withBusiness(role, a.id, (tx) => tx.execute(sql`delete from post_version where id = ${own}`)), /permission denied/);
   });
 
-  it('approval allows only invalidated_at to change', async () => {
+  it('approval allows only invalidated_at to change, and is never deleted', async () => {
     const own = a.keys.get('approval')!;
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.execute(sql`update approval set approved_version_hash = 'x' where id = ${own}`)),
+      db.withBusiness('approval', a.id, (tx) => tx.execute(sql`update approval set approved_version_hash = 'x' where id = ${own}`)),
       /permission denied/,
     );
-    const n = await db.withBusiness(a.id, (tx) => count(tx, sql`update approval set invalidated_at = now() where id = ${own}`));
+    await expectDbError(db.withBusiness('approval', a.id, (tx) => tx.execute(sql`delete from approval where id = ${own}`)), /permission denied/);
+    const n = await db.withBusiness('approval', a.id, (tx) => count(tx, sql`update approval set invalidated_at = now() where id = ${own}`));
     expect(n).toBe(1);
   });
 });
@@ -224,7 +121,7 @@ describe('immutable rows', () => {
 describe('inserts', () => {
   it('rejects a business other than the context business', async () => {
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972501234569' })),
+      db.withBusiness('workflow', a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972501234569' })),
       /row-level security/,
     );
   });
@@ -232,91 +129,115 @@ describe('inserts', () => {
   it.each(rowsFor(randomUUID()).map(([t]) => tableName(t)))('rejects a %s row for another business', async (name) => {
     // The target business has no rows yet, so no unique key refuses first; the RLS message is asserted.
     const [table, row] = rowsFor(empty).find(([t]) => tableName(t) === name)!;
-    await expectDbError(db.withBusiness(a.id, (tx) => tx.insert(table).values(row)), /row-level security/);
+    await expectDbError(db.withBusiness(inserter(name), a.id, (tx) => tx.insert(table).values(row)), /row-level security/);
   });
 
-  it('rejects a row with a null business_id', async () => {
+  it.each([
+    ['message', schema.message, { direction: 'inbound', kind: 'text', provider: 'sim', providerMessageId: randomUUID(), fromPhone: '+972501234567', toPhone: '+972501234568' }],
+    ['model_run', schema.modelRun, { task: 'fact_extraction', promptVersion: 1, provider: 'sim', model: 'm', input: {}, valid: true }],
+    ['console_item', schema.consoleItem, { kind: 'unknown_number' }],
+  ] as const)('rejects a %s row with a null business_id', async (name, table, row) => {
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.insert(schema.consoleItem).values({ kind: 'unknown_number' })),
+      db.withBusiness(inserter(name), a.id, (tx) => tx.insert(table).values({ ...row, businessId: null } as never)),
       /row-level security/,
     );
   });
 
   it('accepts a full set of rows for the context business', async () => {
-    const id = await newBusiness();
-    await db.withBusiness(id, async (tx) => {
-      for (const [table, row] of rowsFor(id)) await tx.insert(table).values(row);
-    });
-    expect(await db.withBusiness(id, (tx) => count(tx, sql`select 1 from publication`))).toBe(1);
+    const id = await newBusiness(db);
+    for (const [table, row] of rowsFor(id)) await db.withBusiness(inserter(tableName(table)), id, (tx) => tx.insert(table).values(row));
+    expect(await db.withBusiness('publishing', id, (tx) => count(tx, sql`select 1 from publication`))).toBe(1);
   });
 });
 
 describe('without a business context', () => {
-  // The app_user login itself, with no withBusiness() around it.
-  const raw = postgres(inject('databaseUrls').businessUrl, { max: 1, onnotice: () => {} });
-  afterAll(() => raw.end());
+  // Each role's login itself, with no withBusiness() around it, so app.business_id is never set.
+  const raw = new Map(BUSINESS_ROLES.map((r) => [r, postgres(urls.business[r], { max: 1, onnotice: () => {} })]));
+  afterAll(() => Promise.all([...raw.values()].map((c) => c.end())));
 
-  it.each(businessOwned)('sees no %s rows', async (name) => {
-    const rows = await raw`select 1 from ${raw(name)}`;
-    expect(rows.count).toBe(0);
-  });
+  describe.each(businessOwned)('%s', (name) => {
+    const updater = roleFor(name, 'UPDATE');
+    const deleter = roleFor(name, 'DELETE');
+    const owner = name === 'business' ? 'id' : 'business_id';
 
-  it('cannot insert, update, or delete', async () => {
-    await expect(raw`insert into console_item (business_id, kind) values (${a.id}, 'handoff')`).rejects.toThrow(
-      /row-level security/,
-    );
-    expect((await raw`update console_item set status = status where business_id = ${a.id}`).count).toBe(0);
-    expect((await raw`delete from console_item where business_id = ${a.id}`).count).toBe(0);
+    it('shows no rows', async () => {
+      const c = raw.get(roleFor(name, 'SELECT')!)!;
+      expect((await c`select 1 from ${c(name)}`).count).toBe(0);
+    });
+
+    it.skipIf(!updater)('updates no rows', async () => {
+      const c = raw.get(updater!)!;
+      const col = touchColumn(name);
+      expect((await c`update ${c(name)} set ${c(col)} = ${c(col)} where ${c(owner)} = ${a.id}`).count).toBe(0);
+    });
+
+    it.skipIf(!deleter)('deletes no rows', async () => {
+      const c = raw.get(deleter!)!;
+      expect((await c`delete from ${c(name)} where ${c(owner)} = ${a.id}`).count).toBe(0);
+      expect(await db.withSystem('console', (tx) => count(tx, sql`select 1 from ${sql.identifier(name)} where ${sql.identifier(owner)} = ${a.id}`))).toBe(1);
+    });
+
+    it.skipIf(name === 'business')('inserts nothing', async () => {
+      const [, row] = rowsFor(a.id).find(([t]) => tableName(t) === name)!;
+      const c = raw.get(inserter(name))!;
+      await expect(c`insert into ${c(name)} ${c({ business_id: a.id, ...columns(row) })}`).rejects.toThrow(/row-level security/);
+    });
   });
 });
+
+/** Drizzle row keys to column names and jsonb values to JSON text, for raw inserts. */
+function columns(row: Record<string, unknown>): Record<string, never> {
+  return Object.fromEntries(
+    Object.entries(row)
+      .filter(([k]) => k !== 'businessId')
+      .map(([k, v]) => [k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`), (typeof v === 'object' && v !== null && !(v instanceof Date) ? JSON.stringify(v) : v) as never]),
+  );
+}
 
 describe('rows with a null business_id', () => {
-  it('are visible only to app_system', async () => {
+  it('are visible only to system roles', async () => {
     const id = randomUUID();
     await db.withSystem('phone_lookup', (tx) => tx.insert(schema.consoleItem).values({ id, kind: 'unknown_number' }));
-    expect(await db.withBusiness(a.id, (tx) => count(tx, sql`select 1 from console_item where id = ${id}`))).toBe(0);
+    for (const role of BUSINESS_ROLES.filter((r) => roleWith('console_item', 'SELECT', [r]))) {
+      expect(await db.withBusiness(role, a.id, (tx) => count(tx, sql`select 1 from console_item where id = ${id}`))).toBe(0);
+    }
     expect(await db.withSystem('console', (tx) => count(tx, sql`select 1 from console_item where id = ${id}`))).toBe(1);
-  });
-});
-
-describe('system tables', () => {
-  it.each(['model_task_config', 'prompt_template', 'system_control'])('%s is read-only for app_user', async (name) => {
-    const table = sql.identifier(name);
-    await expect(db.withBusiness(a.id, (tx) => tx.execute(sql`select * from ${table}`))).resolves.toBeDefined();
-    await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql`delete from ${table}`)), /permission denied/);
   });
 });
 
 describe('escapes from inside withBusiness()', () => {
   const visibleOfB = (tx: Tx) => count(tx, sql`select 1 from business where id = ${b.id}`);
 
-  it('runs as app_user, which is neither a superuser nor exempt from RLS', async () => {
-    const [row] = await db.withBusiness(a.id, (tx) =>
+  it.each(BUSINESS_ROLES)('%s runs as its own login, which is neither a superuser nor exempt from RLS', async (role) => {
+    const [row] = await db.withBusiness(role, a.id, (tx) =>
       tx.execute(
         sql`select current_user as u, (select rolsuper or rolbypassrls from pg_roles where rolname = current_user) as strong`,
       ),
     );
-    expect(row).toEqual({ u: 'app_user', strong: false });
+    expect(row).toEqual({ u: loginFor(role), strong: false });
   });
 
-  it('reset role stays app_user and sees nothing of B', async () => {
-    const n = await db.withBusiness(a.id, async (tx) => {
+  it('reset role stays on the login and sees nothing of B', async () => {
+    const [row] = await db.withBusiness('workflow', a.id, async (tx) => {
       await tx.execute(sql`reset role`);
-      return visibleOfB(tx);
+      return tx.execute(sql`select current_user as u, (select count(*)::int from business where id = ${b.id}) as n`);
     });
-    expect(n).toBe(0);
+    expect(row).toEqual({ u: 'app_workflow', n: 0 });
   });
 
-  it.each(['set local role app_system', 'set role app_system', 'set session authorization app_system'])(
-    '%s is refused',
-    async (statement) => {
-      await expectDbError(db.withBusiness(a.id, (tx) => tx.execute(sql.raw(statement))), /permission denied/);
-    },
-  );
+  it.each([
+    'set local role app_sys_console',
+    'set role app_sys_console',
+    'set session authorization app_sys_console',
+    'set local role app_publishing',
+    'set role app_approval',
+  ])('%s is refused', async (statement) => {
+    await expectDbError(db.withBusiness('workflow', a.id, (tx) => tx.execute(sql.raw(statement))), /permission denied/);
+  });
 
   it('set role to the table owner is refused', async () => {
     await expectDbError(
-      db.withBusiness(a.id, async (tx) => {
+      db.withBusiness('workflow', a.id, async (tx) => {
         const [row] = await tx.execute(sql`select tableowner as o from pg_tables where tablename = 'business'`);
         await tx.execute(sql`set role ${sql.identifier(String(row!.o))}`);
       }),
@@ -325,14 +246,17 @@ describe('escapes from inside withBusiness()', () => {
   });
 
   it('a session-level setting left on a pooled connection does not carry into the next withBusiness()', async () => {
-    const single = createDatabase(inject('databaseUrls'), { max: 1 });
+    const single = createDatabase(urls, { max: 1 });
     try {
-      await single.withBusiness(a.id, (tx) => tx.execute(sql`select set_config('app.business_id', ${b.id}, false)`));
-      const [row] = await single.withBusiness(a.id, (tx) =>
-        tx.execute(sql`select current_setting('app.business_id') as v, current_user as u`),
+      const pid = await single.withBusiness('workflow', a.id, async (tx) => {
+        await tx.execute(sql`select set_config('app.business_id', ${b.id}, false)`);
+        return (await tx.execute(sql`select pg_backend_pid() as p`))[0]!.p;
+      });
+      const [row] = await single.withBusiness('workflow', a.id, (tx) =>
+        tx.execute(sql`select current_setting('app.business_id') as v, current_user as u, pg_backend_pid() as p`),
       );
-      expect(row).toEqual({ v: a.id, u: 'app_user' });
-      expect(await single.withBusiness(a.id, visibleOfB)).toBe(0);
+      expect(row).toEqual({ v: a.id, u: 'app_workflow', p: pid });
+      expect(await single.withBusiness('workflow', a.id, visibleOfB)).toBe(0);
     } finally {
       await single.close();
     }
@@ -341,7 +265,7 @@ describe('escapes from inside withBusiness()', () => {
   it('known gap: raw set_config to another business is caught only by the source guard', async () => {
     // database-schema.md, "Accepted risk": Postgres cannot stop a role from changing its own custom
     // settings, so src/db/raw-sql-guard.test.ts bans it outside src/db/. This pins the behavior.
-    const n = await db.withBusiness(a.id, async (tx) => {
+    const n = await db.withBusiness('workflow', a.id, async (tx) => {
       await tx.execute(sql`select set_config('app.business_id', ${b.id}, true)`);
       return visibleOfB(tx);
     });
@@ -351,19 +275,29 @@ describe('escapes from inside withBusiness()', () => {
 
 describe('withBusiness', () => {
   it('rejects a business id that is not a uuid', async () => {
-    await expect(db.withBusiness("' or true --", async () => 1)).rejects.toThrow();
+    await expect(db.withBusiness('workflow', "' or true --", async () => 1)).rejects.toThrow();
   });
 
-  it('ends the business context with the transaction', async () => {
-    const single = createDatabase(inject('databaseUrls'), { max: 1 });
+  it('set_config(..., true), as withBusiness() uses it, ends with the transaction', async () => {
+    // Inspected on the connection after commit, outside any transaction: the session holds no business.
+    const c = postgres(urls.business.workflow, { max: 1, onnotice: () => {} });
     try {
-      await single.withBusiness(a.id, async () => {});
-      const [row] = await single.withBusiness(a.id, async (tx) => {
-        // Clear the context set by this call, then read what the previous transaction left behind.
-        await tx.execute(sql`select set_config('app.business_id', '', true)`);
-        return tx.execute(sql`select count(*)::int as n from business`);
-      });
-      expect(row).toEqual({ n: 0 });
+      await c.begin((tx) => tx`select set_config('app.business_id', ${a.id}, true)`);
+      const [row] = await c`select coalesce(current_setting('app.business_id', true), '') as v, (select count(*)::int from business) as n`;
+      expect(row).toEqual({ v: '', n: 0 });
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('the next transaction on the same connection sees only its own business', async () => {
+    const single = createDatabase(urls, { max: 1 });
+    try {
+      const first = await single.withBusiness('workflow', a.id, (tx) => tx.execute(sql`select pg_backend_pid() as p`));
+      const [row] = await single.withBusiness('workflow', b.id, (tx) =>
+        tx.execute(sql`select pg_backend_pid() as p, array_agg(id) as ids from business`),
+      );
+      expect(row).toEqual({ p: first[0]!.p, ids: [b.id] });
     } finally {
       await single.close();
     }

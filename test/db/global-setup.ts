@@ -1,12 +1,12 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import postgres from 'postgres';
 import type { TestProject } from 'vitest/node';
-import type { DatabaseUrls } from '../../src/db/index.js';
+import { BUSINESS_ROLES, type DatabaseUrls, databaseUrls, loginFor, SYSTEM_PURPOSES } from '../../src/db/index.js';
 import { runMigrations } from '../../src/db/migrate.js';
 
 declare module 'vitest' {
   export interface ProvidedContext {
-    /** Logins as app_user and app_system; tests never use the migration superuser. */
+    /** One login per role in database-schema.md; tests never use the migration superuser. */
     databaseUrls: DatabaseUrls;
   }
 }
@@ -16,7 +16,7 @@ const PASSWORD = 'test-only';
 /**
  * One migrated Postgres for the db project. TEST_DATABASE_URL points at an existing empty database
  * with a superuser login; otherwise Testcontainers starts Postgres in Docker (technical-design.md).
- * The superuser runs the migrations and sets test passwords on the app logins.
+ * The superuser runs the migrations and sets test passwords on the role logins.
  */
 export default async function setup(project: TestProject) {
   let container: StartedPostgreSqlContainer | undefined;
@@ -28,19 +28,13 @@ export default async function setup(project: TestProject) {
   await runMigrations(url);
   const admin = postgres(url, { max: 1, onnotice: () => {} });
   try {
-    for (const role of ['app_user', 'app_system']) {
-      await admin.unsafe(`alter role ${role} password '${PASSWORD}'`);
+    for (const role of [...BUSINESS_ROLES, ...SYSTEM_PURPOSES]) {
+      await admin.unsafe(`alter role ${loginFor(role)} password '${PASSWORD}'`);
     }
   } finally {
     await admin.end();
   }
-  const as = (role: string) => {
-    const u = new URL(url);
-    u.username = role;
-    u.password = PASSWORD;
-    return u.toString();
-  };
-  project.provide('databaseUrls', { businessUrl: as('app_user'), systemUrl: as('app_system') });
+  project.provide('databaseUrls', databaseUrls(url, () => PASSWORD));
   return async () => {
     await container?.stop();
   };

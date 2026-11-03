@@ -47,14 +47,14 @@ const appFor =
   });
 
 const stepOf = (businessId: string) =>
-  db.withBusiness(businessId, async (tx) => {
+  db.withBusiness('workflow', businessId, async (tx) => {
     const [row] = await tx.select().from(schema.conversationState).where(eq(schema.conversationState.businessId, businessId));
     return row?.step;
   });
 
 e2eTest('an invalid transition is rejected and logged, and handoff stops automatic replies', async ({ e2e }) => {
   const businessId = randomUUID();
-  await db.withSystem('console', async (tx) => {
+  await db.withBusiness('workflow', businessId, async (tx) => {
     await tx.insert(schema.business).values({ id: businessId, name: 'מספרת רחוב הרצל', status: 'active', approverPhone: OWNER });
     await tx.insert(schema.conversationState).values({ businessId, step: 'idle' });
   });
@@ -81,7 +81,7 @@ e2eTest('an invalid transition is rejected and logged, and handoff stops automat
   expect(await stepOf(businessId)).toBe('idle');
   expect(run.owner.received().map((m) => m.text)).toEqual([NOT_NOW, HANDING_OFF]);
 
-  const items = await db.withBusiness(businessId, (tx) => tx.select().from(schema.consoleItem));
+  const items = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem));
   expect(items).toMatchObject([{ kind: 'handoff', status: 'open' }]);
   run.recordConsoleItems([
     ...rejections.map((r) => ({ kind: `log: ${r.reason}`, details: { machine: r.machine, event: r.event, from: r.from } })),

@@ -18,15 +18,15 @@ const validIntent = { intent: 'weekly_update', confidence: 0.9 } as const;
 
 async function newBusiness(): Promise<string> {
   const id = randomUUID();
-  await db.withSystem('console', (tx) =>
+  await db.withBusiness('workflow', id, (tx) =>
     tx.insert(schema.business).values({ id, name: `b-${id}`, approverPhone: `+9725${Math.floor(1e7 + Math.random() * 9e7)}` }),
   );
   return id;
 }
 
 const runsOf = (businessId: string) =>
-  db.withBusiness(businessId, (tx) => tx.select().from(schema.modelRun).orderBy(schema.modelRun.attempt));
-const consoleOf = (businessId: string) => db.withBusiness(businessId, (tx) => tx.select().from(schema.consoleItem));
+  db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun).orderBy(schema.modelRun.attempt));
+const consoleOf = (businessId: string) => db.withBusiness('model', businessId, (tx) => tx.select().from(schema.consoleItem));
 
 let sim: ModelSimulator;
 let businessId: string;
@@ -37,7 +37,7 @@ beforeEach(async () => {
 
 describe('seed rows', () => {
   it('has a config row and its active prompt version for every task', async () => {
-    const rows = await db.withBusiness(businessId, async (tx) => ({
+    const rows = await db.withBusiness('model', businessId, async (tx) => ({
       configs: await tx.select().from(schema.modelTaskConfig),
       prompts: await tx.select().from(schema.promptTemplate),
     }));

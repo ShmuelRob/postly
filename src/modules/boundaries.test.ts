@@ -1,10 +1,10 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { cruise, type ICruiseResult, type IViolation } from 'dependency-cruiser';
+import extractDepcruiseOptions from 'dependency-cruiser/config-utl/extract-depcruise-options';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
-const depcruiseBin = `${repoRoot}node_modules/dependency-cruiser/bin/dependency-cruiser.mjs`;
 const config = `${repoRoot}.dependency-cruiser.mjs`;
 
 // The modules listed in technical-design.md, one folder each.
@@ -20,29 +20,31 @@ const modules = [
   'console',
 ];
 
-type Violation = { from: string; to: string; rule: { name: string } };
-type CruiseResult = { summary: { violations: Violation[]; totalCruised: number } };
-
-function cruise(cwd: string): CruiseResult {
-  const run = spawnSync(
-    process.execPath,
-    [depcruiseBin, 'src', '--config', config, '--output-type', 'json'],
-    { cwd, encoding: 'utf8' },
-  );
-  if (!run.stdout) throw new Error(`dependency-cruiser produced no output: ${run.stderr}`);
-  return JSON.parse(run.stdout) as CruiseResult;
+// In-process, not a spawned CLI: a cold dependency-cruiser process costs several
+// seconds under a loaded full run, and spawnSync blocks the worker while it runs.
+async function cruiseTree(baseDir: string): Promise<ICruiseResult> {
+  const options = await extractDepcruiseOptions(config);
+  const { output } = await cruise(['src'], { ...options, baseDir });
+  if (typeof output === 'string') throw new Error('dependency-cruiser returned a string, expected a result object');
+  return output;
 }
 
-// Each cruise takes over a second, and more when the db and design projects run alongside.
-describe('module boundaries', { timeout: 30_000 }, () => {
-  it('flags every seeded violation and nothing else', () => {
-    const result = cruise(`${repoRoot}test/fixtures/boundaries`);
-    const found = result.summary.violations
-      // An installed package resolves into node_modules; name it by its package, as when it is not installed.
-      .map((v) => `${v.rule.name}: ${v.from} -> ${v.to.replace(/^(\.\.\/)*node_modules\/((@[^/]+\/)?[^/]+).*$/, '$2')}`)
-      .sort();
+// An installed package resolves into node_modules; name it by its package, as when it is not installed.
+const format = (v: IViolation) =>
+  `${v.rule.name}: ${v.from} -> ${v.to.replace(/^(\.\.\/)*node_modules\/((@[^/]+\/)?[^/]+).*$/, '$2')}`;
 
-    expect(found).toEqual(
+describe('module boundaries', () => {
+  let fixtures: ICruiseResult;
+  let real: ICruiseResult;
+
+  // Each cruise is CPU-bound and takes seconds when the db and design projects run alongside.
+  beforeAll(async () => {
+    fixtures = await cruiseTree(`${repoRoot}test/fixtures/boundaries`);
+    real = await cruiseTree(repoRoot);
+  }, 60_000);
+
+  it('flags every seeded violation and nothing else', () => {
+    expect(fixtures.summary.violations.map(format).sort()).toEqual(
       [
         'db-driver-outside-db: src/modules/content/raw-db.ts -> pg',
         'db-internals: src/modules/content/db-client.ts -> src/db/client.ts',
@@ -56,9 +58,8 @@ describe('module boundaries', { timeout: 30_000 }, () => {
   });
 
   it('passes on the real source tree', () => {
-    const result = cruise(repoRoot);
-    expect(result.summary.violations).toEqual([]);
-    expect(result.summary.totalCruised).toBeGreaterThan(modules.length);
+    expect(real.summary.violations).toEqual([]);
+    expect(real.summary.totalCruised).toBeGreaterThan(modules.length);
   });
 
   it.each(modules)('module %s has a public index.ts', (name) => {
