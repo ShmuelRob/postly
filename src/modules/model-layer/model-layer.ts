@@ -104,7 +104,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
   return {
     async run(businessId, task, input, options = {}) {
       const parsedInput = modelTasks[task].input.parse(input);
-      const { config, template } = await deps.db.withBusiness(businessId, async (tx) => {
+      const { config, template } = await deps.db.withBusiness('model', businessId, async (tx) => {
         const [config] = await tx.select().from(modelTaskConfig).where(eq(modelTaskConfig.task, task));
         if (!config) throw new Error(`No model_task_config row for ${task}`);
         const [template] = await tx
@@ -129,7 +129,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         const started = performance.now();
         const outcome = await attempt(businessId, task, parsedInput, config, template.template, target);
         const durationMs = Math.round(performance.now() - started);
-        const rows = await deps.db.withBusiness(businessId, (tx) =>
+        const rows = await deps.db.withBusiness('model', businessId, (tx) =>
           tx
             .insert(modelRun)
             .values({
@@ -163,7 +163,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         if (!outcome.result && fallback) target = fallback;
       }
 
-      const [item] = await deps.db.withBusiness(businessId, (tx) =>
+      const [item] = await deps.db.withBusiness('model', businessId, (tx) =>
         tx
           .insert(consoleItem)
           .values({
