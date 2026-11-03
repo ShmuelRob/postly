@@ -10,6 +10,7 @@ import {
   SendTemplateRequest,
   SendTextRequest,
   WebhookRequest,
+  WindowClosedError,
 } from '../contracts/providers/messaging.js';
 
 export const SIMULATOR_SIGNATURE_HEADER = 'x-simulator-signature';
@@ -25,7 +26,14 @@ export interface MessagingSimulatorOptions {
   webhookSecret?: string;
   webhookUrl?: string;
   now?: () => Date;
+  /**
+   * When true, text and buttons to a number with no inbound message (built by inbound*()) in the
+   * last 24 hours throw WindowClosedError, as WhatsApp does. Off by default.
+   */
+  enforceWindow?: boolean;
 }
+
+const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * In-memory WhatsApp. Records every message sent (what the owner would see) and
@@ -42,6 +50,8 @@ export class MessagingSimulator implements MessagingProvider {
   private readonly now: () => Date;
   private readonly media = new Map<string, GetMediaResult>();
   private readonly sendFailures: Error[] = [];
+  private readonly enforceWindow: boolean;
+  private readonly lastInbound = new Map<string, Date>();
   private nextId = 1;
 
   constructor(options: MessagingSimulatorOptions = {}) {
@@ -49,10 +59,13 @@ export class MessagingSimulator implements MessagingProvider {
     this.secret = options.webhookSecret ?? 'simulator-webhook-secret';
     this.url = options.webhookUrl ?? 'https://postly.example.test/webhooks/messaging';
     this.now = options.now ?? (() => new Date());
+    this.enforceWindow = options.enforceWindow ?? false;
   }
 
   async sendText(request: SendTextRequest): Promise<SendResult> {
-    return this.record({ kind: 'text', request: SendTextRequest.parse(request) });
+    const parsed = SendTextRequest.parse(request);
+    this.checkWindow(parsed.to);
+    return this.record({ kind: 'text', request: parsed });
   }
 
   async sendTemplate(request: SendTemplateRequest): Promise<SendResult> {
@@ -60,7 +73,9 @@ export class MessagingSimulator implements MessagingProvider {
   }
 
   async sendButtons(request: SendButtonsRequest): Promise<SendResult> {
-    return this.record({ kind: 'buttons', request: SendButtonsRequest.parse(request) });
+    const parsed = SendButtonsRequest.parse(request);
+    this.checkWindow(parsed.to);
+    return this.record({ kind: 'buttons', request: parsed });
   }
 
   async getMedia(providerMediaId: string): Promise<GetMediaResult> {
@@ -117,6 +132,7 @@ export class MessagingSimulator implements MessagingProvider {
   }
 
   inbound(from: string, content: InboundMessage['content']): InboundMessage {
+    this.lastInbound.set(from, this.now());
     return InboundMessage.parse({
       provider: this.name,
       providerMessageId: `SM-sim-in-${this.nextId++}`,
@@ -135,6 +151,12 @@ export class MessagingSimulator implements MessagingProvider {
       body,
       url: this.url,
     };
+  }
+
+  private checkWindow(to: string): void {
+    if (!this.enforceWindow) return;
+    const last = this.lastInbound.get(to) ?? null;
+    if (!last || this.now().getTime() - last.getTime() > WINDOW_MS) throw new WindowClosedError(to, last);
   }
 
   private sign(url: string, body: string): string {
