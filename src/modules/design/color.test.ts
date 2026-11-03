@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrastRatio, ensureContrast, resolvePalette } from './color.js';
+import { contrastRatio, edgeColor, ensureContrast, ensureGraphicContrast, MIN_GRAPHIC_CONTRAST, resolvePalette } from './color.js';
 
 describe('contrastRatio', () => {
   it('follows the WCAG formula', () => {
@@ -42,5 +42,38 @@ describe('resolvePalette', () => {
       accent: '#AA0000',
       secondary: '#00AA00',
     });
+  });
+});
+
+describe('ensureGraphicContrast', () => {
+  it('keeps a color that already reaches 3:1 against its neighbor', () => {
+    expect(ensureGraphicContrast('#2F6BFF', '#FFFFFF')).toBe('#2F6BFF');
+    expect(ensureGraphicContrast('#FFC83D', '#14141F')).toBe('#FFC83D');
+  });
+
+  it('darkens a pale brand color on a light neighbor and lightens a dark one on a dark neighbor', () => {
+    const pale = ensureGraphicContrast('#E8B4C8', '#FFFFFF');
+    expect(contrastRatio(pale, '#FFFFFF')).toBeGreaterThanOrEqual(MIN_GRAPHIC_CONTRAST);
+    expect(contrastRatio(pale, '#FFFFFF')).toBeLessThan(4);
+    const dark = ensureGraphicContrast('#1F3A5F', '#14141F');
+    expect(contrastRatio(dark, '#14141F')).toBeGreaterThanOrEqual(MIN_GRAPHIC_CONTRAST);
+  });
+
+  it('always reaches 3:1', () => {
+    for (const color of ['#E8B4C8', '#F5E6A8', '#777777', '#FFFFFF', '#000000', '#C9A27E']) {
+      for (const against of ['#FFFFFF', '#FBF6EE', '#14141F', '#777777']) {
+        expect(contrastRatio(ensureGraphicContrast(color, against), against)).toBeGreaterThanOrEqual(MIN_GRAPHIC_CONTRAST);
+      }
+    }
+  });
+});
+
+describe('edgeColor', () => {
+  it('returns the dark shadow or white, whichever reaches 3:1 against the element', () => {
+    for (const color of ['#FF3D5A', '#FFC83D', '#E8B4C8', '#1F3A5F', '#14141F', '#777777']) {
+      expect(contrastRatio(edgeColor(color, '#14141F'), color)).toBeGreaterThanOrEqual(MIN_GRAPHIC_CONTRAST);
+    }
+    expect(edgeColor('#FFC83D', '#14141F')).toBe('#14141F');
+    expect(edgeColor('#1F3A5F', '#14141F')).toBe('#FFFFFF');
   });
 });

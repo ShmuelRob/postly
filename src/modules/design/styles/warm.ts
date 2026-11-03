@@ -3,7 +3,7 @@
 // the overlay text sits on a paper card overlapping the bottom of the photo. The paper
 // grain is an SVG noise drawn in code, so no texture file enters the repository.
 
-import { ensureContrast } from '../color.js';
+import { ensureContrast, ensureGraphicContrast } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { LOGO_BOX } from '../layout.js';
 import { logoHtml, overlayHtml, photoHtml } from './shared.js';
@@ -34,7 +34,7 @@ export const warm: StyleTemplate = {
     secondary: { family: 'Assistant', weight: 400 },
   },
   palette: { background: '#F3E9DC', text: '#3B2A1E', accent: '#B5683C', secondary: '#7A8450' },
-  overlay: { size: 64, minSize: 46 },
+  overlay: { size: 64, minSize: 48 },
 
   photoBox(kind, canvas) {
     const width = canvas.width - 2 * FRAME;
@@ -47,7 +47,7 @@ export const warm: StyleTemplate = {
     const logo = `<div class="logo-circle">${logoHtml(ctx, 'logo')}</div>`;
     if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logo}`;
     return `${photoHtml(ctx, 'photo')}${logo}
-      <div class="card"><div class="rule"><span></span><span></span></div>${overlayHtml(ctx, 'overlay')}</div>`;
+      <div class="card"><div class="rule"><span data-graphic></span><span data-graphic></span></div>${overlayHtml(ctx, 'overlay')}</div>`;
   },
 
   css(ctx) {
@@ -68,8 +68,8 @@ export const warm: StyleTemplate = {
         display: flex; flex-direction: column; justify-content: center; gap: 18px; }
       .rule { display: flex; gap: 10px; }
       .rule span { height: 6px; border-radius: 3px; }
-      .rule span:first-child { width: 72px; background: ${palette.accent}; }
-      .rule span:last-child { width: 24px; background: ${secondary}; }
+      .rule span:first-child { width: 72px; background: ${ensureGraphicContrast(palette.accent, CARD_COLOR)}; }
+      .rule span:last-child { width: 24px; background: ${ensureGraphicContrast(secondary, CARD_COLOR)}; }
       .overlay { ${fontCss(this.fonts.headline)} line-height: 1.2; color: ${ensureContrast(palette.text, CARD_COLOR)}; text-align: start; }
     `;
   },
