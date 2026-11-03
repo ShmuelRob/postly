@@ -30,8 +30,8 @@ function rowsFor(b: string): [PgTable, Record<string, unknown>][] {
         kind: 'button_reply',
         provider: 'sim',
         providerMessageId: tag,
-        fromPhone: '+972500000000',
-        toPhone: '+972500000001',
+        fromPhone: '+972501234560',
+        toPhone: '+972501234561',
       },
     ],
     [schema.mediaAsset, { id: media, businessId: b, kind: 'photo', source: 'owner', storagePath: `p/${tag}`, mimeType: 'image/jpeg', sha256: 'x' }],
@@ -60,7 +60,7 @@ function rowsFor(b: string): [PgTable, Record<string, unknown>][] {
         postId: post,
         postVersionId: version,
         approvedVersionHash: 'h',
-        approverPhone: '+972500000000',
+        approverPhone: '+972501234560',
         messageId: msg,
         approvedAt: new Date(),
       },
@@ -224,7 +224,7 @@ describe('immutable rows', () => {
 describe('inserts', () => {
   it('rejects a business other than the context business', async () => {
     await expectDbError(
-      db.withBusiness(a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972599999999' })),
+      db.withBusiness(a.id, (tx) => tx.insert(schema.business).values({ name: 'x', approverPhone: '+972501234569' })),
       /row-level security/,
     );
   });

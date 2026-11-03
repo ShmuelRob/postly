@@ -18,7 +18,7 @@ function validEntry() {
       differentiator: 'פרחים טריים כל בוקר',
       channels: ['instagram'],
       style: 'warm',
-      approverPhone: '+972500000001',
+      approverPhone: '+972501234561',
     },
     photos: [
       {
@@ -76,7 +76,7 @@ describe('loadExampleEntry', () => {
 
   it('rejects an invalid business profile', async () => {
     const entry = validEntry();
-    entry.profile.approverPhone = '050-0000001';
+    entry.profile.approverPhone = '050-123456';
     const dir = await writeEntry('florist', entry);
     await expect(loadExampleEntry(dir)).rejects.toThrow(/florist.*profile\.approverPhone/s);
   });
@@ -210,6 +210,18 @@ describe('the provisional example set', () => {
         // Line endings may differ on a Windows checkout.
         expect((await readFile(photo.path, 'utf8')).replace(/\r\n/g, '\n'), photo.path).toBe(svg);
       }
+    }
+  });
+});
+
+describe('fixture phones', () => {
+  it('uses only the fake number 0501234567 in the committed set', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const root = 'fixtures/example-set';
+    for (const slug of readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory())) {
+      const text = readFileSync(join(root, slug.name, 'entry.json'), 'utf8');
+      const phones = [...text.matchAll(/\+?\d[\d-]{8,}\d/g)].map((m) => m[0]);
+      for (const p of phones) expect(['+972501234567', '050-1234567']).toContain(p);
     }
   });
 });

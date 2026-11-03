@@ -15,7 +15,7 @@ npm run check                                   # typecheck + module boundaries 
 npm run lint:boundaries                         # dependency-cruiser import rules only
 npm run lint:links                              # relative markdown links must resolve
 npm test                                        # vitest run (unit and e2e projects)
-npm run test:e2e                                # e2e project only; writes reports/e2e/index.html
+npm run test:e2e                                # e2e project only; writes reports/e2e/<timestamp>-<sha>/, reports/e2e/latest/ and the runs list reports/e2e/index.html
 npx vitest run src/db/schema.test.ts            # one file
 npx vitest run -t "approval invariant"          # tests whose name matches
 npm run db:generate                             # drizzle-kit migration from src/db/schema.ts (migrations need human review)
