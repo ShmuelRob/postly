@@ -60,7 +60,16 @@ export function App() {
       </header>
       <Chat messages={state?.messages ?? []} ready={!!state} onSend={act} />
       <Feed feed={state?.feed} />
-      <StatePanel state={state} />
+      <StatePanel
+        state={state}
+        onConnect={() =>
+          void fetch('/api/connect', { method: 'POST' })
+            .then(async (res) => {
+              if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+            })
+            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        }
+      />
     </div>
   );
 }
@@ -168,7 +177,7 @@ function Feed({ feed }: { feed: PlaygroundState['feed'] | undefined }) {
   );
 }
 
-function StatePanel({ state }: { state: PlaygroundState | null }) {
+function StatePanel({ state, onConnect }: { state: PlaygroundState | null; onConnect: () => void }) {
   if (!state) {
     return (
       <aside className="state" data-testid="state">
@@ -194,6 +203,20 @@ function StatePanel({ state }: { state: PlaygroundState | null }) {
         <dt>העברה לנציג</dt>
         <dd>{state.conversation?.handoff ? 'כן' : 'לא'}</dd>
       </dl>
+      <h3>רשתות</h3>
+      <dl>
+        {state.channels.map((c) => (
+          <div key={c.network} className="row">
+            <dt>{c.network}</dt>
+            <dd className="code" data-testid={`channel-${c.network}`}>{c.status}</dd>
+          </div>
+        ))}
+      </dl>
+      {state.connectionLinkSent && (
+        <button type="button" className="connect" data-testid="connect-networks" onClick={onConnect}>
+          חיבור הרשתות בסימולטור
+        </button>
+      )}
       <h3>פוסטים ({state.posts.length})</h3>
       <ul>
         {state.posts.map((p) => (
