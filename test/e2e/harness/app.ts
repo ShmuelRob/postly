@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   InboundMessage,
   PublishRequest,
@@ -66,10 +67,14 @@ export interface Owner {
   tapsButton(title: string, payload: ApprovalButtonPayload): Promise<void>;
   /** Messages Postly sent to the owner, oldest first. */
   received(): TranscriptEntry[];
+  /** The provider delivers this number's last inbound message again, as vendors do on a retry. */
+  redeliversLast(): Promise<void>;
 }
 
 export interface E2eRun {
   owner: Owner;
+  /** Someone writing from another number, such as one no business is registered with. */
+  sender(phone: string): Owner;
   /** What reached the publishing provider, oldest first. */
   networkPosts(network?: Network): PublishingEntry[];
   /** Files the renderer produced, oldest first. */
@@ -103,45 +108,55 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
   };
   const app = await options.app(providers);
 
-  let inboundSeq = 0;
-  const deliver = async (content: InboundMessage['content'], entry: Omit<TranscriptEntry, 'at' | 'direction' | 'phone'>) => {
-    const message = InboundMessage.parse({
-      provider: 'e2e-harness',
-      providerMessageId: `e2e-in-${++inboundSeq}`,
-      from: options.ownerPhone,
-      to: options.businessPhone,
-      receivedAt: now(),
-      content,
-    });
-    record.transcript.push({ at: message.receivedAt, direction: 'from_owner', phone: options.ownerPhone, ...entry });
-    await app.deliverInbound(message);
+  const makeSender = (phone: string): Owner => {
+    let last: InboundMessage | undefined;
+    const deliver = async (content: InboundMessage['content'], entry: Omit<TranscriptEntry, 'at' | 'direction' | 'phone'>) => {
+      // Unique per run: provider message ids are unique across the whole message table.
+      const message = InboundMessage.parse({
+        provider: 'e2e-harness',
+        providerMessageId: `e2e-in-${randomUUID()}`,
+        from: phone,
+        to: options.businessPhone,
+        receivedAt: now(),
+        content,
+      });
+      last = message;
+      record.transcript.push({ at: message.receivedAt, direction: 'from_owner', phone, ...entry });
+      await app.deliverInbound(message);
+    };
+    const sender: Owner = {
+      phone,
+      sendsText: (text) => deliver({ kind: 'text', text }, { kind: 'text', text }),
+      sendsVoice: (providerMediaId) => deliver({ kind: 'voice', providerMediaId }, { kind: 'voice' }),
+      sendsImage: async (providerMediaId, caption) => {
+        const image = await attach(providerMediaId);
+        await deliver(
+          caption === undefined ? { kind: 'image', providerMediaId } : { kind: 'image', providerMediaId, caption },
+          caption === undefined ? { kind: 'image', image } : { kind: 'image', image, text: caption },
+        );
+      },
+      tapsButton: async (title, payload) => {
+        const shown = sender
+          .received()
+          .flatMap((m) => m.buttons ?? [])
+          .reverse()
+          .find((b) => b.title === title);
+        if (!shown) throw new Error(`${phone} has no button titled "${title}" to tap`);
+        await deliver({ kind: 'button_reply', buttonId: shown.id, payload }, { kind: 'button_reply', text: title });
+      },
+      received: () => record.transcript.filter((m) => m.direction === 'to_owner' && m.phone === phone),
+      redeliversLast: async () => {
+        if (!last) throw new Error(`${phone} has sent nothing to redeliver`);
+        await app.deliverInbound(last);
+      },
+    };
+    return sender;
   };
-
-  const owner: Owner = {
-    phone: options.ownerPhone,
-    sendsText: (text) => deliver({ kind: 'text', text }, { kind: 'text', text }),
-    sendsVoice: (providerMediaId) => deliver({ kind: 'voice', providerMediaId }, { kind: 'voice' }),
-    sendsImage: async (providerMediaId, caption) => {
-      const image = await attach(providerMediaId);
-      await deliver(
-        caption === undefined ? { kind: 'image', providerMediaId } : { kind: 'image', providerMediaId, caption },
-        caption === undefined ? { kind: 'image', image } : { kind: 'image', image, text: caption },
-      );
-    },
-    tapsButton: async (title, payload) => {
-      const shown = owner
-        .received()
-        .flatMap((m) => m.buttons ?? [])
-        .reverse()
-        .find((b) => b.title === title);
-      if (!shown) throw new Error(`The owner has no button titled "${title}" to tap`);
-      await deliver({ kind: 'button_reply', buttonId: shown.id, payload }, { kind: 'button_reply', text: title });
-    },
-    received: () => record.transcript.filter((m) => m.direction === 'to_owner' && m.phone === options.ownerPhone),
-  };
+  const owner = makeSender(options.ownerPhone);
 
   return {
     owner,
+    sender: makeSender,
     networkPosts: (network) => record.publishing.filter((p) => network === undefined || p.network === network),
     renders: () => [...record.renders],
     modelCalls: () => [...(record.modelCalls ?? [])],

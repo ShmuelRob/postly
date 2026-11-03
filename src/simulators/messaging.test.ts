@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InvalidWebhookSignatureError } from '../contracts/providers/messaging.js';
+import { InvalidWebhookSignatureError, WindowClosedError } from '../contracts/providers/messaging.js';
 import { describeMessagingProviderContract } from './contract-suites/messaging.js';
 import { MessagingSimulator } from './messaging.js';
 
@@ -19,6 +19,23 @@ describeMessagingProviderContract('simulator', () => {
 });
 
 describe('MessagingSimulator', () => {
+  it('with enforceWindow, refuses free-form sends outside 24 hours of the last inbound message but sends templates', async () => {
+    let now = new Date('2026-11-01T10:00:00Z');
+    const sim = new MessagingSimulator({ enforceWindow: true, now: () => now });
+    await expect(sim.sendText({ to: owner, text: 'היי' })).rejects.toBeInstanceOf(WindowClosedError);
+    sim.inboundText(owner, 'שלום');
+    now = new Date('2026-11-02T09:59:00Z');
+    await sim.sendText({ to: owner, text: 'היי' });
+    now = new Date('2026-11-02T10:01:00Z');
+    await expect(sim.sendButtons({ to: owner, text: 'x', buttons: [{ id: 'a', title: 'a' }] })).rejects.toMatchObject({
+      name: 'WindowClosedError',
+      to: owner,
+      lastInboundAt: new Date('2026-11-01T10:00:00Z'),
+    });
+    await sim.sendTemplate({ to: owner, templateName: 'weekly_reminder', language: 'he', variables: {} });
+    expect(sim.sent.map((m) => m.kind)).toEqual(['text', 'template']);
+  });
+
   it('records what the owner would see, in order', async () => {
     const sim = new MessagingSimulator();
     await sim.sendText({ to: owner, text: 'היי' });

@@ -83,6 +83,8 @@ Each vendor is reached only through its interface. Requests and responses that c
 
 `InboundMessage` has `provider`, `providerMessageId`, `from`, `to`, `receivedAt`, and one `content` of kind `text`, `voice`, `image` (with optional caption), or `button_reply`. Approval buttons use the payload `ApprovalButtonPayload`: `action` (`approve` or `change`), `postId`, and `versionHash`.
 
+WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 hours of the owner's last inbound message; outside that window only an approved template (`sendTemplate`) goes through. A free-form send outside the window fails with `WindowClosedError`, which carries `to` and `lastInboundAt` (null when the number never wrote). The messaging module checks the window from its `message` rows before calling the provider, and an adapter throws the same error when the vendor reports a closed window. The caller then sends an approved template or waits for the owner (technical-design.md, Failure handling).
+
 ### `PublishingProvider`
 
 | Method | Request | Response |
