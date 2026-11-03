@@ -14,6 +14,7 @@ import { placeholderPng } from '../../test/e2e/harness/png.js';
 import type { PublishingEntry, TranscriptEntry } from '../../test/e2e/harness/record.js';
 import type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-types.js';
 import { playgroundExtraction } from './extraction.js';
+import { playgroundIntent } from './intent.js';
 import { seedFeed } from './seed.js';
 
 export interface PlaygroundOptions {
@@ -64,6 +65,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   const publishing = new PublishingSimulator();
   const model = new ModelSimulator();
   model.setDefault('profile_extraction', playgroundExtraction);
+  model.setDefault('intent_detection', playgroundIntent);
 
   /** Files the browser can load, by storage path or URL: inbound media, renders, seeded posts. */
   const files = new Map<string, { mimeType: string; data: Uint8Array }>();
@@ -72,6 +74,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       files.set(path, { mimeType, data });
     },
     urlFor: (path: string) => MEDIA_ORIGIN + path,
+    read: async (path: string) => stored(path),
   };
   const stored = (ref: string) => files.get(ref.startsWith(MEDIA_ORIGIN) ? ref.slice(MEDIA_ORIGIN.length) : ref);
   await media.put('bundled/sample.png', placeholderPng(1080, 1080, [246, 232, 210], [150, 82, 40]), 'image/png');

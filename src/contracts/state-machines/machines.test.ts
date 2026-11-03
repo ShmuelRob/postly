@@ -79,6 +79,7 @@ const cases: Array<{
       ['awaiting', 'REMINDER_SENT', 'reminded'],
       ['awaiting', 'UPDATE_RECEIVED', 'received'],
       ['reminded', 'UPDATE_RECEIVED', 'received'],
+      ['awaiting', 'WEEK_ENDED', 'skipped'],
       ['reminded', 'WEEK_ENDED', 'skipped'],
       ['received', 'FACTS_EXTRACTED', 'planned'],
       ['received', 'EXTRACTION_FAILED', 'needs_review'],

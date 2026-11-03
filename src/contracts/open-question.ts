@@ -11,5 +11,7 @@ export const OpenQuestion = z.object({
   attempts: z.int().min(1),
   /** Business photos the owner sent during onboarding; they are not part of the profile. */
   photoAssetIds: z.array(Uuid).default([]),
+  /** The post a drafts question is about (`photo_choice`, `change_request`). */
+  postId: Uuid.optional(),
 });
 export type OpenQuestion = z.infer<typeof OpenQuestion>;

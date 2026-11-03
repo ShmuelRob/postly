@@ -45,7 +45,7 @@ This document defines the Zod schemas for model tasks, the business profile, and
 
 ### `OpenQuestion`
 
-What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), and `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile). The schema is in `src/contracts/open-question.ts`.
+What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile), and an optional `postId` (the post a drafts question is about: `photo_choice` or `change_request`; added 2026-11-03 by WP-32, queued for the human). The schema is in `src/contracts/open-question.ts`.
 
 ## Model tasks
 
@@ -58,7 +58,7 @@ Each task has an input schema and an output schema. The model layer validates th
 | `profile_extraction` | Owner message, current `BusinessProfileDraft`, the fields being asked | A partial `BusinessProfileDraft` with only the fields found, and the fields still unclear |
 | `fact_extraction` | Weekly update text and transcript, a profile summary | `facts`: each with an `id`, `type`, `value`, and `sourceQuote`; and `missingDetails` |
 | `weekly_planning` | Extracted facts, posts per week, content types, formats, available media asset ids | 2 to 5 `posts`: each with `topic`, `contentType`, `format`, `factIds`, `mediaAssetIds`, and `brief` |
-| `caption_writing` | Post plan, facts, business context, active preference rules, target networks, languages, tone | `captions`: per network, `text` and `hashtags`; and `usedFactIds` |
+| `caption_writing` | Post plan, facts, business context, active preference rules, target networks, languages, tone, fixed hashtags, and optional `changes` (the change instructions on a redraft; added 2026-11-03 by WP-32, queued for the human) | `captions`: per network, `text` and `hashtags`; and `usedFactIds` |
 | `change_interpretation` | Change request text, current captions, current plan | `changes` to apply (at least one, each with a `target` of `caption`, `design`, `media`, `channels`, or `schedule` and an `instruction`), and an optional `rule` to save as a preference with its `scope` |
 | `image_review` | Media asset id, purpose (post photo or logo) | `usable`, `score` (0 to 1), `issues`, and an optional normalized `crop` |
 | `fact_check` | Caption text and the facts it may use | `mismatches`: each with the caption text and the issue |
@@ -70,7 +70,9 @@ Code checks that the schema cannot express:
 - `fact_extraction`: every `sourceQuote` appears verbatim in the source text or transcript (whitespace runs count as one space), and the quote of a `testimonial` fact appears in the typed text the owner sent.
 - `weekly_planning`: the number of posts equals `postsPerWeek`, every `factIds` entry exists, and every format is allowed by the profile.
 - A failed code check counts as a failed attempt: the model layer takes the check as `RunOptions.check`, retries, and then routes to the console, as for a schema failure.
-- `caption_writing`: every price, discount, date, time, address, and phone number in a caption matches a fact in `usedFactIds` or the profile. This code comparison is the fact check; the `fact_check` model task is optional and only adds mismatches.
+- `caption_writing`: every price, discount, date, time, address, and phone number in a caption matches a fact in `usedFactIds` or the profile. This code comparison is the fact check; the `fact_check` model task is optional and only adds mismatches. The exact rules are in technical-design.md, Drafts flow.
+
+What a `post_version` stores (WP-32): `captions` is `ChannelCaptions`; `rendered_media` (`RenderedMedia`) maps each network to its rendered `media_asset` ids in slide order; `fact_sources` (`FactSource[]`) is the used facts, each `factId`, `type`, `value`, and `sourceQuote`; `content_hash` is the SHA-256 of the canonical JSON of `{ format, captions, renderedMedia }`. The schemas are in `src/contracts/post-version.ts`.
 
 ## Provider interfaces
 
@@ -88,7 +90,7 @@ Each vendor is reached only through its interface. Requests and responses that c
 
 `sendText` with a `mediaUrl` sends the image with the text as its caption (added in WP-30 for the style samples, 2026-11-03, queued for the human): `sendButtons` is the only other way to show an image, and its buttons carry approval payloads only, so onboarding choices are answered by text.
 
-`InboundMessage` has `provider`, `providerMessageId`, `from`, `to`, `receivedAt`, and one `content` of kind `text`, `voice`, `image` (with optional caption), or `button_reply`. Approval buttons use the payload `ApprovalButtonPayload`: `action` (`approve` or `change`), `postId`, and `versionHash`.
+`InboundMessage` has `provider`, `providerMessageId`, `from`, `to`, `receivedAt`, and one `content` of kind `text`, `voice`, `image` (with optional caption), or `button_reply`. Approval buttons use the payload `ApprovalButtonPayload`: `action` (`approve` or `change`), `postId`, and `versionHash`. The button `id` sent with `sendButtons` encodes it as `<action>:<postId>:<versionHash>` (`encodeButtonId` / `decodeButtonId` in `src/contracts/providers/messaging.ts`), so a real adapter maps the tapped id back to the payload (WP-32).
 
 WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 hours of the owner's last inbound message; outside that window only an approved template (`sendTemplate`) goes through. A free-form send outside the window fails with `WindowClosedError`, which carries `to` and `lastInboundAt` (null when the number never wrote). The messaging module checks the window from its `message` rows before calling the provider, and an adapter throws the same error when the vendor reports a closed window. The caller then sends an approved template or waits for the owner (technical-design.md, Failure handling).
 

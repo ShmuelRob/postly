@@ -27,3 +27,5 @@ export * as onboardingCopy from './onboarding-copy.js';
 export { createWeeklyUpdates, type WeeklyDeps, type WeeklyUpdates } from './weekly.js';
 export { localWeek, type LocalWeek } from './week.js';
 export * as weeklyCopy from './weekly-copy.js';
+export { createDrafts, networksFromChange, parsePhotoChoice, type Drafts, type DraftsBurst, type DraftsDeps, type PhotoChoice } from './drafts.js';
+export * as draftsCopy from './drafts-copy.js';

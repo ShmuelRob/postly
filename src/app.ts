@@ -9,7 +9,9 @@ import { createModelLayer } from './modules/model-layer/index.js';
 import { createChannels } from './modules/publishing/index.js';
 import {
   createOnboarding,
+  createDrafts,
   createWeeklyUpdates,
+  type Drafts,
   createWorkflow,
   type Onboarding,
   type WeeklyUpdates,
@@ -28,7 +30,7 @@ export interface AppOptions {
   /** The design module's renderer factory (`createDesignRenderer(...).forBusiness`). */
   design: { forBusiness(business: BusinessRenderContext): TemplateRenderer };
   /** File storage for inbound media and renders, with the URLs providers fetch them from. */
-  media: MediaStorage;
+  media: MediaStorage & { read(path: string): Promise<{ data: Uint8Array } | undefined> };
   businessNumber: string;
   /** The photo used for the onboarding style samples when the owner sent none. */
   samplePhotoUrl: string;
@@ -44,6 +46,8 @@ export interface App {
   onboarding: Onboarding;
   /** The weekly update; its `tick` is the hourly scheduler job. */
   weekly: WeeklyUpdates;
+  /** Drafts, change requests, and the several-photos choice (WP-32). */
+  drafts: Drafts;
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
    * never processed (review queue item 14), at startup and then every quiet window. It runs in the
@@ -61,6 +65,7 @@ export function createApp(options: AppOptions): App {
   const workflow = createWorkflow(db, options.logger);
   let onboarding: Onboarding | undefined;
   let weekly: WeeklyUpdates | undefined;
+  let drafts: Drafts | undefined;
 
   const messaging = createMessaging({
     db,
@@ -71,6 +76,7 @@ export function createApp(options: AppOptions): App {
       // Each flow ignores a business outside its status. The weekly flow runs first, so a burst that
       // completes onboarding is not read again as a weekly update.
       async handleInbound(burst) {
+        if (await drafts!.handle(burst)) return;
         await weekly!.handle(burst);
         await onboarding!.handle(burst);
       },
@@ -97,7 +103,26 @@ export function createApp(options: AppOptions): App {
     },
   });
 
-  weekly = createWeeklyUpdates({ db, workflow, messaging, model, ...(options.now ? { now: options.now } : {}) });
+  drafts = createDrafts({
+    db,
+    workflow,
+    messaging,
+    model,
+    render: ({ businessId, businessName, languages }, request) =>
+      options.design.forBusiness({ businessName, languages: languages as ['he'], storagePrefix: `${businessId}/posts` }).render(request),
+    mediaUrl: (b, a) => messaging.mediaUrl(b, a),
+    urlFor: (path) => options.media.urlFor(path),
+    readFile: async (path) => (await options.media.read(path))?.data,
+    samplePhotoUrl: options.samplePhotoUrl,
+  });
+  weekly = createWeeklyUpdates({
+    db,
+    workflow,
+    messaging,
+    model,
+    afterPlan: (businessId, weekId) => drafts!.draftWeek(businessId, weekId),
+    ...(options.now ? { now: options.now } : {}),
+  });
 
-  return { messaging, workflow, onboarding, weekly, start: () => messaging.startSweep() };
+  return { messaging, workflow, onboarding, weekly, drafts, start: () => messaging.startSweep() };
 }

@@ -246,7 +246,7 @@ Immutable once written. A change creates a new version.
 | `rendered_media` | jsonb | `RenderedMedia`: asset ids per network |
 | `fact_sources` | jsonb | `FactSource[]`: each factual detail and where it came from |
 | `fact_check_passed` | boolean | Drafts are sent only when true |
-| `content_hash` | text | SHA-256 over captions, rendered media, and format |
+| `content_hash` | text | SHA-256 over captions, rendered media, and format: the canonical JSON (keys sorted) of `{ format, captions, renderedMedia }` (WP-32) |
 
 ### `approval`
 
