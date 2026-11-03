@@ -101,6 +101,7 @@ Once a week, the owner sends the agent what is new in WhatsApp, for example new 
 - The agent splits the update into the number of posts set in the profile, and writes a caption and hashtags for each, adapted to each channel.
 - The agent edits the photos visually: cropping, frames, captions, and logo, using the style's template. The design is the same on both channels, with light adjustments to caption and size.
 - If material is missing, the agent uses photos from the library or asks one focused question.
+- If the owner sends several photos for what the plan makes a single post, the agent asks which they want: a carousel, one photo (the others are dropped), or a separate post per photo.
 - Drafts are sent to the owner in WhatsApp, and the owner can request changes in plain words until satisfied.
 
 ### Content safeguards
