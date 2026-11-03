@@ -31,7 +31,9 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 
 | Variable | Where from | Meaning |
 | --- | --- | --- |
+| `POSTLY_ENV` | Terraform | `staging` or `prod`; `local` (the default) or `test` elsewhere |
 | `POSTLY_PROVIDERS` | Terraform | `simulators` until WP-41 |
+| `MESSAGING_WEBHOOK_SECRET` | Secret Manager `postly-<env>-messaging-webhook-secret` | Verifies inbound messaging webhooks. In `staging` and `prod` the processes refuse to start when it is missing or equals the simulator default, which is public in the repository (`src/config.ts`); `local` and `test` fall back to that default |
 | `DATABASE_URL` | Terraform | `postgres://<private ip>:5432/postly?sslmode=require`, with no user: each login's URL is built from it |
 | `DB_PASSWORD_<LOGIN>` | Secret Manager `postly-<env>-db-password-<login>` | One per login in `ALL_LOGINS` (`src/db/index.ts`): the 13 role logins and `app_jobs` |
 | `MIGRATE_ADMIN_URL` | Secret Manager `postly-<env>-db-admin-url` | The admin user's full URL; read only by the migrate job's service account |
@@ -59,9 +61,11 @@ The media lifecycle ages are provisional until the human sets the media retentio
 | `postly-<env>-web` | Cloud SQL client, log, metric and trace writer; the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
 | `postly-<env>-worker` | the same as web | the admin URL |
 | `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
-| `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | any secret, the bucket, the database |
+| `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
 
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`staging` or `prod`) can act as the deploy account.
+
+**The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `staging` and `prod`, and a deployment branch policy that allows only `main`, so no unreviewed branch can be deployed. Set both when creating the environments (step 6 below), and keep the reviewer list short.
 
 ### Single web instance (review queue item 14)
 
@@ -71,7 +75,7 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 
 - `.github/workflows/ci.yml` (unchanged): `npm run check` on every PR and on main.
 - `.github/workflows/infra.yml`: on every PR and on main, builds the image (never pushed), checks it runs as non-root with no test or playground code, starts the local stack on the simulators with `docker compose` and checks `/healthz` and the singleton weekly schedule, and runs `terraform fmt -check` and `terraform validate` for both environments. It never authenticates to Google Cloud.
-- `.github/workflows/deploy.yml`: manual only (`workflow_dispatch`), one environment per run, gated by the GitHub environment's required reviewers. It authenticates through Workload Identity Federation (no key file), builds and pushes the image tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. Without the environment variables below it stops at its first step.
+- `.github/workflows/deploy.yml`: manual only (`workflow_dispatch`), with every action pinned by commit SHA, one environment per run, gated by the GitHub environment's required reviewers. It authenticates through Workload Identity Federation (no key file), builds and pushes the image tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. Without the environment variables below it stops at its first step.
 
 ## Local run
 
@@ -85,8 +89,8 @@ All of this costs money or creates cloud resources, so agents never do it.
 2. **State bucket.** Create a versioned GCS bucket for Terraform state, then uncomment the `backend "gcs"` block in `infra/environments/<env>/main.tf` with its name.
 3. **Variables.** Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in the project, the test WhatsApp number (staging) or the real one (prod), the repository, and the alert email. `public_base_url` can be a placeholder for the first apply, then the web service's `run.app` URL or a custom domain.
 4. **First apply.** `terraform init`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected. Alternatively push a first image by hand before applying.
-5. **Secrets.** Add a version to every secret in the `secret_ids` output: a strong random password for each `db-password-*`; for `db-admin-url`, set the Cloud SQL `postgres` user's password (`gcloud sql users set-password postgres --instance ...`) and store `postgres://postgres:<password>@<private ip>:5432/postly?sslmode=require`. Vendor secrets stay empty until WP-41.
-6. **GitHub.** Create the environments `staging` and `prod` with required reviewers, and set on each the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the `workload_identity_provider` output) and `GCP_DEPLOY_SERVICE_ACCOUNT` (the `deploy_service_account` output).
+5. **Secrets.** Add a version to every secret in the `secret_ids` output: a strong random password for each `db-password-*`; for `db-admin-url`, set the Cloud SQL `postgres` user's password (`gcloud sql users set-password postgres --instance ...`) and store `postgres://postgres:<password>@<private ip>:5432/postly?sslmode=require`. Vendor secrets stay empty until WP-41, except `messaging-webhook-secret`: give it a strong random value, since web and worker refuse to start in staging or prod without it.
+6. **GitHub.** Create the environments `staging` and `prod` with required reviewers and a deployment branch policy that allows only `main` (see IAM above for why this is the real gate), and set on each the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the `workload_identity_provider` output) and `GCP_DEPLOY_SERVICE_ACCOUNT` (the `deploy_service_account` output).
 7. **Vendor accounts** (WP-41, later): WhatsApp (Twilio or 360dialog), publishing (Zernio or Ayrshare), Google AI, and the payment provider; test accounts and test keys on staging.
 8. **Console sign-in.** The console answers only loopback requests (review queue item 16), so it is unreachable on Cloud Run until the team's sign-in is decided (for example IAP).
 9. **First deploy.** Run the Deploy workflow for `staging` and approve it. WP-44 is done when staging runs the end-to-end suite with test accounts, which needs WP-41.

@@ -8,8 +8,8 @@ import { buildServer } from './server.js';
 import { MessagingSimulator, ModelSimulator, PublishingSimulator } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 
-// The image's entry point (docs/deployment.md): `node src/main.ts web|worker|migrate`. Node runs the
-// TypeScript directly (type stripping), so the image has no build step. Until the vendor adapters
+// The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
+// by `npm run build` (tsconfig.build.json). Until the vendor adapters
 // land (WP-41) the composition uses the simulators, so a local or staging run reaches no vendor.
 
 /** In-process media for simulator runs; the Cloud Storage adapter comes with WP-41. */
@@ -55,7 +55,7 @@ async function main(command: string | undefined) {
   });
   const app = createApp({
     db,
-    providers: { messaging: new MessagingSimulator(), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() } },
+    providers: { messaging: new MessagingSimulator({ webhookSecret: config.webhookSecret }), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() } },
     design,
     media,
     businessNumber: config.businessNumber,

@@ -69,16 +69,21 @@ locals {
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
-  vendor_secrets = ["messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
+  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
   app_env = {
+    POSTLY_ENV       = var.env_name
     POSTLY_PROVIDERS = "simulators"
     DATABASE_URL     = "postgres://${module.sql.private_ip}:5432/postly?sslmode=require"
     PUBLIC_BASE_URL  = var.public_base_url
     BUSINESS_NUMBER  = var.business_number
     MEDIA_BUCKET     = module.storage.name
   }
-  app_secret_env = { for secret, env in local.login_secrets : env => module.secrets.ids[secret] }
+  app_secret_env = merge(
+    { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
+    # The processes refuse to start in staging or prod without it (src/config.ts).
+    { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
+  )
 }
 
 module "network" {

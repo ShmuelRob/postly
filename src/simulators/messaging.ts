@@ -20,6 +20,9 @@ export type SentMessage =
   | { kind: 'template'; providerMessageId: string; sentAt: string; request: SendTemplateRequest }
   | { kind: 'buttons'; providerMessageId: string; sentAt: string; request: SendButtonsRequest };
 
+/** The default webhook secret. It is public in the repository, so only local runs and tests may use it. */
+export const SIMULATOR_WEBHOOK_SECRET = 'simulator-webhook-secret';
+
 export interface MessagingSimulatorOptions {
   /** The business's WhatsApp number; inbound messages are addressed to it. */
   businessNumber?: string;
@@ -58,7 +61,7 @@ export class MessagingSimulator implements MessagingProvider {
 
   constructor(options: MessagingSimulatorOptions = {}) {
     this.businessNumber = options.businessNumber ?? '+972501234564';
-    this.secret = options.webhookSecret ?? 'simulator-webhook-secret';
+    this.secret = options.webhookSecret ?? SIMULATOR_WEBHOOK_SECRET;
     this.url = options.webhookUrl ?? 'https://postly.example.test/webhooks/messaging';
     this.now = options.now ?? (() => new Date());
     this.enforceWindow = options.enforceWindow ?? false;
