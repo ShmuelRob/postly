@@ -40,3 +40,7 @@ After changing a `placeholder` spec or the generator, rewrite the committed SVGs
 ```bash
 UPDATE_PLACEHOLDERS=1 npx vitest run src/example-set
 ```
+
+## Gallery
+
+`npm run gallery` renders every entry in every style for every network through the design module and writes `reports/gallery/index.html` (gitignored): one row per business with its expected facts and missing details, one column per style, and each render with its overlay text and a pass or fail against the style rules (render succeeds, output size per network, slide count, JPEG, overlay text limits). The first overlay text renders the whole post (a carousel when the entry has several photos); each other overlay text renders a single cover.
