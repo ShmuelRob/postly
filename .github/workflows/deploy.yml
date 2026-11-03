@@ -1,0 +1,68 @@
+name: Deploy
+
+# Manual only. Each run waits for a required reviewer on the GitHub environment it targets
+# (staging or prod), then authenticates with Workload Identity Federation (no key file), pushes the
+# image, runs the migration job, and rolls out web and worker. It never runs Terraform: the human
+# applies infra (docs/deployment.md, gate H8). Until the human fills the repository variables
+# below and sets up the environments, this workflow cannot authenticate and does nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, prod]
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # The approval gate: the environment must have required reviewers (docs/deployment.md).
+    environment: ${{ inputs.environment }}
+    env:
+      # Placeholders, set per environment by the human as GitHub environment variables.
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      PREFIX: postly-${{ inputs.environment }}
+    steps:
+      - name: Refuse to run before the human configured the environment
+        run: |
+          for v in PROJECT_ID REGION WIF_PROVIDER DEPLOY_SA; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set for environment ${{ inputs.environment }}"; exit 1; fi
+          done
+      - uses: actions/checkout@v5
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and push the image
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$PREFIX/postly:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+      - name: Run the migration job (migrations first, then code)
+        run: |
+          gcloud run jobs update "$PREFIX-migrate" --region "$REGION" --image "$IMAGE" --quiet
+          gcloud run jobs execute "$PREFIX-migrate" --region "$REGION" --wait
+      - name: Roll out the worker, then the web
+        run: |
+          gcloud run deploy "$PREFIX-worker" --region "$REGION" --image "$IMAGE" --quiet
+          gcloud run deploy "$PREFIX-web" --region "$REGION" --image "$IMAGE" --quiet
+      - name: Smoke check
+        run: |
+          URL="$(gcloud run services describe "$PREFIX-web" --region "$REGION" --format 'value(status.url)')"
+          curl -fsS "$URL/healthz"

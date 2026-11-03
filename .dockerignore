@@ -1,0 +1,13 @@
+# Only what the Dockerfile copies goes into the build context.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/**
+!assets/**
+!drizzle/**
+# Tests and fixtures never enter the image.
+src/**/*.test.ts
+src/**/*.test.tsx
+src/**/__snapshots__/**

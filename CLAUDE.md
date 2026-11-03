@@ -20,6 +20,8 @@ npx vitest run src/db/schema.test.ts            # one file
 npx vitest run -t "approval invariant"          # tests whose name matches
 npm run db:generate                             # drizzle-kit migration from src/db/schema.ts (migrations need human review)
 npm run playground                              # local playground on the simulators (Docker); see playground/README.md
+npm run build                                   # compile src/ to dist/ for the image (tsconfig.build.json)
+docker compose up --build                       # the production image locally: Postgres, migrate, web, worker, on the simulators; see docs/deployment.md
 ```
 
 The `db` test project (`*.db.test.ts`) and the `e2e` project run against a real Postgres: Testcontainers starts `postgres:17-alpine` in Docker once per run and applies the migrations as superuser, then the tests connect only as the per-role logins (`test/db/global-setup.ts`), so Docker must be running. To use an existing empty database instead, set `TEST_DATABASE_URL` to a superuser connection string. Database code reaches Postgres only through `createDatabase(urls)` in `src/db/index.ts`, with `withBusiness(role, businessId, fn)` and `withSystem(purpose, fn)`, each role a separate login that reaches only its tables and verbs ([database-schema.md](docs/database-schema.md#least-privilege)); raw SQL that changes roles or session settings is banned outside `src/db/` by `src/db/raw-sql-guard.test.ts`.

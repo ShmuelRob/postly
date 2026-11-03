@@ -28,3 +28,11 @@ lerna-debug.log*
 
 # End-to-end reports
 /reports
+
+# Terraform (state stays remote; tfvars hold real values)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
