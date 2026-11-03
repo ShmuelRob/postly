@@ -103,6 +103,7 @@ Once a week, the owner sends the agent what is new in WhatsApp, for example new 
 - If material is missing, the agent uses photos from the library or asks one focused question.
 - If the owner sends several photos for what the plan makes a single post, the agent asks which they want: a carousel, one photo (the others are dropped), or a separate post per photo.
 - Drafts are sent to the owner in WhatsApp, and the owner can request changes in plain words until satisfied.
+- One update a week is the norm. A second update while the drafts are still being prepared gets a reply that the agent is still working on the first; while drafts are open it is a change to them; after the week's update was already handled it counts for next week.
 
 ### Content safeguards
 

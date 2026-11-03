@@ -417,7 +417,8 @@ e2eTest('a sweep during a slow reply hands the message over once: one reply, one
 
   // The first reply is slow; while it is being sent, the sweep runs.
   const sending = run.owner.sendsText('היי');
-  await new Promise((r) => setTimeout(r, 200));
+  // Wait until the reply is being sent (up to 5 s) instead of a fixed sleep, which raced the handler.
+  for (let i = 0; i < 100 && !held; i++) await new Promise((r) => setTimeout(r, 50));
   expect(held).toBe(true);
   await ref.postly!.messaging.sweepUnprocessed({ businessId });
   release();

@@ -10,7 +10,7 @@ export const weeklyUpdateMachine = defineMachine({
   initial: 'awaiting',
   terminal: ['planned', 'skipped'],
   transitions: {
-    awaiting: { REMINDER_SENT: 'reminded', UPDATE_RECEIVED: 'received' },
+    awaiting: { REMINDER_SENT: 'reminded', UPDATE_RECEIVED: 'received', WEEK_ENDED: 'skipped' },
     reminded: { UPDATE_RECEIVED: 'received', WEEK_ENDED: 'skipped' },
     received: { FACTS_EXTRACTED: 'planned', EXTRACTION_FAILED: 'needs_review' },
     needs_review: { FACTS_EXTRACTED: 'planned' },

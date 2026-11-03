@@ -127,6 +127,8 @@ const CaptionWritingInput = z.object({
   languages: z.array(Language).min(1),
   tone: z.object({ register: z.string(), address: z.string(), emoji: z.boolean() }),
   fixedHashtags: z.array(z.string()),
+  /** The owner's change instructions when a draft is written again (WP-32). */
+  changes: z.array(text).optional(),
 });
 const CaptionWritingOutput = z.object({ captions: ChannelCaptions, usedFactIds: z.array(factId) });
 

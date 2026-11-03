@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApprovalButtonPayload, InboundMessage, SendButtonsRequest } from './messaging.js';
+import { ApprovalButtonPayload, decodeButtonId, encodeButtonId, InboundMessage, SendButtonsRequest } from './messaging.js';
 import { PublishRequest } from './publishing.js';
 import { RenderRequest } from './renderer.js';
 
@@ -21,6 +21,18 @@ describe('ApprovalButtonPayload', () => {
 
   it('rejects an unknown action', () => {
     expect(ApprovalButtonPayload.safeParse({ action: 'publish', postId: uuid, versionHash: hash }).success).toBe(false);
+  });
+});
+
+describe('button ids', () => {
+  it('round-trips a payload through the button id', () => {
+    const payload = { action: 'change', postId: uuid, versionHash: hash } as const;
+    expect(encodeButtonId(payload)).toBe(`change:${uuid}:${hash}`);
+    expect(decodeButtonId(encodeButtonId(payload))).toEqual(payload);
+  });
+
+  it.each(['approve', `approve:${uuid}`, `publish:${uuid}:${hash}`, `approve:${uuid}:${hash}:x`])('rejects id %s', (id) => {
+    expect(decodeButtonId(id)).toBeUndefined();
   });
 });
 

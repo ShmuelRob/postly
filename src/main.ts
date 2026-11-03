@@ -13,7 +13,7 @@ import { startWorkerProcess } from './worker.js';
 // land (WP-41) the composition uses the simulators, so a local or staging run reaches no vendor.
 
 /** In-process media for simulator runs; the Cloud Storage adapter comes with WP-41. */
-function memoryMedia(publicBaseUrl: string): MediaStorage & { get(url: string): Uint8Array | undefined } {
+function memoryMedia(publicBaseUrl: string): MediaStorage & { get(url: string): Uint8Array | undefined; read(path: string): Promise<{ data: Uint8Array } | undefined> } {
   const files = new Map<string, Uint8Array>();
   const base = `${publicBaseUrl}/media/`;
   return {
@@ -22,6 +22,11 @@ function memoryMedia(publicBaseUrl: string): MediaStorage & { get(url: string): 
     },
     urlFor: (path) => base + path,
     get: (url) => (url.startsWith(base) ? files.get(url.slice(base.length)) : undefined),
+    // Drafting (WP-32) reads rendered files back by storage path to record their SHA-256.
+    read: async (path) => {
+      const data = files.get(path);
+      return data ? { data } : undefined;
+    },
   };
 }
 

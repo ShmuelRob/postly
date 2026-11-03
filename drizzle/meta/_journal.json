@@ -57,6 +57,13 @@
       "when": 1793750404000,
       "tag": "0007_console_writes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793750405000,
+      "tag": "0008_caption_changes_prompt",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,8 @@ export interface WeeklyDeps {
     ): Promise<ModelTaskOutput<T>>;
   };
   now?: () => Date;
+  /** Runs once the week's plan is stored: drafting (technical-design.md, Drafts flow). */
+  afterPlan?(businessId: string, weekId: string): Promise<void>;
 }
 
 export interface WeeklyUpdates {
@@ -50,6 +52,8 @@ const reached = (w: { day: number; minutes: number }, t: { day: number; minutes:
 export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
   const { db, workflow } = deps;
   const now = deps.now ?? (() => new Date());
+  /** Weeks whose plan was just stored and that drafting picks up next. */
+  const pendingDrafts = new Map<string, string>();
 
   const loadBusiness = (businessId: string) =>
     db.withBusiness('workflow', businessId, async (tx) => {
@@ -93,16 +97,24 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
 
     const beforeCutoff = !reached(w, CUTOFF_AT);
     if (week.status === 'awaiting' && reached(w, REMINDER_AT) && beforeCutoff) {
+      // REMINDER_SENT first, so a crash or a parallel tick never sends it twice (at most once).
+      const marked = await weekEvent(businessId, week.id, 'REMINDER_SENT', { reminderSentAt: at });
+      if (!marked.ok) return;
       const profile = BusinessProfile.parse(business.profile);
-      await deps.messaging.sendTemplate(businessId, {
-        to: business.approverPhone,
-        templateName: copy.REMINDER_TEMPLATE,
-        language: profile.languages[0] ?? 'he',
-        variables: { businessName: business.name },
-      });
-      await weekEvent(businessId, week.id, 'REMINDER_SENT', { reminderSentAt: at });
+      try {
+        await deps.messaging.sendTemplate(businessId, {
+          to: business.approverPhone,
+          templateName: copy.REMINDER_TEMPLATE,
+          language: profile.languages[0] ?? 'he',
+          variables: { businessName: business.name },
+        });
+      } catch (error) {
+        console.error(JSON.stringify({ level: 'error', msg: 'weekly reminder not sent', businessId, weekId: week.id, error: String(error) }));
+      }
+      return;
     }
-    if (week.status === 'reminded' && !beforeCutoff) await weekEvent(businessId, week.id, 'WEEK_ENDED');
+    // The cutoff closes a week that got no update, reminded or not.
+    if ((week.status === 'reminded' || week.status === 'awaiting') && !beforeCutoff) await weekEvent(businessId, week.id, 'WEEK_ENDED');
   }
 
   /** The owner's typed text and the transcripts of the burst's voice notes. */
@@ -122,7 +134,8 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
   async function handle(burst: OnboardingBurst) {
     const { businessId } = burst;
     const loaded = await loadBusiness(businessId);
-    if (!loaded || loaded.business.status !== 'active' || loaded.step !== 'idle') return;
+    const busy = loaded?.step === 'processing_update';
+    if (!loaded || loaded.business.status !== 'active' || (loaded.step !== 'idle' && !busy)) return;
     const { business } = loaded;
     // state-machines.md, Conversation: an update is accepted only from the approver number.
     if (burst.from !== business.approverPhone) return;
@@ -130,20 +143,27 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     const profile = BusinessProfile.parse(business.profile);
     const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
 
+    let recognized = false;
     try {
       const update = await readBurst(burst, profile.languages[0] ?? 'he');
       const isUpdate =
         update.photos.length > 0 ||
         update.hadVoice ||
-        (update.text !== '' && (await deps.model.run(businessId, 'intent_detection', { text: update.text, step: 'idle', draftsOpen: false })).intent === 'weekly_update');
+        (update.text !== '' &&
+          (await deps.model.run(businessId, 'intent_detection', { text: update.text, step: loaded.step, draftsOpen: false })).intent === 'weekly_update');
       if (!isUpdate) return;
+      recognized = true;
+      // A second update while the last one is still being drafted is not applied (technical-design.md).
+      if (busy) return void (await reply(copy.stillWorking));
 
-      // Which week: the current one while open; after the cutoff, next week's row, opened early.
+      // Which week: the current one while open; after the cutoff, or once this week's update is in,
+      // next week's row, opened early.
       const w = localWeek(now(), business.timezone);
       let week = await weekRow(businessId, w.weekStart);
-      const late = week.status === 'skipped';
+      // 'closed': after the cutoff; 'taken': this week already has its update. Either way, next week.
+      const late = week.status === 'skipped' ? 'closed' : week.status !== 'awaiting' && week.status !== 'reminded' ? 'taken' : null;
       if (late) week = await weekRow(businessId, w.nextWeekStart);
-      if (week.status !== 'awaiting' && week.status !== 'reminded') return;
+      if (week.status !== 'awaiting' && week.status !== 'reminded') return void (await reply(copy.nextWeekAlreadyIn));
 
       const received = await weekEvent(
         businessId,
@@ -154,17 +174,35 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
       );
       if (!received.ok) return;
       await plan(burst, week.id, profile, update, late);
+      if (pendingDrafts.delete(week.id)) await deps.afterPlan?.(businessId, week.id);
     } catch (error) {
       // A model task that failed every attempt is already a console item; a person takes over.
+      // Before the update was recognized, the owner gets a neutral line, not "update received".
       if (error instanceof Error && error.name === 'ModelTaskFailedError') {
         await workflow.startHandoff(businessId, { reason: error.message, step: 'weekly_update' });
-        return void (await reply(copy.updateNeedsReview));
+        return void (await reply(recognized ? copy.updateNeedsReview : copy.handoffNeutral));
       }
       throw error;
     }
   }
 
-  async function plan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: boolean) {
+  async function plan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: 'closed' | 'taken' | null) {
+    const { businessId } = burst;
+    const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
+    try {
+      await extractAndPlan(burst, weekId, profile, update, late);
+    } catch (error) {
+      // Anything else that stops the plan: the week goes to the console instead of staying `received`.
+      console.error(JSON.stringify({ level: 'error', msg: 'weekly plan failed', businessId, weekId, error: String(error) }));
+      await db.withBusiness('workflow', businessId, (tx) =>
+        tx.insert(schema.consoleItem).values({ businessId, kind: 'extraction_failed', referenceId: weekId, details: { error: String(error) } }),
+      );
+      await weekEvent(businessId, weekId, 'EXTRACTION_FAILED');
+      await reply(copy.updateNeedsReview);
+    }
+  }
+
+  async function extractAndPlan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: 'closed' | 'taken' | null) {
     const { businessId } = burst;
     const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
     let facts: ModelTaskOutput<'fact_extraction'>;
@@ -206,7 +244,10 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     });
     if (!stored.ok) return;
     await workflow.apply(businessId, { machine: 'conversation', id: businessId, event: 'UPDATE_RECEIVED', source: 'inbound' });
-    return reply(late ? copy.updateForNextWeek(planned.posts.length) : copy.updateReceived(planned.posts.length));
+    const n = planned.posts.length;
+    await reply(late === 'closed' ? copy.updateForNextWeek(n) : late === 'taken' ? copy.updateCountsForNextWeek(n) : copy.updateReceived(n));
+    // Drafting is outside the plan's error handling: a draft failure never moves the week back.
+    pendingDrafts.set(weekId, businessId);
   }
 
   return {

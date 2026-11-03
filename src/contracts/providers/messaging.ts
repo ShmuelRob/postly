@@ -9,6 +9,20 @@ export const ApprovalButtonPayload = z.object({
 });
 export type ApprovalButtonPayload = z.infer<typeof ApprovalButtonPayload>;
 
+/** The button id a draft is sent with: `<action>:<postId>:<versionHash>` (contracts.md, MessagingProvider). */
+export function encodeButtonId(payload: ApprovalButtonPayload): string {
+  const p = ApprovalButtonPayload.parse(payload);
+  return `${p.action}:${p.postId}:${p.versionHash}`;
+}
+
+/** The payload of a tapped button id, or undefined when the id is not one `encodeButtonId` made. */
+export function decodeButtonId(id: string): ApprovalButtonPayload | undefined {
+  const [action, postId, versionHash, ...rest] = id.split(':');
+  if (rest.length > 0) return undefined;
+  const parsed = ApprovalButtonPayload.safeParse({ action, postId, versionHash });
+  return parsed.success ? parsed.data : undefined;
+}
+
 export const InboundContent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), text: z.string() }),
   z.object({ kind: z.literal('voice'), providerMediaId: z.string().min(1) }),

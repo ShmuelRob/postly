@@ -72,7 +72,7 @@ Stored in `conversation_state.step` once the business is `active` or `paused`. I
 | `confirming_schedule` | `SCHEDULE_CONFIRMED` | `idle` | Publications are created for every approved post |
 | `confirming_schedule` | `CHANGE_REQUESTED` | `processing_update` | |
 
-A new weekly update while drafts are open is treated as a change request on the open drafts. Free text such as "sounds good" while in `reviewing_drafts` is not an event: the agent resends the drafts with buttons and the state stays the same.
+A new weekly update while drafts are open is treated as a change request on the open drafts. A second update while the conversation is `processing_update` or `awaiting_answer` applies no event and gets a reply that the previous update is still being prepared; one while `idle` after the week was received or planned counts for next week (technical-design.md, Weekly update flow; WP-32). Free text such as "sounds good" while in `reviewing_drafts` is not an event: the agent resends the drafts with buttons and the state stays the same.
 
 ## Weekly update
 
@@ -83,6 +83,7 @@ Stored in `weekly_update.status`. A row is created at the start of each business
 | `awaiting` | `REMINDER_SENT` | `reminded` | Sent with an approved template |
 | `awaiting` | `UPDATE_RECEIVED` | `received` | |
 | `reminded` | `UPDATE_RECEIVED` | `received` | |
+| `awaiting` | `WEEK_ENDED` | `skipped` | No update arrived; the week was never reminded (added 2026-11-03 by WP-32, queued for the human) |
 | `reminded` | `WEEK_ENDED` | `skipped` | No update arrived |
 | `received` | `FACTS_EXTRACTED` | `planned` | Extraction output passed schema validation |
 | `received` | `EXTRACTION_FAILED` | `needs_review` | Extraction or planning retries are exhausted |
@@ -117,7 +118,7 @@ Stored in `post.status`. This is the machine that protects the approval rule.
 
 `published` and `cancelled` are terminal.
 
-When the owner sent several photos for a planned single post, the draft asks the owner to choose carousel, one photo, or a post per photo through `DETAIL_MISSING` and `awaiting_clarification`; the answer arrives as `DETAIL_PROVIDED`. A post per photo creates new `planned` posts in code, outside this machine.
+When the owner sent several photos for a planned single post, the draft asks the owner to choose carousel, one photo, or a post per photo through `DETAIL_MISSING` and `awaiting_clarification`; the answer arrives as `DETAIL_PROVIDED`. A post per photo creates new `planned` posts in code, outside this machine. The question, the answers, and the rest of drafting are in [technical-design.md](technical-design.md#drafts-flow) (WP-32).
 
 ### Approval guard
 

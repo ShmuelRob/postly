@@ -74,6 +74,22 @@ const posts = (businessId: string) => db.withBusiness('workflow', businessId, (t
 const step = async (businessId: string) =>
   (await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.conversationState)))[0]?.step;
 
+/** Stores one placeholder image per network, so drafting (WP-32) can follow the plan without Chromium. */
+function fakeRenderer(storage: ReturnType<typeof memoryStorage>) {
+  let n = 0;
+  return {
+    async render(request: { networks: ('instagram' | 'facebook')[] }) {
+      const out: Record<string, { storagePath: string; width: number; height: number; mimeType: 'image/png' }[]> = {};
+      for (const network of request.networks) {
+        const storagePath = `renders/${Date.now()}-${n++}.png`;
+        await storage.put(storagePath, placeholderPng(1080, 1080, [250, 240, 230], [120, 60, 30]), 'image/png');
+        out[network] = [{ storagePath, width: 1080, height: 1080, mimeType: 'image/png' }];
+      }
+      return out;
+    },
+  };
+}
+
 function setup(time: ReturnType<typeof clock>) {
   const storage = memoryStorage();
   const messagingSim = new MessagingSimulator({ businessNumber: BUSINESS_PHONE });
@@ -92,7 +108,7 @@ function setup(time: ReturnType<typeof clock>) {
     ref.postly = createApp({
       db,
       providers: { messaging, publishing, models: { google: model } },
-      design: { forBusiness: () => ({ render: async () => ({}) }) },
+      design: { forBusiness: () => fakeRenderer(storage) },
       media: storage,
       businessNumber: BUSINESS_PHONE,
       samplePhotoUrl: storage.urlFor('none'),
@@ -159,8 +175,10 @@ e2eTest('an update by text, voice, and photo comes in and the week plan is store
     await run.owner.sendsImage(photo);
   });
 
-  // The owner hears back once; the update, the facts, and three planned posts are stored.
-  expect(run.owner.received().map((m) => m.text)).toEqual([copy.updateReceived(3)]);
+  // The owner hears back first; the update, the facts, and three planned posts are stored. Drafting
+  // (WP-32, its own e2e) then sends one draft per post.
+  expect(run.owner.received()[0]?.text).toBe(copy.updateReceived(3));
+  expect(run.owner.received().slice(1).map((m) => m.kind)).toEqual(['buttons', 'buttons', 'buttons']);
   const [week] = await weeks(businessId);
   expect(week).toMatchObject({ weekStart: '2026-11-01', status: 'planned', originalText: UPDATE_TEXT, transcript: UPDATE_VOICE });
   expect(week?.mediaAssetIds).toHaveLength(1);
@@ -168,12 +186,12 @@ e2eTest('an update by text, voice, and photo comes in and the week plan is store
   expect(week?.extractedFacts).toEqual({ facts, missingDetails: [] });
   const planned = await posts(businessId);
   expect(planned.map((p) => [p.position, p.status, p.format, p.weeklyUpdateId])).toEqual([
-    [0, 'planned', 'single', week?.id],
-    [1, 'planned', 'single', week?.id],
-    [2, 'planned', 'single', week?.id],
+    [0, 'awaiting_approval', 'single', week?.id],
+    [1, 'awaiting_approval', 'single', week?.id],
+    [2, 'awaiting_approval', 'single', week?.id],
   ]);
   expect(planned[0]?.plan).toMatchObject({ topic: 'מבצע חלות', factIds: ['f1', 'f2', 'f3'], mediaAssetIds: week?.mediaAssetIds });
-  expect(await step(businessId)).toBe('processing_update');
+  expect(await step(businessId)).toBe('reviewing_drafts');
 
   // The quote check counted as a failed attempt in the model layer.
   const runs = await db.withBusiness('model', businessId, (tx) =>
@@ -183,7 +201,15 @@ e2eTest('an update by text, voice, and photo comes in and the week plan is store
     [1, false, 'code check'],
     [2, true, undefined],
   ]);
-  expect(run.modelCalls().map((c) => c.task)).toEqual(['transcription', 'fact_extraction', 'fact_extraction', 'weekly_planning']);
+  expect(run.modelCalls().map((c) => c.task)).toEqual([
+    'transcription',
+    'fact_extraction',
+    'fact_extraction',
+    'weekly_planning',
+    'caption_writing',
+    'caption_writing',
+    'caption_writing',
+  ]);
   expect(run.networkPosts()).toEqual([]);
 });
 
@@ -240,7 +266,7 @@ e2eTest('an update after the cutoff counts for next week', { timeout: 60_000 }, 
   modelSim.script('intent_detection', { intent: 'weekly_update', confidence: 0.92 });
   await run.owner.sendsText(UPDATE_TEXT);
 
-  expect(run.owner.received().map((m) => m.text ?? m.kind)).toEqual(['template', copy.updateForNextWeek(3)]);
+  expect(run.owner.received().map((m) => m.text ?? m.kind).slice(0, 2)).toEqual(['template', copy.updateForNextWeek(3)]);
   expect((await weeks(businessId)).map((w) => [w.weekStart, w.status, w.originalText])).toEqual([
     ['2026-11-01', 'skipped', null],
     ['2026-11-08', 'planned', UPDATE_TEXT],
