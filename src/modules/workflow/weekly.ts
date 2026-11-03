@@ -160,7 +160,8 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
       // next week's row, opened early.
       const w = localWeek(now(), business.timezone);
       let week = await weekRow(businessId, w.weekStart);
-      const late = week.status !== 'awaiting' && week.status !== 'reminded';
+      // 'closed': after the cutoff; 'taken': this week already has its update. Either way, next week.
+      const late = week.status === 'skipped' ? 'closed' : week.status !== 'awaiting' && week.status !== 'reminded' ? 'taken' : null;
       if (late) week = await weekRow(businessId, w.nextWeekStart);
       if (week.status !== 'awaiting' && week.status !== 'reminded') return void (await reply(copy.nextWeekAlreadyIn));
 
@@ -185,7 +186,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     }
   }
 
-  async function plan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: boolean) {
+  async function plan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: 'closed' | 'taken' | null) {
     const { businessId } = burst;
     const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
     try {
@@ -201,7 +202,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     }
   }
 
-  async function extractAndPlan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: boolean) {
+  async function extractAndPlan(burst: OnboardingBurst, weekId: string, profile: BusinessProfile, update: Awaited<ReturnType<typeof readBurst>>, late: 'closed' | 'taken' | null) {
     const { businessId } = burst;
     const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
     let facts: ModelTaskOutput<'fact_extraction'>;
@@ -243,7 +244,8 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     });
     if (!stored.ok) return;
     await workflow.apply(businessId, { machine: 'conversation', id: businessId, event: 'UPDATE_RECEIVED', source: 'inbound' });
-    await reply(late ? copy.updateForNextWeek(planned.posts.length) : copy.updateReceived(planned.posts.length));
+    const n = planned.posts.length;
+    await reply(late === 'closed' ? copy.updateForNextWeek(n) : late === 'taken' ? copy.updateCountsForNextWeek(n) : copy.updateReceived(n));
     // Drafting is outside the plan's error handling: a draft failure never moves the week back.
     pendingDrafts.set(weekId, businessId);
   }

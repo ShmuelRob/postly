@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
 import { BusinessProfile } from '../../contracts/business-profile.js';
-import type { Network } from '../../contracts/common.js';
+import { NETWORKS, type Network } from '../../contracts/common.js';
 import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { RenderedMedia } from '../../contracts/post-version.js';
@@ -190,12 +190,22 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const plan = post.plan as PlannedPost;
     const captions = version.captions as ChannelCaptions;
     const media = version.renderedMedia as RenderedMedia;
-    const network = (Object.keys(captions) as Network[])[0]!;
-    const slides = await db.withBusiness('content', businessId, async (tx) => {
-      const ids = media[network] ?? [];
+    // The Approve button carries the hash of every network's caption and render, so the owner is
+    // shown all of them before the buttons (technical-design.md, Drafts flow).
+    // jsonb does not keep key order: Instagram first, then Facebook.
+    const networks = NETWORKS.filter((n) => captions[n]);
+    const [network] = networks as [Network];
+    const urls = await db.withBusiness('content', businessId, async (tx) => {
+      const ids = networks.flatMap((n) => media[n] ?? []);
       const rows = await tx.select().from(schema.mediaAsset).where(inArray(schema.mediaAsset.id, ids));
-      return ids.map((id) => deps.urlFor(rows.find((r) => r.id === id)!.storagePath));
+      return (n: Network) => (media[n] ?? []).map((id) => deps.urlFor(rows.find((r) => r.id === id)!.storagePath));
     });
+    const slides = urls(network);
+    for (const other of networks.slice(1)) {
+      const own = urls(other);
+      if (own.join() === slides.join()) continue;
+      for (const [i, url] of own.entries()) await deps.messaging.sendText(businessId, { to, text: copy.networkRender(other, i + 1, own.length), mediaUrl: url });
+    }
     if (slides.length > 1) {
       for (const [i, url] of slides.entries()) await deps.messaging.sendText(businessId, { to, text: copy.carouselSlide(i + 1, slides.length), mediaUrl: url });
     }
@@ -203,7 +213,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const payload = { postId: post.id, versionHash: version.contentHash };
     await deps.messaging.sendButtons(businessId, {
       to,
-      text: copy.draftText(plan.topic, captions[network]!, details),
+      text: copy.draftText(plan.topic, networks.map((n) => ({ network: n, caption: captions[n]! })), details),
       ...(slides[0] ? { mediaUrl: slides[0] } : {}),
       buttons: [
         { id: encodeButtonId({ action: 'approve', ...payload }), title: copy.APPROVE_TITLE },
@@ -459,7 +469,20 @@ export function createDrafts(deps: DraftsDeps): Drafts {
   }
 
   return {
-    draftWeek,
+    async draftWeek(businessId, weekId) {
+      try {
+        await draftWeek(businessId, weekId);
+      } catch (error) {
+        // Any other error after the plan: the team gets the week and a person takes over, so the
+        // conversation does not wait in processing_update answering every message with stillWorking.
+        console.error(JSON.stringify({ level: 'error', msg: 'drafting failed', businessId, weekId, error: String(error) }));
+        await db.withBusiness('workflow', businessId, (tx) =>
+          tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: weekId, details: { error: String(error) } }),
+        );
+        const loaded = await loadBusiness(businessId);
+        if (loaded) await handOff(businessId, loaded.business.approverPhone, 'drafting failed', copy.draftsNeedReview);
+      }
+    },
     async handle(burst) {
       const loaded = await loadBusiness(burst.businessId);
       if (!loaded || loaded.business.status !== 'active') return false;

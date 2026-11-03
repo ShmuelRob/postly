@@ -131,7 +131,7 @@ describe('weekly update follow-ups', { timeout: 30_000 }, () => {
     // The schedule was confirmed (WP-34) and the conversation is idle again.
     await db.withBusiness('workflow', id, (tx) => tx.update(schema.conversationState).set({ step: 'idle' }).where(eq(schema.conversationState.businessId, id)));
     await weekly.handle(burst(id, phone, 'ועוד עדכון'));
-    expect(sent.map((m) => m.text)).toEqual([copy.updateReceived(3), copy.updateForNextWeek(3)]);
+    expect(sent.map((m) => m.text)).toEqual([copy.updateReceived(3), copy.updateCountsForNextWeek(3)]);
     expect((await weeks(id)).map((w) => [w.weekStart, w.status]).sort()).toEqual([
       ['2026-11-01', 'planned'],
       ['2026-11-08', 'planned'],

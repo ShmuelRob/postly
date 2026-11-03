@@ -12,6 +12,10 @@ export const updateReceived = (posts: number) => `קיבלתי את העדכון
 export const updateForNextWeek = (posts: number) =>
   `קיבלתי את העדכון, תודה! השבוע הזה כבר נסגר, אז אכין ${posts} פוסטים לשבוע הבא ואשלח לך טיוטות לאישור.`;
 
+/** A second update after this week's update was already handled (not after the cutoff). */
+export const updateCountsForNextWeek = (posts: number) =>
+  `קיבלתי, תודה! לשבוע הזה כבר יש עדכון, אז העדכון הזה ייכנס לשבוע הבא: אכין ${posts} פוסטים ואשלח לך טיוטות לאישור.`;
+
 export const updateNeedsReview = 'קיבלתי את העדכון, תודה! הצוות שלנו עובר עליו ויחזור אליך בקרוב.';
 
 /** A failure before the message was recognized: a person answers, nothing claims an update arrived. */

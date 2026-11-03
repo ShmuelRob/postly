@@ -32,6 +32,15 @@ describe('checkCaptions (the code fact check)', () => {
     expect(checkCaptions(caption('רק ב-12/11'), context)).toMatch(/12\/11/);
   });
 
+  it('matches each detail to a source of its own type, not to any number', () => {
+    // The address has 12 and the differentiator 24, but neither is a price, a time, or a discount.
+    expect(checkCaptions(caption('חלה ב-12 ₪'), context)).toMatch(/price.*12/);
+    expect(checkCaptions(caption('24% הנחה'), context)).toMatch(/discount.*24/);
+    expect(checkCaptions(caption('פתוח עד 12:00'), context)).toMatch(/time.*12:00/);
+    // The same numbers in their own roles pass: a house number, and the price from the price fact.
+    expect(checkCaptions(caption('רחוב הרצל 12, 2 ב-25 ₪, 15% הנחה'), context)).toBeNull();
+  });
+
   it('rejects a weekday name with no source', () => {
     expect(checkCaptions(caption('המבצע עד יום חמישי'), context)).toMatch(/חמישי/);
   });

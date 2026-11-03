@@ -155,7 +155,9 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
         : input.changes
           ? 'הבצק שלנו תופח 24 שעות. בואו לטעום'
           : 'הבצק שלנו תופח 24 שעות!!! בואו לטעום!!!';
-    return { captions: Object.fromEntries(input.networks.map((n) => [n, { text, hashtags: ['#מאפייה', '#חולון'] }])), usedFactIds: input.plan.factIds };
+    // Facebook gets a longer caption than Instagram, so the draft must show both.
+    const forNetwork = (n: string) => (n === 'facebook' ? `${text}\nמחכים לכם ברחוב הרצל 12` : text);
+    return { captions: Object.fromEntries(input.networks.map((n) => [n, { text: forNetwork(n), hashtags: ['#מאפייה', '#חולון'] }])), usedFactIds: input.plan.factIds };
   });
 
   const photo = messagingSim.addMedia('image/jpeg', await svgPhoto('challah.svg'));
@@ -168,7 +170,9 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   const [promo, dough] = await posts(businessId);
   expect([promo?.status, dough?.status]).toEqual(['needs_review', 'awaiting_approval']);
   const afterUpdate = run.owner.received();
-  expect(afterUpdate.map((m) => m.kind)).toEqual(['text', 'buttons']);
+  // The update reply, the Facebook render (its own size), then the draft with the Instagram render and the buttons.
+  expect(afterUpdate.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([weeklyCopy.updateReceived(2), draftsCopy.networkRender('facebook', 1, 1), 'טיוטה: הבצק שלנו']);
+  expect(afterUpdate[1]?.image?.src).toMatch(/^data:image\/jpeg/);
   expect(afterUpdate[0]?.text).toBe(weeklyCopy.updateReceived(2));
   expect(afterUpdate.some((m) => m.text?.includes('20'))).toBe(false);
   expect(await versions(businessId, promo!.id)).toEqual([]);
@@ -191,7 +195,12 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   expect(v1).toMatchObject({ versionNumber: 1, factCheckPassed: true });
   expect(v1?.contentHash).toMatch(/^[0-9a-f]{64}$/);
   expect(Object.keys(v1!.renderedMedia as object).sort()).toEqual(['facebook', 'instagram']);
-  const draft1 = afterUpdate[1]!;
+  const draft1 = afterUpdate.at(-1)!;
+  // The Approve button covers both networks' captions, so the owner sees both, each under its network.
+  const v1Captions = v1!.captions as Record<'instagram' | 'facebook', { text: string }>;
+  expect(v1Captions.facebook.text).not.toBe(v1Captions.instagram.text);
+  expect(draft1.text).toContain(`${draftsCopy.NETWORK_NAMES.instagram}:\n${v1Captions.instagram.text}`);
+  expect(draft1.text).toContain(`${draftsCopy.NETWORK_NAMES.facebook}:\n${v1Captions.facebook.text}`);
   expect(draft1.image?.src).toMatch(/^data:image\/jpeg/);
   expect(draft1.buttons?.map((b) => [b.title, decodeButtonId(b.id)])).toEqual([
     [draftsCopy.APPROVE_TITLE, { action: 'approve', postId: dough!.id, versionHash: v1!.contentHash }],
@@ -202,9 +211,9 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   // "Sounds good" is not an approval: the draft comes back with its buttons, unchanged.
   modelSim.script('intent_detection', { intent: 'other', confidence: 0.8 });
   await run.owner.sendsText('נשמע טוב');
-  const resent = run.owner.received().slice(2);
-  expect(resent.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([draftsCopy.notAnApproval, draft1.text?.split('\n')[0]]);
-  expect(resent[1]?.buttons).toEqual(draft1.buttons);
+  const resent = run.owner.received().slice(3);
+  expect(resent.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([draftsCopy.notAnApproval, draftsCopy.networkRender('facebook', 1, 1), draft1.text?.split('\n')[0]]);
+  expect(resent[2]?.buttons).toEqual(draft1.buttons);
   expect((await posts(businessId))[1]?.status).toBe('awaiting_approval');
 
   // Change: tap, then say what to change.
@@ -278,9 +287,12 @@ e2eTest('several photos for a single post: the owner chooses a carousel', { time
   expect((version!.renderedMedia as Record<string, string[]>).instagram).toHaveLength(2);
   const afterChoice = run.owner.received().slice(3);
   expect(afterChoice.map((m) => (m.kind === 'buttons' ? 'buttons' : m.text))).toEqual([
+    draftsCopy.networkRender('facebook', 1, 2),
+    draftsCopy.networkRender('facebook', 2, 2),
     draftsCopy.carouselSlide(1, 2),
     draftsCopy.carouselSlide(2, 2),
     'buttons',
+    draftsCopy.networkRender('facebook', 1, 1),
     'buttons',
   ]);
   expect(await step(businessId)).toBe('reviewing_drafts');

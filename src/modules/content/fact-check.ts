@@ -21,20 +21,65 @@ export interface CaptionCheckContext {
 }
 
 const PHONE = /(?:\+972[\s-]?|\b0)\d{1,2}[\s-]?\d{3}[\s-]?\d{4}\b/gu;
+const AMOUNT = String.raw`\d+(?:[.,]\d+)?`;
+const DISCOUNT = new RegExp(String.raw`(${AMOUNT})\s*%`, 'gu');
+const PRICE = new RegExp(String.raw`(${AMOUNT})\s*(?:₪|ש"ח|ש״ח|שקל(?:ים)?)|₪\s*(${AMOUNT})`, 'gu');
+const TIME = /(?<!\d)(\d{1,2}:\d{2})(?!\d)/gu;
+const DATE = /(?<![\d.\/])(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)(?![\d\/])/gu;
 const NUMBER = /\d+(?:[.,:/]\d+)*/gu;
-const WEEKDAY = /יום\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)(?![֐-׿])/gu;
+const WEEKDAY = /יום\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)(?![\u0590-\u05FF])/gu;
 
 const phoneDigits = (phone: string) => phone.replace(/\D/gu, '').replace(/^972/u, '0');
 
-/** Phones, other numbers, and weekday names in a text. */
-function details(text: string) {
-  const phones = [...text.matchAll(PHONE)].map((m) => phoneDigits(m[0]));
-  const rest = text.replace(PHONE, ' ');
-  return {
-    phones,
-    numbers: [...rest.matchAll(NUMBER)].map((m) => m[0]),
-    weekdays: [...rest.matchAll(WEEKDAY)].map((m) => m[1]!),
+/** The kinds of factual detail the check tells apart; `number` is any other number, such as a house number. */
+type Kind = 'phone' | 'price' | 'discount' | 'time' | 'date' | 'weekday' | 'number';
+type Details = Record<Kind, string[]>;
+
+/** Each detail in a text, by kind. A detail is taken out of the text once it has a kind. */
+function details(text: string): Details {
+  const take = (re: RegExp, map: (m: RegExpMatchArray) => string) => {
+    const found = [...rest.matchAll(re)].map(map);
+    rest = rest.replace(re, ' ');
+    return found;
   };
+  let rest = text;
+  const phone = take(PHONE, (m) => phoneDigits(m[0]));
+  const discount = take(DISCOUNT, (m) => m[1]!);
+  const price = take(PRICE, (m) => (m[1] ?? m[2])!);
+  const time = take(TIME, (m) => m[1]!);
+  const date = take(DATE, (m) => m[1]!);
+  const weekday = [...rest.matchAll(WEEKDAY)].map((m) => m[1]!);
+  const number = [...rest.matchAll(NUMBER)].map((m) => m[0]);
+  return { phone, price, discount, time, date, weekday, number };
+}
+
+/** Which kind a fact of each type vouches for, besides the details its own text shows. */
+const KIND_OF_FACT: Partial<Record<Fact['type'], Kind>> = {
+  price: 'price',
+  discount_percent: 'discount',
+  time: 'time',
+  date: 'date',
+  date_range: 'date',
+  phone: 'phone',
+};
+
+/** The details a caption may use, by kind: the used facts and the profile. */
+function sourceDetails(usedFactIds: readonly string[], facts: readonly Fact[], profile: ProfileSources): Details {
+  const out: Details = { phone: [], price: [], discount: [], time: [], date: [], weekday: [], number: [] };
+  const add = (text: string, kind?: Kind) => {
+    const found = details(text);
+    for (const k of Object.keys(out) as Kind[]) out[k].push(...found[k]);
+    // Every number in the text, of whatever kind, is a plain number source too.
+    out.number.push(...[...text.replace(PHONE, ' ').matchAll(NUMBER)].map((m) => m[0]));
+    // A fact typed as a price (or discount, time, date) vouches for its numbers in that role.
+    if (kind && kind !== 'phone') out[kind].push(...[...text.matchAll(NUMBER)].map((m) => m[0]));
+    if (kind === 'phone') out.phone.push(phoneDigits(text));
+  };
+  for (const f of facts.filter((f) => usedFactIds.includes(f.id))) for (const t of [f.value, f.sourceQuote]) add(t, KIND_OF_FACT[f.type]);
+  const { location, contact, differentiator } = profile;
+  for (const t of [location?.address, location?.city, location?.hours, differentiator]) if (t) add(t);
+  for (const t of Object.values(contact ?? {})) if (t) add(t, 'phone');
+  return out;
 }
 
 /** The text a caption's details must come from: the used facts and the profile. */
@@ -46,23 +91,25 @@ export function captionSources(usedFactIds: readonly string[], facts: readonly F
     .join('\n');
 }
 
-/** caption_writing: null when every detail matches a source, else the first mismatch. */
+/**
+ * caption_writing: null when every detail matches a source of its own kind, else the first mismatch.
+ * A price must come from a price (a price fact, or a number shown with ₪ in a source), a discount from
+ * a discount, and so on; only a plain number may match any number in the sources.
+ */
 export function checkCaptions(output: ModelTaskOutput<'caption_writing'>, context: CaptionCheckContext): string | null {
   const known = new Set(context.facts.map((f) => f.id));
   for (const id of output.usedFactIds) {
     if (!known.has(id)) return `usedFactIds: unknown fact ${id}`;
     if (!context.planFactIds.includes(id)) return `usedFactIds: fact ${id} is not in the post's plan`;
   }
-  const source = details(captionSources(output.usedFactIds, context.facts, context.profile));
+  const source = sourceDetails(output.usedFactIds, context.facts, context.profile);
   for (const [network, caption] of Object.entries(output.captions)) {
     if (!caption) continue;
     const found = details([caption.text, ...caption.hashtags].join('\n'));
-    const phone = found.phones.find((p) => !source.phones.includes(p));
-    if (phone) return `${network}: phone ${phone} has no source`;
-    const number = found.numbers.find((n) => !source.numbers.includes(n));
-    if (number) return `${network}: "${number}" has no source`;
-    const day = found.weekdays.find((d) => !source.weekdays.includes(d));
-    if (day) return `${network}: "יום ${day}" has no source`;
+    for (const kind of Object.keys(found) as Kind[]) {
+      const missing = found[kind].find((d) => !source[kind].includes(d));
+      if (missing) return `${network}: ${kind} "${kind === 'weekday' ? `יום ${missing}` : missing}" has no source`;
+    }
   }
   return null;
 }
