@@ -29,6 +29,20 @@
       "when": 1793750400000,
       "tag": "0003_model_layer_seed",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793750401000,
+      "tag": "0004_same_business_references",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793750402000,
+      "tag": "0005_least_privilege_roles",
+      "breakpoints": true
     }
   ]
 }

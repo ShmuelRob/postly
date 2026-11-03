@@ -3,13 +3,13 @@ import {
   type AnyPgColumn,
   boolean,
   check,
+  foreignKey,
   date,
   integer,
   jsonb,
   numeric,
   pgEnum,
   pgPolicy,
-  pgRole,
   pgTable,
   real,
   text,
@@ -32,17 +32,37 @@ import {
 // Implements database-schema.md. jsonb columns are validated with the named
 // Zod schema from src/contracts on every write.
 
-// Roles
-
-/** Subject to RLS; every request path uses it. */
-export const appUser = pgRole('app_user').existing();
-/** Bypasses RLS; only for phone lookup, the scheduler, the console, and example-set runs. */
-export const appSystem = pgRole('app_system').existing();
+// Roles: one login per kind of operation, created and granted in hand-written migrations
+// (database-schema.md, "Least privilege"). Policies apply to every role; only the system roles
+// bypass them.
 
 /** Row visible and writable only inside the business set by `set_config('app.business_id', ..., true)`. */
 function tenantIsolation(column: AnyPgColumn) {
   const sameBusiness: SQL = sql`${column} = nullif(current_setting('app.business_id', true), '')::uuid`;
-  return pgPolicy('tenant_isolation', { for: 'all', to: [appUser], using: sameBusiness, withCheck: sameBusiness });
+  return pgPolicy('tenant_isolation', { for: 'all', to: 'public', using: sameBusiness, withCheck: sameBusiness });
+}
+
+/** A business-owned table's (business_id, id) pair. */
+type Keyed = { businessId: AnyPgColumn; id: AnyPgColumn };
+
+/** Target of same-business foreign keys (database-schema.md, "Same-business references"). */
+function businessKey(table: string, t: Keyed) {
+  return unique(`${table}_business_id_id_unique`).on(t.businessId, t.id);
+}
+
+/** A foreign key that only matches a parent row of the same business. */
+function sameBusiness(
+  table: string,
+  t: { businessId: AnyPgColumn },
+  column: AnyPgColumn,
+  parent: () => Keyed,
+) {
+  const p = parent();
+  return foreignKey({
+    name: `${table}_${column.name}_same_business_fk`,
+    columns: [t.businessId, column],
+    foreignColumns: [p.businessId, p.id],
+  });
 }
 
 // Enums
@@ -121,7 +141,7 @@ export const channelConnection = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [unique().on(t.businessId, t.network), tenantIsolation(t.businessId)],
+  (t) => [unique().on(t.businessId, t.network), businessKey('channel_connection', t), tenantIsolation(t.businessId)],
 );
 
 export const conversationState = pgTable(
@@ -145,7 +165,7 @@ export const message = pgTable(
   'message',
   {
     id: id(),
-    /** Null for unknown numbers; those rows are visible only to app_system. */
+    /** Null for unknown numbers; those rows are visible only to the system roles. */
     businessId: optionalBusinessId(),
     direction: messageDirection('direction').notNull(),
     kind: messageKind('kind').notNull(),
@@ -159,7 +179,7 @@ export const message = pgTable(
     processedAt: tz('processed_at'),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.provider, t.providerMessageId), tenantIsolation(t.businessId)],
+  (t) => [unique().on(t.provider, t.providerMessageId), businessKey('message', t), tenantIsolation(t.businessId)],
 );
 
 export const mediaAsset = pgTable(
@@ -187,13 +207,17 @@ export const preferenceRule = pgTable(
     businessId: businessId(),
     scope: preferenceScope('scope').notNull(),
     rule: text('rule').notNull(),
-    sourceMessageId: uuid('source_message_id').references(() => message.id),
-    sourcePostVersionId: uuid('source_post_version_id').references((): AnyPgColumn => postVersion.id),
+    sourceMessageId: uuid('source_message_id'),
+    sourcePostVersionId: uuid('source_post_version_id'),
     active: boolean('active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [tenantIsolation(t.businessId)],
+  (t) => [
+    sameBusiness('preference_rule', t, t.sourceMessageId, (): Keyed => message),
+    sameBusiness('preference_rule', t, t.sourcePostVersionId, (): Keyed => postVersion),
+    tenantIsolation(t.businessId),
+  ],
 );
 
 export const weeklyUpdate = pgTable(
@@ -213,7 +237,7 @@ export const weeklyUpdate = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [unique().on(t.businessId, t.weekStart), tenantIsolation(t.businessId)],
+  (t) => [unique().on(t.businessId, t.weekStart), businessKey('weekly_update', t), tenantIsolation(t.businessId)],
 );
 
 export const post = pgTable(
@@ -221,19 +245,22 @@ export const post = pgTable(
   {
     id: id(),
     businessId: businessId(),
-    weeklyUpdateId: uuid('weekly_update_id')
-      .notNull()
-      .references(() => weeklyUpdate.id),
+    weeklyUpdateId: uuid('weekly_update_id').notNull(),
     position: integer('position').notNull(),
     status: postStatus('status').notNull().default('planned'),
     format: postFormat('format').notNull(),
     /** PlannedPost. */
     plan: jsonb('plan').notNull(),
-    currentVersionId: uuid('current_version_id').references((): AnyPgColumn => postVersion.id),
+    currentVersionId: uuid('current_version_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [tenantIsolation(t.businessId)],
+  (t) => [
+    businessKey('post', t),
+    sameBusiness('post', t, t.weeklyUpdateId, (): Keyed => weeklyUpdate),
+    sameBusiness('post', t, t.currentVersionId, (): Keyed => postVersion),
+    tenantIsolation(t.businessId),
+  ],
 );
 
 /** Immutable once written; a change creates a new version. */
@@ -242,9 +269,7 @@ export const postVersion = pgTable(
   {
     id: id(),
     businessId: businessId(),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => post.id, { onDelete: 'cascade' }),
+    postId: uuid('post_id').notNull(),
     versionNumber: integer('version_number').notNull(),
     /** ChannelCaptions. */
     captions: jsonb('captions').notNull(),
@@ -256,7 +281,12 @@ export const postVersion = pgTable(
     contentHash: text('content_hash').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.postId, t.versionNumber), tenantIsolation(t.businessId)],
+  (t) => [
+    unique().on(t.postId, t.versionNumber),
+    businessKey('post_version', t),
+    sameBusiness('post_version', t, t.postId, (): Keyed => post).onDelete('cascade'),
+    tenantIsolation(t.businessId),
+  ],
 );
 
 /** Immutable except for invalidated_at. */
@@ -265,24 +295,23 @@ export const approval = pgTable(
   {
     id: id(),
     businessId: businessId(),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => post.id),
-    postVersionId: uuid('post_version_id')
-      .notNull()
-      .references(() => postVersion.id),
+    postId: uuid('post_id').notNull(),
+    postVersionId: uuid('post_version_id').notNull(),
     approvedVersionHash: text('approved_version_hash').notNull(),
     approverPhone: text('approver_phone').notNull(),
     /** The button reply; unique so a tap is never counted twice. */
-    messageId: uuid('message_id')
-      .notNull()
-      .unique()
-      .references(() => message.id),
+    messageId: uuid('message_id').notNull().unique(),
     approvedAt: tz('approved_at').notNull(),
     invalidatedAt: tz('invalidated_at'),
     createdAt: createdAt(),
   },
-  (t) => [tenantIsolation(t.businessId)],
+  (t) => [
+    businessKey('approval', t),
+    sameBusiness('approval', t, t.postId, (): Keyed => post),
+    sameBusiness('approval', t, t.postVersionId, (): Keyed => postVersion),
+    sameBusiness('approval', t, t.messageId, (): Keyed => message),
+    tenantIsolation(t.businessId),
+  ],
 );
 
 export const publication = pgTable(
@@ -290,17 +319,11 @@ export const publication = pgTable(
   {
     id: id(),
     businessId: businessId(),
-    postId: uuid('post_id')
-      .notNull()
-      .references(() => post.id),
-    approvalId: uuid('approval_id')
-      .notNull()
-      .references(() => approval.id),
+    postId: uuid('post_id').notNull(),
+    approvalId: uuid('approval_id').notNull(),
     /** Copied from the approval; checked again by the publishing job. */
     approvedVersionHash: text('approved_version_hash').notNull(),
-    channelConnectionId: uuid('channel_connection_id')
-      .notNull()
-      .references(() => channelConnection.id),
+    channelConnectionId: uuid('channel_connection_id').notNull(),
     network: network('network').notNull(),
     scheduledFor: tz('scheduled_for').notNull(),
     status: publicationStatus('status').notNull().default('scheduled'),
@@ -311,7 +334,13 @@ export const publication = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [unique().on(t.approvalId, t.network), tenantIsolation(t.businessId)],
+  (t) => [
+    unique().on(t.approvalId, t.network),
+    sameBusiness('publication', t, t.postId, (): Keyed => post),
+    sameBusiness('publication', t, t.approvalId, (): Keyed => approval),
+    sameBusiness('publication', t, t.channelConnectionId, (): Keyed => channelConnection),
+    tenantIsolation(t.businessId),
+  ],
 );
 
 /** Payment card details are never stored. */
@@ -337,7 +366,7 @@ export const modelRun = pgTable(
   'model_run',
   {
     id: id(),
-    /** Null for example-set runs; those rows are visible only to app_system. */
+    /** Null for example-set runs; those rows are visible only to the system roles. */
     businessId: optionalBusinessId(),
     task: modelTask('task').notNull(),
     promptVersion: integer('prompt_version').notNull(),

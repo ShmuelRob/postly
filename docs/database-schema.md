@@ -14,18 +14,92 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 
 ## Tenant isolation
 
-- A table is **business-owned** when it has a `business_id` column. Every business-owned table, and `business` itself, has RLS enabled with a `tenant_isolation` policy for the `app_user` role: a row is visible and writable only when its business matches `current_setting('app.business_id')`.
-- The application sets `app.business_id` with `set_config(..., true)` at the start of each transaction. A query without a business context sees no rows.
-- The `app_system` role bypasses RLS. It is used only for: resolving an inbound phone number to a business, the scheduler that fans jobs out per business, the console, and the example-set runner. Every other code path uses `app_user`.
-- Rows with a null `business_id` (messages from unknown numbers, example-set model runs) are visible only to `app_system`.
-- Tables without `business_id` are system tables and are not readable by `app_user` beyond what the model layer and publishing job need (`model_task_config`, `prompt_template`, `system_control`).
-- Both roles are separate logins created by the first migration, each with its own connection pool; their passwords are set outside migrations. Neither is a member of the other or owns any table, so no statement inside a transaction can switch to a stronger role. A separate migration role owns the tables, and every business-owned table has `FORCE ROW LEVEL SECURITY`, so the owner is filtered too.
-- `app_user` may read, insert, update, and delete business-owned tables, with two exceptions that enforce immutability: it may only insert `post_version`, and on `approval` it may only insert and update `invalidated_at`. It may only read the system tables. `app_system` may do all four on every table.
-- Every new table needs explicit grants and, if business-owned, `FORCE ROW LEVEL SECURITY` in its migration. There are no default privileges, so a table without grants fails closed.
-- In code, `withBusiness(businessId, fn)` from `src/db/index.ts` opens an `app_user` transaction with `app.business_id` set, and `withSystem(purpose, fn)` an `app_system` one, where `purpose` names one of the four uses above. No other way to query leaves `src/db/`.
-- **Least privilege (decided 2026-11-03, built in WP-24):** grants move from one `app_user` and one `app_system` to a role per kind of operation, for example a messaging role, a drafting role, a publishing role, and one system role per `withSystem` purpose, each granted only the tables and verbs it uses.
-- **Same-business references (decided 2026-11-03, built in WP-24 before WP-33):** every foreign key between business-owned tables is composite, `(business_id, id)`, so a row can only reference a parent of its own business.
-- **Accepted risk:** Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, and `discard` anywhere outside `src/db/`.
+- A table is **business-owned** when it has a `business_id` column. Every business-owned table, and `business` itself, has RLS enabled and forced (`FORCE ROW LEVEL SECURITY`) with a `tenant_isolation` policy for `public`: a row is visible and writable only when its business matches `current_setting('app.business_id')`. Only the system roles below bypass it.
+- The application sets `app.business_id` with `set_config(..., true)` at the start of each transaction. A query without a business context sees no rows and cannot write any.
+- Rows with a null `business_id` (messages from unknown numbers, example-set model runs, console items about unknown numbers) are visible only to system roles.
+- Tables without `business_id` are system tables (`model_task_config`, `prompt_template`, `system_control`).
+
+### Least privilege
+
+Every kind of operation has its own database role (decided 2026-11-03, built in WP-24). Each role is its own login with its own password and its own connection pool. No role is a member of another or owns any table, so no statement inside a transaction can switch to a different role. A separate migration role owns the tables. A role reaches only the tables and verbs in the matrix below; everything else is `permission denied`. There are no default privileges, so a new table is closed to every role until its migration grants it, and every new business-owned table also needs `FORCE ROW LEVEL SECURITY`.
+
+**Business roles** (subject to RLS; opened with `withBusiness(role, businessId, fn)`):
+
+| Role | Login | Module | Used for |
+| --- | --- | --- | --- |
+| `messaging` | `app_messaging` | Messaging | Storing inbound and outbound messages and their media, the 24-hour window |
+| `workflow` | `app_workflow` | Workflow | Creating a business, onboarding and conversation steps, weekly updates, post states, handoffs |
+| `content` | `app_content` | Content | Weekly planning results, captions, and new post versions |
+| `design` | `app_design` | Design | Reading post versions and storing rendered media |
+| `approval` | `app_approval` | Workflow (approval path) | Recording approvals and invalidating them |
+| `publishing` | `app_publishing` | Publishing | Channel connections, publications, and the publishing job |
+| `model` | `app_model` | Model layer | Model settings, prompt versions, `model_run` records, console routing |
+| `billing` | `app_billing` | Billing | Subscriptions |
+| `business_data` | `app_business_data` | Business data | Profile edits, preference rules, the media library, post history |
+
+**System roles** (bypass RLS; opened with `withSystem(purpose, fn)`, one per purpose):
+
+| Purpose | Login | Used for |
+| --- | --- | --- |
+| `phone_lookup` | `app_sys_phone_lookup` | Resolving an inbound number to a business; storing messages and console items from unknown numbers |
+| `scheduler` | `app_sys_scheduler` | Finding the businesses and rows due for a job, then fanning jobs out per business |
+| `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries, pauses, model settings |
+| `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
+
+**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col)` is an update of that column only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
+
+| Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | phone_lookup | scheduler | console | example_set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `business` | S | SIU | S | S | S | S |  | S | SU | S | S | SU |  |
+| `channel_connection` |  | S |  |  |  | SIU |  |  | S |  | S | SU |  |
+| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  | SU |  |
+| `message` | SIU | S | S |  | S |  |  |  |  | SI |  | S |  |
+| `media_asset` | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
+| `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
+| `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  | S | S |  |
+| `post` |  | SIU | SU | S | SU | SU |  |  | S |  | S | SU |  |
+| `post_version` |  |  | SI | S | S | S |  |  | S |  |  | S |  |
+| `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
+| `publication` |  |  |  |  |  | SIU |  |  | S |  | S | SU |  |
+| `subscription` |  |  |  |  |  |  |  | SIU |  |  | S | S |  |
+| `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S | SI |
+| `console_item` |  | SI |  |  |  | SI | SI |  |  | SI |  | SIU |  |
+| `model_task_config` |  |  |  |  |  |  | S |  |  |  |  | SU | S |
+| `prompt_template` |  |  |  |  |  |  | S |  |  |  |  | SI | S |
+| `system_control` |  |  |  |  |  | S |  |  |  |  | S | SU |  |
+
+- **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role.
+- **Deletes:** only `business_data` deletes, and only preference rules and media. Data deletion after cancellation (WP-43) adds its own role.
+- **Creating a business:** `workflow` inserts the `business` row inside `withBusiness('workflow', newId, ...)`, so RLS checks the new row against the new id. No system role inserts businesses.
+- A module that needs a table or verb its role lacks changes this matrix first (docs first), then a new migration.
+
+### In code
+
+`createDatabase(urls)` in `src/db/index.ts` takes one connection string per login, `urls.business[role]` and `urls.system[purpose]`, and opens each pool on first use. `withBusiness(role, businessId, fn)` runs `fn` in one transaction on that role's login with `app.business_id` set. `withSystem(purpose, fn)` runs it on that purpose's system login. An unknown role or purpose is rejected before any connection is made. No other way to query leaves `src/db/`. `loginFor(roleOrPurpose)` gives the login name, for deployment and test setup.
+
+### Same-business references
+
+Every foreign key from a business-owned table to another business-owned table is composite, `(business_id, <ref>_id)` referencing `(business_id, id)` (decided 2026-11-03, built in WP-24 before WP-33), so a row can only reference a parent of its own business. Postgres checks foreign keys without RLS, so with single-column keys a business could point its own approval at another business's post version, and probe whether an id exists. The composite key refuses both. Each referenced table has a `unique (business_id, id)` constraint for this.
+
+| From | Columns | To |
+| --- | --- | --- |
+| `post` | `business_id, weekly_update_id` | `weekly_update` |
+| `post` | `business_id, current_version_id` | `post_version` |
+| `post_version` | `business_id, post_id` | `post` (on delete cascade) |
+| `preference_rule` | `business_id, source_message_id` | `message` |
+| `preference_rule` | `business_id, source_post_version_id` | `post_version` |
+| `approval` | `business_id, post_id` | `post` |
+| `approval` | `business_id, post_version_id` | `post_version` |
+| `approval` | `business_id, message_id` | `message` |
+| `publication` | `business_id, post_id` | `post` |
+| `publication` | `business_id, approval_id` | `approval` |
+| `publication` | `business_id, channel_connection_id` | `channel_connection` |
+
+Nullable reference columns use the default `MATCH SIMPLE`: a null reference is not checked, and a set one must belong to the same business. `message.business_id` is nullable, but every table that references `message` has a non-null `business_id`, so a reference to an unknown-number message is refused. Uuid arrays (`media_asset_ids`) and `console_item.reference_id` are not foreign keys; code reads them through RLS.
+
+### Accepted risk
+
+Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, and `discard` anywhere outside `src/db/`. Switching role is impossible regardless, since no login is a member of another role.
 
 ## Enums
 
