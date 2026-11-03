@@ -38,7 +38,8 @@ describe('module boundaries', { timeout: 30_000 }, () => {
   it('flags every seeded violation and nothing else', () => {
     const result = cruise(`${repoRoot}test/fixtures/boundaries`);
     const found = result.summary.violations
-      .map((v) => `${v.rule.name}: ${v.from} -> ${v.to}`)
+      // An installed package resolves into node_modules; name it by its package, as when it is not installed.
+      .map((v) => `${v.rule.name}: ${v.from} -> ${v.to.replace(/^(\.\.\/)*node_modules\/((@[^/]+\/)?[^/]+).*$/, '$2')}`)
       .sort();
 
     expect(found).toEqual(

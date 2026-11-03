@@ -31,7 +31,8 @@ const databaseDrivers = [
 ];
 
 // Matches a bare specifier when unresolved, or its node_modules path when resolved.
-const packagePattern = (names) => `(^|/node_modules/)(${names.join('|')})(/|$)`;
+// Matches a bare name (not installed) and an installed package (`node_modules/<name>/...`).
+const packagePattern = (names) => `(^|(^|/)node_modules/)(${names.join('|')})(/|$)`;
 
 const vendorRules = Object.entries(vendorPackages).map(([owner, names]) => ({
   name: 'vendor-outside-adapter',
@@ -86,7 +87,6 @@ export default {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)node_modules/' },
     // TypeScript 7 has no JS compiler API, so .ts files are parsed with swc.
     parser: 'swc',
   },
