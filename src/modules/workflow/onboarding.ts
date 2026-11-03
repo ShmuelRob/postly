@@ -203,28 +203,44 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     return result.ok;
   }
 
+  /** channel_connection: the owner says the link flow is done; ask the provider, then run the test. */
   async function handleChannels(burst: OnboardingBurst, draft: BusinessProfileDraft) {
     const chosen = draft.channels ?? [];
     const statuses = await deps.channels.checkAndTest(burst.businessId);
     const verified = statuses.filter((s) => s.status === 'verified').map((s) => s.network);
-    const link = () => deps.channels.requestLink(burst.businessId, chosen.filter((n) => !verified.includes(n)));
-    if (verified.length === 0) return reply(burst, copy.notConnected(await link()));
+    if (verified.length === 0) return reply(burst, copy.notConnected(await deps.channels.requestLink(burst.businessId, chosen)));
 
     const connected = await event(burst.businessId, 'CHANNEL_CONNECTED', async (tx) => {
       const rows = await tx.select().from(schema.channelConnection);
       return rows.some((r) => r.status === 'connected' || r.status === 'verified') ? null : 'no connected channel';
     });
     if (!connected.ok) return;
+    return finishTest(burst, chosen, verified);
+  }
+
+  /**
+   * channel_test: every chosen channel must be verified (state-machines.md, Onboarding). Also the
+   * resume point when a burst finds the onboarding stopped in channel_test after a restart.
+   */
+  async function finishTest(burst: OnboardingBurst, chosen: Network[], verified: Network[]) {
     const missing = chosen.filter((n) => !verified.includes(n));
     if (missing.length > 0) {
       await event(burst.businessId, 'CHANNEL_TEST_FAILED');
-      return reply(burst, copy.partlyConnected(missing, await link()));
+      const link = await deps.channels.requestLink(burst.businessId, missing);
+      return reply(burst, verified.length > 0 ? copy.partlyConnected(missing, link) : copy.notConnected(link));
     }
     const passed = await event(burst.businessId, 'CHANNEL_TEST_PASSED', async (tx) => {
       const rows = await tx.select().from(schema.channelConnection);
       return chosen.every((n) => rows.some((r) => r.network === n && r.status === 'verified')) ? null : 'a chosen channel is not verified';
     });
-    if (passed.ok && (await activate(burst))) await reply(burst, copy.activated);
+    if (!passed.ok) return handOff(burst, 'channel test could not pass');
+    return finishActivation(burst);
+  }
+
+  /** completed: activate the business; also the resume point after a stop before activation. */
+  async function finishActivation(burst: OnboardingBurst) {
+    if (await activate(burst)) return reply(burst, copy.activated);
+    return handOff(burst, 'activation guard failed after the channel test');
   }
 
   async function step(burst: OnboardingBurst) {
@@ -307,8 +323,18 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
       case 'channel_connection':
         return handleChannels(burst, draft);
 
+      case 'channel_test': {
+        // A stop between CHANNEL_CONNECTED and CHANNEL_TEST_PASSED: run the test again.
+        const statuses = await deps.channels.checkAndTest(businessId);
+        const verified = statuses.filter((s) => s.status === 'verified').map((s) => s.network);
+        return finishTest(burst, draft.channels ?? [], verified);
+      }
+
+      case 'completed':
+        // A stop between CHANNEL_TEST_PASSED and ONBOARDING_COMPLETED: activate now.
+        return finishActivation(burst);
+
       default:
-        // channel_test is passed through within one burst; completed is terminal.
         return;
     }
   }

@@ -91,9 +91,12 @@ export interface Messaging {
   /**
    * Hands every stored inbound message the workflow never consumed (`processed_at` null) and older
    * than the quiet window to the handler again, grouped by business and sender. Run at startup and
-   * then every quiet window (technical-design.md, Onboarding flow; review queue item 14).
+   * then every quiet window (technical-design.md, Onboarding flow; review queue item 14). `businessId`
+   * limits it to one business (tests that share a database).
    */
-  sweepUnprocessed(): Promise<number>;
+  sweepUnprocessed(options?: { businessId?: string }): Promise<number>;
+  /** Runs the sweep now and then every `everyMs` (default: the quiet window); returns a stop function. */
+  startSweep(everyMs?: number): () => void;
   /** Hands every pending burst to the handler now. */
   flushBursts(): Promise<void>;
   /** Flushes pending bursts and stops the timers. */
@@ -114,6 +117,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const timers = options.timers ?? nodeTimers;
   const onError = options.onError ?? ((error: unknown) => console.error('inbound burst failed', error));
   const pending = new Map<string, PendingBurst>();
+  /** Ids of messages handed to the handler and not yet marked processed. */
+  const delivering = new Set<string>();
 
   const key = (businessId: string, from: string) => `${businessId}:${from}`;
 
@@ -146,14 +151,26 @@ export function createMessaging(options: MessagingOptions): Messaging {
     });
   }
 
-  async function deliver(burst: InboundBurst): Promise<void> {
-    await handler.handleInbound(burst);
-    const processedAt = now();
-    await db.withBusiness('messaging', burst.businessId, async (tx) => {
-      for (const m of burst.messages) {
-        await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
-      }
-    });
+  /**
+   * Hands a burst to the handler and marks its messages processed. Its message ids stay in
+   * `delivering` until that finishes, so the sweep never hands the same messages over twice in this
+   * process. Returns false, doing nothing, when one of them is already being delivered.
+   */
+  async function deliver(burst: InboundBurst): Promise<boolean> {
+    if (burst.messages.some((m) => delivering.has(m.id))) return false;
+    for (const m of burst.messages) delivering.add(m.id);
+    try {
+      await handler.handleInbound(burst);
+      const processedAt = now();
+      await db.withBusiness('messaging', burst.businessId, async (tx) => {
+        for (const m of burst.messages) {
+          await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
+        }
+      });
+      return true;
+    } finally {
+      for (const m of burst.messages) delivering.delete(m.id);
+    }
   }
 
   async function flush(k: string): Promise<void> {
@@ -333,20 +350,25 @@ export function createMessaging(options: MessagingOptions): Messaging {
       if (!row) throw new Error(`No media asset ${mediaAssetId} for this business`);
       return options.media.urlFor(row.path);
     },
-    async sweepUnprocessed() {
+    async sweepUnprocessed(sweepOptions = {}) {
       const m = schema.message;
       const cutoff = new Date(now().getTime() - quietMs);
       const rows = await db.withSystem('phone_lookup', (tx) =>
         tx
           .select()
           .from(m)
-          .where(and(eq(m.direction, 'inbound'), isNull(m.processedAt), isNotNull(m.businessId), lt(m.createdAt, cutoff)))
+          .where(and(
+              eq(m.direction, 'inbound'),
+              isNull(m.processedAt),
+              sweepOptions.businessId ? eq(m.businessId, sweepOptions.businessId) : isNotNull(m.businessId),
+              lt(m.createdAt, cutoff),
+            ))
           .orderBy(asc(m.createdAt)),
       );
       const waiting = new Set([...pending.values()].flatMap((p) => p.burst.messages.map((x) => x.id)));
       const groups = new Map<string, InboundBurst[]>();
       for (const row of rows) {
-        if (waiting.has(row.id) || !row.businessId) continue;
+        if (waiting.has(row.id) || delivering.has(row.id) || !row.businessId) continue;
         const content = InboundMessage.shape.content.parse(row.payload);
         const received: ReceivedMessage = {
           id: row.id,
@@ -369,8 +391,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
         for (const burst of bursts) {
           burst.text = burstText(burst.messages);
           try {
-            await deliver(burst);
-            delivered += burst.messages.length;
+            if (await deliver(burst)) delivered += burst.messages.length;
           } catch (error) {
             // Later bursts of this sender wait for the next sweep, so their order is kept.
             onError(error, burst);
@@ -379,6 +400,14 @@ export function createMessaging(options: MessagingOptions): Messaging {
         }
       }
       return delivered;
+    },
+    startSweep(everyMs = quietMs) {
+      const sweep = () => {
+        this.sweepUnprocessed().catch((error: unknown) => console.error('inbound sweep failed', error));
+      };
+      sweep();
+      const timer = setInterval(sweep, everyMs);
+      return () => clearInterval(timer);
     },
     async flushBursts() {
       for (const k of [...pending.keys()]) await flush(k);

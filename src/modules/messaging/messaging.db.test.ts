@@ -210,3 +210,34 @@ describe('sweep of unprocessed messages (review queue item 14)', () => {
     expect(bursts.filter((b) => b.businessId === businessId)).toHaveLength(1);
   });
 });
+
+describe('sweep while a burst is being delivered', () => {
+  it('does not hand a burst over again while its delivery is still running', async () => {
+    const { businessId, owner, sim } = await setup({ now: () => new Date(Date.now() - 60_000) });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const handled: InboundBurst[] = [];
+    const messaging = createMessaging({
+      db,
+      provider: sim,
+      businessNumber: BUSINESS_NUMBER,
+      timers: manualTimers().timers,
+      handler: {
+        handleInbound: async (b) => {
+          if (b.businessId !== businessId) return;
+          handled.push(b);
+          await gate;
+        },
+      },
+    });
+    await messaging.receive({ ...sim.inboundText(owner, 'שלום'), providerMessageId: `SM-${randomUUID()}` });
+    const flushing = messaging.flushBursts();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(handled).toHaveLength(1);
+    await messaging.sweepUnprocessed({ businessId });
+    release();
+    await flushing;
+    await messaging.sweepUnprocessed({ businessId });
+    expect(handled).toHaveLength(1);
+  });
+});

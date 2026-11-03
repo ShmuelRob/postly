@@ -34,6 +34,12 @@ export interface App {
   messaging: Messaging;
   workflow: Workflow;
   onboarding: Onboarding;
+  /**
+   * Starts background work of the process that receives webhooks: the sweep of inbound messages
+   * never processed (review queue item 14), at startup and then every quiet window. It runs in the
+   * web process, next to the bursts it must not hand over twice. Returns a stop function.
+   */
+  start(): () => void;
 }
 
 /**
@@ -73,5 +79,5 @@ export function createApp(options: AppOptions): App {
     },
   });
 
-  return { messaging, workflow, onboarding };
+  return { messaging, workflow, onboarding, start: () => messaging.startSweep() };
 }

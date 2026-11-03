@@ -22,13 +22,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   registerMessagingRoutes(app, options);
   const sweepEveryMs = options.sweepEveryMs;
   if (sweepEveryMs !== undefined) {
-    const sweep = () => void options.messaging.sweepUnprocessed().catch((error: unknown) => console.error('inbound sweep failed', error));
-    let timer: NodeJS.Timeout | undefined;
+    let stop = () => {};
     app.addHook('onReady', async () => {
-      sweep();
-      timer = setInterval(sweep, sweepEveryMs);
+      stop = options.messaging.startSweep(sweepEveryMs);
     });
-    app.addHook('onClose', async () => clearInterval(timer));
+    app.addHook('onClose', async () => stop());
   }
   app.addHook('onClose', () => options.messaging.close());
   return app;

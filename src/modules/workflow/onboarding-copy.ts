@@ -78,7 +78,7 @@ export const partlyConnected = (missing: Network[], link: string) =>
   `חלק מהרשתות מחוברות. עדיין חסר: ${list(missing.map((n) => networkNames[n]))}. אפשר להשלים דרך הקישור:\n${link}\nוכתבו לי כשסיימתם.`;
 
 export const activated =
-  'הכול מחובר, ובדקתי שאפשר לתזמן פוסטים 🎉 העסק פעיל!\n' +
+  'הכול מחובר 🎉 העסק פעיל!\n' +
   'מעכשיו, פעם בשבוע שלחו לי מה חדש בעסק, בכתב, בקול או עם תמונות, ואכין לכם טיוטות לאישור.';
 
 /** Owner answers that approve the profile summary (text is enough here; posts need a button). */

@@ -266,3 +266,166 @@ e2eTest('a profile question unanswered three times hands the conversation to a p
   run.recordConsoleItems(items.map((i) => ({ kind: i.kind, details: i.details })));
   expect(items).toMatchObject([{ kind: 'handoff', status: 'open' }]);
 });
+
+/** A business whose onboarding stopped at `step`, with a complete profile and both channels chosen. */
+async function stoppedAt(
+  onboarding: ReturnType<typeof createApp>['onboarding'],
+  owner: string,
+  step: 'channel_test' | 'completed',
+  channels: Array<{ network: 'instagram' | 'facebook'; status: 'connected' | 'verified' }>,
+) {
+  await db.withSystem('console', (tx) =>
+    tx.update(schema.business).set({ approverPhone: `+9722${Date.now()}` }).where(eq(schema.business.approverPhone, owner)),
+  );
+  const businessId = await onboarding.createBusiness({ approverPhone: owner });
+  const profile = {
+    ...extractions[VOICE_NAME],
+    location: { city: 'חולון', address: 'רחוב הרצל 12', hours: 'א׳-ה׳ 7:00-19:00', fulfillment: ['pickup'] },
+    differentiator: 'בצק שתופח 24 שעות',
+    channels: ['instagram', 'facebook'],
+    style: 'warm',
+    approverPhone: owner,
+  };
+  await db.withBusiness('workflow', businessId, async (tx) => {
+    await tx.update(schema.business).set({ profile, name: 'מאפיית בן עמי', style: 'warm' }).where(eq(schema.business.id, businessId));
+    await tx.update(schema.conversationState).set({ step }).where(eq(schema.conversationState.businessId, businessId));
+  });
+  await db.withBusiness('publishing', businessId, (tx) =>
+    tx.insert(schema.channelConnection).values(
+      channels.map((c) => ({ businessId, network: c.network, provider: 'simulator', status: c.status, providerAccountId: `acct-${c.network}` })),
+    ),
+  );
+  return businessId;
+}
+
+/** The app without the design engine; `hold` delays the first text send to the owner. */
+function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promise<void>) {
+  const ref: { postly?: ReturnType<typeof createApp> } = {};
+  const app: AppFactory = ({ messaging, publishing, model }) => {
+    const slowMessaging: typeof messaging = hold
+      ? {
+          name: messaging.name,
+          sendText: async (request) => {
+            await hold();
+            return messaging.sendText(request);
+          },
+          sendTemplate: (request) => messaging.sendTemplate(request),
+          sendButtons: (request) => messaging.sendButtons(request),
+          getMedia: (id) => messaging.getMedia(id),
+          verifyWebhook: (request) => messaging.verifyWebhook(request),
+        }
+      : messaging;
+    ref.postly = createApp({
+      db,
+      providers: { messaging: slowMessaging, publishing, models: { google: model } },
+      design: { forBusiness: () => ({ render: async () => ({}) }) },
+      media: storage,
+      businessNumber: BUSINESS_PHONE,
+      samplePhotoUrl: storage.urlFor('none'),
+      // No quiet window, so a sweep may pick up a message at once.
+      burstQuietMs: 0,
+    });
+    return {
+      async deliverInbound(message) {
+        await ref.postly!.messaging.receive(message);
+        await ref.postly!.messaging.flushBursts();
+      },
+    };
+  };
+  return { app, ref };
+}
+
+const providersWith = (publishing = new PublishingSimulator()) =>
+  ({
+    messaging: new MessagingSimulator({ businessNumber: BUSINESS_PHONE }),
+    publishing,
+    model: new ModelSimulator(),
+    payment: new PaymentSimulator(),
+    renderer: { render: async () => ({}) },
+  }) satisfies Providers;
+
+e2eTest('onboarding stopped in channel_test resumes the test on the next message', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230032';
+  const publishing = new PublishingSimulator();
+  const { app, ref } = plainApp(memoryStorage());
+  const run = await e2e.start({ providers: providersWith(publishing), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  const businessId = await stoppedAt(ref.postly!.onboarding, owner, 'channel_test', [
+    { network: 'instagram', status: 'connected' },
+    { network: 'facebook', status: 'verified' },
+  ]);
+  publishing.connect(businessId, 'instagram', 'acct-instagram');
+
+  await run.owner.sendsText('היי, מה קורה?');
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.activated]);
+  const business = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.business))[0]);
+  expect(business?.status).toBe('active');
+});
+
+e2eTest('onboarding stopped after the test passed activates the business on the next message', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230033';
+  const { app, ref } = plainApp(memoryStorage());
+  const run = await e2e.start({ providers: providersWith(), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  const businessId = await stoppedAt(ref.postly!.onboarding, owner, 'completed', [
+    { network: 'instagram', status: 'verified' },
+    { network: 'facebook', status: 'verified' },
+  ]);
+
+  await run.owner.sendsText('היי');
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.activated]);
+  const state = await db.withBusiness('workflow', businessId, async (tx) => ({
+    business: (await tx.select().from(schema.business))[0],
+    conversation: (await tx.select().from(schema.conversationState))[0],
+  }));
+  expect(state.business?.status).toBe('active');
+  expect(state.conversation?.step).toBe('idle');
+});
+
+e2eTest('onboarding that cannot activate tells the owner and hands off to a person', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230034';
+  const { app, ref } = plainApp(memoryStorage());
+  const run = await e2e.start({ providers: providersWith(), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  // The channel lost its verification after the test: nothing is verified any more.
+  const businessId = await stoppedAt(ref.postly!.onboarding, owner, 'completed', [{ network: 'instagram', status: 'connected' }]);
+
+  await run.owner.sendsText('היי');
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.handoff]);
+  const items = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem));
+  run.recordConsoleItems(items.map((i) => ({ kind: i.kind, details: i.details })));
+  expect(items).toMatchObject([{ kind: 'handoff', status: 'open', details: { reason: 'activation guard failed after the channel test' } }]);
+  const business = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.business))[0]);
+  expect(business?.status).toBe('onboarding');
+});
+
+e2eTest('a sweep during a slow reply hands the message over once: one reply, one state change', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230035';
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let held = false;
+  const { app, ref } = plainApp(memoryStorage(), async () => {
+    if (held) return;
+    held = true;
+    await gate;
+  });
+  const run = await e2e.start({ providers: providersWith(), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  await db.withSystem('console', (tx) =>
+    tx.update(schema.business).set({ approverPhone: `+9723${Date.now()}` }).where(eq(schema.business.approverPhone, owner)),
+  );
+  const businessId = await ref.postly!.onboarding.createBusiness({ approverPhone: owner });
+
+  // The first reply is slow; while it is being sent, the sweep runs.
+  const sending = run.owner.sendsText('היי');
+  await new Promise((r) => setTimeout(r, 200));
+  expect(held).toBe(true);
+  await ref.postly!.messaging.sweepUnprocessed({ businessId });
+  release();
+  await sending;
+  await ref.postly!.messaging.sweepUnprocessed({ businessId });
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.intro, copy.questions.business]);
+  const state = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.conversationState))[0]);
+  expect(state?.step).toBe('profile_questions');
+  expect(state?.openQuestion).toMatchObject({ key: 'business', attempts: 1 });
+});
