@@ -203,6 +203,7 @@ Authentication is not defined yet, so the routes answer only requests from the l
 - Local and test environments use simulators for WhatsApp, publishing, models, and payments. A local playground (WP-45) lets a human play the business owner against those simulators in a browser; it is never deployed.
 - Staging uses test accounts and test keys only.
 - Production access is limited and separate from agent environments.
+- Staging and production run on Google Cloud as described in [deployment.md](deployment.md): one image run as `web`, `worker` or `migrate`, Cloud Run, Cloud SQL with a private IP only, a private media bucket, and Secret Manager. Decided in WP-44: pg-boss connects as its own login `app_jobs`, which owns only the `pgboss` schema and has no grant on any business table; the migration job creates it and sets every login's password from Secret Manager. The weekly tick is an hourly pg-boss schedule on a singleton queue. The web service runs one instance until bursts are durable (review queue item 14). Nothing is deployed until the human applies it (gate H8).
 
 ## Still required before core development
 
