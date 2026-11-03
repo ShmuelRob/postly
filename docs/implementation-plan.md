@@ -17,7 +17,7 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 
 | Lane | Meaning | Concurrency |
 | --- | --- | --- |
-| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages |
+| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each rebases on the others' merges |
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
 
@@ -75,19 +75,19 @@ Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the mana
 | WP-10 | Example-set format and the provisional set: fixture layout, loader, Zod schema for entries, six fictional businesses, code-generated placeholder photos | Parallel | WP-01 | Loader validates every provisional entry | done |
 | WP-11 | Design engine core: `TemplateRenderer` with Playwright and sharp, RTL layout, crop, logo and caption placement, per-network output | Parallel | WP-01, H2 (provisional) | Renders a test fixture in every style and network, checked by snapshot | done |
 | WP-12 | The three style templates (one session per style once WP-11 is merged) | Parallel | WP-11, H2 | Each style renders the example set within its rules | done |
-| WP-13 | Example-set runner: renders every example in every style into a screenshot gallery report | Parallel | WP-10, WP-12 | The human reviews the gallery on the provisional set; milestone 1 closes once it passes on the final styles and the real set | in_progress |
-| WP-14 | Design research and style upgrade: research what makes social posts effective (look first for existing skills and published rules), write the findings into design-styles.md, then update the three styles | Parallel | WP-12 | design-styles.md carries the researched rules and the styles render the example set within them | in_progress |
-| WP-15 | Cleanup from reviews: fixture phones to 0501234567 / +972501234567, versioned gitignored e2e reports per run, the link-checker fixture test; the style items (shared `pre-line`, test helpers, snapshot names) go to WP-14 and the flaky boundaries test to its own fix | Parallel | WP-12 | `npm run check` passes and the listed items are closed | in_progress |
+| WP-13 | Example-set runner: renders every example in every style into a screenshot gallery report | Parallel | WP-10, WP-12 | The human reviews the gallery on the provisional set; milestone 1 closes once it passes on the final styles and the real set | done |
+| WP-14 | Design research and style upgrade: research what makes social posts effective (look first for existing skills and published rules), write the findings into design-styles.md, then update the three styles; also the style review items moved from WP-15 (shared `pre-line`, shared style-test helpers, snapshot renames) | Parallel | WP-12 | design-styles.md carries the researched rules and the styles render the example set within them | done |
+| WP-15 | Cleanup from reviews: fixture phones to 0501234567 / +972501234567, versioned gitignored e2e reports per run, the link-checker fixture test; the style items (shared `pre-line`, test helpers, snapshot names) go to WP-14 and the flaky boundaries test to its own fix | Parallel | WP-12 | `npm run check` passes and the listed items are closed | done |
 
 ### Phase 2: core platform
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
 | WP-20 | Database: migration from `schema.ts`, RLS policies, roles, `withBusiness()` transaction helper, test database setup | Core | H1, WP-02 | Tenant isolation tests prove one business cannot read or write another's rows; H4 passed | done |
-| WP-21 | Model layer: task registry, versioned prompts, config table, Zod validation with retries, `model_run` records, console routing | Core | WP-20, WP-03 | Invalid simulator output retries and lands in `console_item`; H7 passed for any prompt | in_progress |
-| WP-22 | Messaging module: Fastify webhook, verification, deduplication, burst merge, sending, 24-hour window, unknown numbers to the console | Core | WP-20, WP-03 | End-to-end: duplicate and unknown-number messages behave as specified | todo |
-| WP-23 | Workflow runtime: apply an event with its guards inside one transaction, pg-boss worker wiring, handoff flag, pause flags | Core | WP-20 | Invalid transitions are rejected and logged; handoff stops automatic replies | todo |
-| WP-24 | Database hardening: a role per operation (least privilege) and composite `(business_id, id)` foreign keys, per database-schema.md | Core | WP-20 | Tests prove each role can reach only its tables and verbs, and a cross-business reference is rejected; before WP-33 | todo |
+| WP-21 | Model layer: task registry, versioned prompts, config table, Zod validation with retries, `model_run` records, console routing | Core | WP-20, WP-03 | Invalid simulator output retries and lands in `console_item`; H7 passed for any prompt | done |
+| WP-22 | Messaging module: Fastify webhook, verification, deduplication, burst merge, sending, 24-hour window, unknown numbers to the console | Core | WP-20, WP-03 | End-to-end: duplicate and unknown-number messages behave as specified | in_progress |
+| WP-23 | Workflow runtime: apply an event with its guards inside one transaction, pg-boss worker wiring, handoff flag, pause flags | Core | WP-20 | Invalid transitions are rejected and logged; handoff stops automatic replies | in_progress |
+| WP-24 | Database hardening: a role per operation (least privilege) and composite `(business_id, id)` foreign keys, per database-schema.md | Core | WP-20 | Tests prove each role can reach only its tables and verbs, and a cross-business reference is rejected; before WP-33 | in_progress |
 
 ### Phase 3: product flows
 
