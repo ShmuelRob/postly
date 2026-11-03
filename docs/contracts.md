@@ -41,7 +41,11 @@ This document defines the Zod schemas for model tasks, the business profile, and
 | `fixedHashtags` | No | Empty; the agent chooses by field and location |
 | `approverPhone` | Yes | The number that completed onboarding |
 
-`missingRequiredProfileFields(draft)` returns the required fields that are still empty. The onboarding guard `PROFILE_FIELDS_COMPLETE` passes only when it returns none.
+`missingRequiredProfileFields(draft)` returns the required fields that are still empty. The onboarding guard `PROFILE_FIELDS_COMPLETE` passes only when it returns none other than `style`, which the style selection step fills.
+
+### `OpenQuestion`
+
+What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), and `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile). The schema is in `src/contracts/open-question.ts`.
 
 ## Model tasks
 
@@ -75,11 +79,13 @@ Each vendor is reached only through its interface. Requests and responses that c
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `sendText` | `to`, `text` | `providerMessageId` |
+| `sendText` | `to`, `text`, optional `mediaUrl` (an image shown with the text) | `providerMessageId` |
 | `sendTemplate` | `to`, `templateName`, `language`, `variables` | `providerMessageId` |
 | `sendButtons` | `to`, `text`, optional `mediaUrl`, `buttons` (1 to 3, each `id` and `title`) | `providerMessageId` |
 | `getMedia` | `providerMediaId` | `mimeType`, `data` |
 | `verifyWebhook` | raw request `headers`, `body`, `url` | `InboundMessage[]`, or a rejection when the signature is invalid |
+
+`sendText` with a `mediaUrl` sends the image with the text as its caption (added in WP-30 for the style samples, 2026-11-03, queued for the human): `sendButtons` is the only other way to show an image, and its buttons carry approval payloads only, so onboarding choices are answered by text.
 
 `InboundMessage` has `provider`, `providerMessageId`, `from`, `to`, `receivedAt`, and one `content` of kind `text`, `voice`, `image` (with optional caption), or `button_reply`. Approval buttons use the payload `ApprovalButtonPayload`: `action` (`approve` or `change`), `postId`, and `versionHash`.
 

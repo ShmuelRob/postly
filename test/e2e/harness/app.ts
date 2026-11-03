@@ -14,6 +14,7 @@ import {
   type TemplateRenderer,
 } from '../../../src/contracts/providers/index.js';
 import type { Network } from '../../../src/contracts/common.js';
+import type { BusinessRenderContext } from '../../../src/modules/design/index.js';
 import { modelTasks, type ModelTaskName } from '../../../src/contracts/model-tasks.js';
 import type {
   ConsoleEntry,
@@ -27,6 +28,8 @@ export interface Providers {
   model: ModelProvider;
   payment: PaymentProvider;
   renderer: TemplateRenderer;
+  /** The design module's per-business renderer factory, when the app renders through `forBusiness`. */
+  design?: { forBusiness(business: BusinessRenderContext): TemplateRenderer };
 }
 
 /** Reads a stored file by storage path or URL so the report can show it. */
@@ -106,6 +109,8 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
     payment: options.providers.payment,
     renderer: recordRenderer(options.providers.renderer, record, now, attach),
   };
+  const design = options.providers.design;
+  if (design) providers.design = { forBusiness: (business) => recordRenderer(design.forBusiness(business), record, now, attach) };
   const app = await options.app(providers);
 
   const makeSender = (phone: string): Owner => {
@@ -205,7 +210,9 @@ function recordMessaging(inner: MessagingProvider, record: E2eRecord, now: () =>
     async sendText(request) {
       const req = SendTextRequest.parse(request);
       const result = await inner.sendText(req);
-      record.transcript.push({ at: now(), direction: 'to_owner', phone: req.to, kind: 'text', text: req.text });
+      const entry: TranscriptEntry = { at: now(), direction: 'to_owner', phone: req.to, kind: 'text', text: req.text };
+      if (req.mediaUrl) entry.image = await attach(req.mediaUrl);
+      record.transcript.push(entry);
       return result;
     },
     async sendTemplate(request) {

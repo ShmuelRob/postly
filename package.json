@@ -24,6 +24,8 @@
     "pg-boss": "^12.38.0",
     "playwright": "^1.64.1",
     "postgres": "^3.4.9",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
@@ -36,8 +38,6 @@
     "@vitejs/plugin-react": "^6.2.1",
     "dependency-cruiser": "18.7.2",
     "drizzle-kit": "^0.31.11",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"

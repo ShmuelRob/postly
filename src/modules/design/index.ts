@@ -8,6 +8,7 @@ import { styles } from './styles/index.js';
 
 export type { AssetLoader, BusinessRenderContext, DesignEngine, FileStore } from './engine.js';
 export { NetworkAccessError, OverlayTextError, RenderError } from './errors.js';
+export { renderStyleSamples, type StyleSample, type StyleSampleInput } from './samples.js';
 
 export type DesignRenderer = DesignEngine;
 
