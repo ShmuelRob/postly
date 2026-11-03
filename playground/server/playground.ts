@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { eq } from 'drizzle-orm';
 import type { Network } from '../../src/contracts/common.js';
@@ -83,10 +83,12 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       case 'text':
         return deliver({ kind: 'text', text: input.text });
       case 'image': {
+        allowed(input.mimeType, 'image');
         const id = sim.addMedia(input.mimeType, Buffer.from(input.dataBase64, 'base64'));
         return deliver(input.caption ? { kind: 'image', providerMediaId: id, caption: input.caption } : { kind: 'image', providerMediaId: id });
       }
       case 'voice': {
+        allowed(input.mimeType, 'audio');
         const id = sim.addMedia(input.mimeType, Buffer.from(input.dataBase64, 'base64'));
         return deliver({ kind: 'voice', providerMediaId: id });
       }
@@ -193,7 +195,8 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     if (req.method === 'GET' && url.pathname === '/api/media') {
       const media = await readMedia(url.searchParams.get('ref') ?? '');
       if (!media) return json(res, 404, { error: 'unknown media' });
-      res.writeHead(200, { 'content-type': media.mimeType });
+      const type = MEDIA_TYPES.has(media.mimeType) ? media.mimeType : 'application/octet-stream';
+      res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff' });
       return void res.end(Buffer.from(media.data));
     }
     json(res, 404, { error: 'not found' });
@@ -240,6 +243,24 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   };
 }
 
+/** Media types the playground accepts and serves; anything else is served as a download. */
+const MEDIA_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'audio/ogg',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/aac',
+  'audio/wav',
+  'audio/webm',
+]);
+
+function allowed(mimeType: string, kind: 'image' | 'audio') {
+  if (!MEDIA_TYPES.has(mimeType) || !mimeType.startsWith(`${kind}/`)) throw new Error(`unsupported ${kind} type: ${mimeType}`);
+}
+
 const mediaUrl = (ref: string) => `/api/media?ref=${encodeURIComponent(ref)}`;
 
 /** A fresh business for this run, in the state a new sign-up starts in (onboarding, intro). */
@@ -247,7 +268,7 @@ async function createBusiness(db: Database, ownerPhone: string): Promise<string>
   const businessId = randomUUID();
   // approver_phone is unique: free the playground number from an earlier run on the same database.
   await db.withSystem('console', (tx) =>
-    tx.update(schema.business).set({ approverPhone: `+9720${Date.now()}` }).where(eq(schema.business.approverPhone, ownerPhone)),
+    tx.update(schema.business).set({ approverPhone: `+97250${randomInt(1_000_000, 10_000_000)}` }).where(eq(schema.business.approverPhone, ownerPhone)),
   );
   await db.withBusiness('workflow', businessId, async (tx) => {
     await tx.insert(schema.business).values({ id: businessId, name: 'העסק של המגרש', approverPhone: ownerPhone });

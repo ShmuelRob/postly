@@ -26,9 +26,9 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Banned statements in files under root/src and root/test, outside src/db/ and test/fixtures/. */
+/** Banned statements in files under root/src, root/test and root/playground, outside src/db/ and test/fixtures/. */
 function scan(root: string): { file: string; rule: string }[] {
-  const files = ['src', 'test'].flatMap((top) => {
+  const files = ['src', 'test', 'playground'].flatMap((top) => {
     try {
       return sourceFiles(join(root, top));
     } catch {

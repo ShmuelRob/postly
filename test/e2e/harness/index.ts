@@ -3,7 +3,7 @@ import { startE2eRun, type E2eRun, type StartOptions } from './app.js';
 import { emptyRecord } from './record.js';
 
 export type { AppFactory, AppUnderTest, E2eRun, MediaReader, Owner, Providers, StartOptions } from './app.js';
-export type { ConsoleEntry, E2eRecord, ModelCallEntry, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
+export type { ConsoleEntry, E2eRecord, ModelCallEntry, PublishingEntry, RenderedImage, ScreenshotEntry, TranscriptEntry } from './record.js';
 export { placeholderPng } from './png.js';
 
 export interface E2eHarness {

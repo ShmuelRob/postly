@@ -35,7 +35,10 @@ afterAll(async () => {
   await playground?.close();
 });
 
-e2eTest('the owner chats in the playground and sees replies, buttons, the feed and the state', async ({ task }) => {
+e2eTest('the owner chats in the playground and sees replies, buttons, the feed and the state', async ({ task, e2e }) => {
+  // The fixture creates the record the e2e report reads; this test drives the UI, not e2e.start().
+  void e2e;
+  const record = task.meta.e2e!;
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(ui.url);
 
@@ -81,12 +84,17 @@ e2eTest('the owner chats in the playground and sees replies, buttons, the feed a
   await expect.poll(() => state.getByTestId('business-status').innerText()).toBe('onboarding');
   await expect.poll(() => state.getByTestId('conversation-step').innerText()).toBe('intro');
 
-  await page.screenshot({ path: `${SHOTS}/playground.png`, fullPage: true });
+  const shot = await page.screenshot({ path: `${SHOTS}/playground.png`, fullPage: true });
+  (record.screenshots ??= []).push({
+    at: new Date().toISOString(),
+    title: 'Playground after the conversation',
+    image: { ref: `${SHOTS}/playground.png`, mimeType: 'image/png', src: `data:image/png;base64,${shot.toString('base64')}` },
+  });
   await page.close();
 
   // The report shows the conversation as the owner saw it.
-  task.meta.e2e?.transcript.push(...playground.transcript());
-  task.meta.e2e?.publishing.push(...(await playground.feedRecord()));
+  record.transcript.push(...playground.transcript());
+  record.publishing.push(...(await playground.feedRecord()));
   const replies = playground.transcript().filter((m) => m.direction === 'to_owner');
   expect(replies.map((m) => m.text)).toEqual([
     'קיבלתי: שלום, השבוע יש מבצע על חלות',
