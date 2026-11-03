@@ -7,11 +7,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { Network } from '../../../contracts/common.js';
 import type { RenderRequest } from '../../../contracts/providers/renderer.js';
 import { loadExampleSet } from '../../../example-set/index.js';
-import { createPlaywrightRasterizer } from '../adapters/playwright-rasterizer.js';
 import { createSharpImages } from '../adapters/sharp-images.js';
-import { contrastRatio } from '../color.js';
-import { type AssetLoader, type BusinessRenderContext, createDesignEngine, type Rasterizer } from '../engine.js';
+import { contrastRatio, ensureGraphicContrast } from '../color.js';
+import { type AssetLoader, type BusinessRenderContext, createDesignEngine, } from '../engine.js';
 import { fixtureAssetLoader, fixtureBusiness, fixtureOverlayText, fixtureUrls, memoryFileStore } from '../fixtures/fixture.js';
+import { hex, inSafeArea, probingRasterizer } from '../fixtures/probe.js';
 import { matchImageSnapshot } from '../fixtures/snapshot.js';
 import { styles } from './index.js';
 
@@ -56,23 +56,7 @@ window.__layout = window.__layout.then((report) => {
 });
 </script>`;
 
-/** Wraps the Playwright rasterizer and keeps the measurements of every slide, in order. */
-function measuringRasterizer(): Rasterizer & { slides: Measured[] } {
-  const inner = createPlaywrightRasterizer();
-  const slides: Measured[] = [];
-  return {
-    slides,
-    async rasterize(page) {
-      const html = page.html.replace('</body>', `${MEASURE_SCRIPT}</body>`);
-      const out = await inner.rasterize({ ...page, html });
-      slides.push((out.layout as { clean: Measured }).clean);
-      return out;
-    },
-    close: () => inner.close(),
-  };
-}
-
-const rasterizer = measuringRasterizer();
+const rasterizer = probingRasterizer(MEASURE_SCRIPT, (layout) => (layout as { clean: Measured }).clean);
 const images = createSharpImages();
 const store = memoryFileStore();
 
@@ -113,16 +97,8 @@ async function measure(req: RenderRequest, business: BusinessRenderContext = fix
   return { result, slides: rasterizer.slides.slice(before) };
 }
 
-function hex(rgb: string): string {
-  const [r, g, b] = rgb.match(/\d+/g)!.map(Number);
-  return `#${[r, g, b].map((c) => c!.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
-}
-
 function insideSafeArea(b: Box) {
-  expect(b.left).toBeGreaterThanOrEqual(SAFE - 0.5);
-  expect(b.top).toBeGreaterThanOrEqual(SAFE - 0.5);
-  expect(b.right).toBeLessThanOrEqual(CANVAS.width - SAFE + 0.5);
-  expect(b.bottom).toBeLessThanOrEqual(CANVAS.height - SAFE + 0.5);
+  expect(inSafeArea(b)).toBe(true);
 }
 
 /** Every Clean rule for a cover slide. */
@@ -138,7 +114,8 @@ function expectCleanCover(m: Measured, accent: string) {
   expect(bar).toMatchObject({ top: BAND_TOP, bottom: CANVAS.height });
   if (m.dir === 'rtl') expect(bar.right).toBe(CANVAS.width);
   else expect(bar.left).toBe(0);
-  expect(hex(bar.background)).toBe(accent.toUpperCase());
+  // The accent, darkened only as far as 3:1 on the white band needs (graphic contrast).
+  expect(hex(bar.background)).toBe(ensureGraphicContrast(accent.toUpperCase(), '#FFFFFF'));
   // Overlay: Heebo 800, 52 to 72 px, at most 2 lines, start-aligned, readable on the band.
   const o = m.overlay!;
   expect(o.family).toContain('Heebo');
@@ -219,6 +196,8 @@ describe('Clean style rules', { timeout: 120_000 }, () => {
   it('replaces the accent with the first brand color and keeps text readable', async () => {
     const { slides } = await measure(request({ brandColors: ['#E8B4C8', '#7A3E5D'] }));
     expectCleanCover(slides[0]!, '#E8B4C8');
+    // The pale pink alone would be a faint 1.9:1 bar on white.
+    expect(hex(slides[0]!.bar!.background)).not.toBe('#E8B4C8');
   });
 
   it('shrinks a long overlay toward 52 px and keeps it within two lines', async () => {

@@ -76,6 +76,8 @@ ${families.map(fontFaceCss).join('\n')}
 html, body { margin: 0; padding: 0; width: ${ctx.canvas.width}px; height: ${ctx.canvas.height}px; overflow: hidden; position: relative; }
 body { -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; font-family: "${style.fonts.secondary.family}"; }
 img { display: block; }
+/* Every style: explicit line breaks are kept, and Hebrew is never tracked. */
+[data-overlay] { white-space: pre-line; letter-spacing: normal; }
 </style>
 <style>${style.css(ctx)}</style>
 </head>

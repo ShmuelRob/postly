@@ -7,10 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Network } from '../../../contracts/common.js';
 import type { RenderRequest } from '../../../contracts/providers/renderer.js';
 import { loadExampleSet, type ExampleEntry } from '../../../example-set/index.js';
-import { createPlaywrightRasterizer } from '../adapters/playwright-rasterizer.js';
 import { createSharpImages } from '../adapters/sharp-images.js';
 import { contrastRatio, MIN_CONTRAST } from '../color.js';
-import { createDesignEngine, type BusinessRenderContext, type DesignEngine, type Rasterizer } from '../engine.js';
+import { createDesignEngine, type BusinessRenderContext, type DesignEngine } from '../engine.js';
 import {
   fixtureAssetLoader,
   fixtureBusiness,
@@ -18,6 +17,7 @@ import {
   fixtureUrls,
   memoryFileStore,
 } from '../fixtures/fixture.js';
+import { hex, inSafeArea, probingRasterizer, type Rect } from '../fixtures/probe.js';
 import { matchImageSnapshot } from '../fixtures/snapshot.js';
 import { styles } from './index.js';
 
@@ -26,7 +26,6 @@ const W = 1080;
 const H = 1350;
 const SAFE = 64;
 
-type Rect = { left: number; top: number; right: number; bottom: number };
 type Probe = {
   dir: string;
   photo: Rect | null;
@@ -64,20 +63,8 @@ window.__layout = window.__layout.then((layout) => {
 });
 </script>`;
 
-const probes: Probe[] = [];
-
-/** The real rasterizer with the probe added; keeps every slide's probe in order. */
-function probingRasterizer(): Rasterizer {
-  const inner = createPlaywrightRasterizer();
-  return {
-    async rasterize(page) {
-      const result = await inner.rasterize({ ...page, html: page.html.replace('</body>', `${PROBE}</body>`) });
-      probes.push((result.layout as { probe: Probe }).probe);
-      return result;
-    },
-    close: () => inner.close(),
-  };
-}
+const rasterizer = probingRasterizer(PROBE, (layout) => (layout as { probe: Probe }).probe);
+const probes = rasterizer.slides;
 
 const exampleFiles = new Map<string, string>();
 const store = memoryFileStore();
@@ -86,7 +73,7 @@ let engine: DesignEngine;
 beforeAll(() => {
   const fixtures = fixtureAssetLoader();
   engine = createDesignEngine({
-    rasterizer: probingRasterizer(),
+    rasterizer,
     images: createSharpImages(),
     store,
     styles,
@@ -101,7 +88,7 @@ beforeAll(() => {
 
 afterAll(async () => {
   await engine.close();
-});
+}, 30_000);
 
 function request(overrides: Partial<RenderRequest> = {}): RenderRequest {
   return {
@@ -133,11 +120,6 @@ function stored(path: string): Uint8Array {
   return file.bytes;
 }
 
-function hex(rgb: string): string {
-  const [r, g, b] = (rgb.match(/\d+/g) ?? []).map(Number);
-  return `#${[r, g, b].map((c) => (c ?? 0).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
-}
-
 /** Rotation in degrees from a computed `matrix(a, b, c, d, e, f)`. */
 function rotation(transform: string): number {
   const [a, b] = (transform.match(/-?[\d.e-]+/g) ?? []).map(Number);
@@ -146,7 +128,6 @@ function rotation(transform: string): number {
 
 const centerX = (r: Rect) => (r.left + r.right) / 2;
 const centerY = (r: Rect) => (r.top + r.bottom) / 2;
-const inSafeArea = (r: Rect) => r.left >= SAFE - 0.5 && r.top >= SAFE - 0.5 && r.right <= W - SAFE + 0.5 && r.bottom <= H - SAFE + 0.5;
 
 type Palette = { accent: string; secondary: string };
 const STYLE_PALETTE: Palette = { accent: '#FF3D5A', secondary: '#FFC83D' };
@@ -216,7 +197,7 @@ describe('Dynamic style', { timeout: 60_000 }, () => {
     expect(slides[0]!.dir).toBe('rtl');
     expectDynamicCover(slides[0]!, STYLE_PALETTE);
     expect(slides[0]!.logo!.kind).toBe('image');
-    expect(await matchImageSnapshot('dynamic-single-1', stored(result.instagram![0]!.storagePath))).toEqual({ ok: true });
+    expect(await matchImageSnapshot('dynamic-rules-single-1', stored(result.instagram![0]!.storagePath))).toEqual({ ok: true });
   });
 
   it('mirrors the stripes and logo for a left-to-right business', async () => {
@@ -245,7 +226,7 @@ describe('Dynamic style', { timeout: 60_000 }, () => {
     );
     expectDynamicCover(slides[0]!, { accent: '#FFE14D', secondary: '#2E6F6A' });
     expect(hex(slides[0]!.overlay!.color)).not.toBe('#FFFFFF');
-    expect(await matchImageSnapshot('dynamic-brand-colors-1', stored(result.instagram![0]!.storagePath))).toEqual({
+    expect(await matchImageSnapshot('dynamic-rules-brand-colors-1', stored(result.instagram![0]!.storagePath))).toEqual({
       ok: true,
     });
   });

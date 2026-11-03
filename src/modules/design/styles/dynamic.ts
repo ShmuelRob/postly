@@ -1,7 +1,7 @@
 // Dynamic (design-styles.md): bold graphic elements and a sense of movement.
-// Minimal template for WP-11; WP-12 owns the final rules.
+// Rules are asserted on the laid-out page in dynamic.test.ts, including the example set.
 
-import { ensureContrast } from '../color.js';
+import { edgeColor, ensureContrast } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { logoHtml, overlayHtml, photoHtml } from './shared.js';
 import type { StyleTemplate } from './types.js';
@@ -20,15 +20,16 @@ export const dynamic: StyleTemplate = {
   },
 
   html(ctx) {
-    const base = `${photoHtml(ctx, 'photo')}<div class="stripe stripe-1"></div><div class="stripe stripe-2"></div>${logoHtml(ctx, 'logo')}`;
+    const base = `${photoHtml(ctx, 'photo')}<div class="stripe stripe-1" data-graphic="over-photo"></div><div class="stripe stripe-2" data-graphic="over-photo"></div>${logoHtml(ctx, 'logo')}`;
     if (ctx.kind === 'photo') return base;
-    return `${base}<div class="band">${overlayHtml(ctx, 'overlay')}</div>`;
+    return `${base}<div class="band" data-graphic="over-photo">${overlayHtml(ctx, 'overlay')}</div>`;
   },
 
   css(ctx) {
     const { palette, safeArea, canvas } = ctx;
     const shadow = palette.shadow ?? '#14141F';
     const text = ensureContrast(palette.text, palette.accent, [shadow]);
+    const stripe = palette.secondary ?? palette.accent;
     // The stripes cut the top start corner, opposite the band and the logo.
     const stripeAngle = ctx.dir === 'rtl' ? 45 : -45;
     return `
@@ -36,10 +37,10 @@ export const dynamic: StyleTemplate = {
       .photo { position: absolute; top: 0; left: 0; display: block; }
       .band { position: absolute; top: ${Math.round(canvas.height * 0.64)}px; left: ${-canvas.width * 0.1}px; width: ${canvas.width * 1.2}px;
         padding: 34px ${canvas.width * 0.1 + safeArea + ROTATION_MARGIN}px; background: ${palette.accent};
-        transform: rotate(${BAND_ANGLE}deg); box-shadow: 0 16px 0 ${shadow}; }
-      .overlay { ${fontCss(this.fonts.headline)} line-height: 1.1; color: ${text}; text-align: start; white-space: pre-line; }
-      .stripe { position: absolute; width: 520px; height: 34px; background: ${palette.secondary ?? palette.accent};
-        transform: rotate(${stripeAngle}deg); }
+        transform: rotate(${BAND_ANGLE}deg); box-shadow: 0 16px 0 ${edgeColor(palette.accent, shadow)}; }
+      .overlay { ${fontCss(this.fonts.headline)} line-height: 1.1; color: ${text}; text-align: start; }
+      .stripe { position: absolute; width: 520px; height: 34px; background: ${stripe};
+        box-shadow: 0 8px 0 ${edgeColor(stripe, shadow)}; transform: rotate(${stripeAngle}deg); }
       .stripe-1 { top: 120px; inset-inline-start: -150px; }
       .stripe-2 { top: 210px; inset-inline-start: -110px; }
       .logo { position: absolute; top: ${safeArea}px; inset-inline-end: ${safeArea}px; max-width: 160px; max-height: 160px;

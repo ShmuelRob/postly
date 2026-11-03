@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Network } from '../../../contracts/common.js';
 import type { RenderRequest } from '../../../contracts/providers/renderer.js';
 import { type ExampleEntry, loadExampleSet } from '../../../example-set/index.js';
-import { createPlaywrightRasterizer } from '../adapters/playwright-rasterizer.js';
 import { createSharpImages } from '../adapters/sharp-images.js';
 import { contrastRatio, MIN_CONTRAST } from '../color.js';
 import { type AssetLoader, type BusinessRenderContext, createDesignEngine, type DesignEngine } from '../engine.js';
@@ -19,6 +18,7 @@ import {
   fixtureUrls,
   memoryFileStore,
 } from '../fixtures/fixture.js';
+import { hex, probingRasterizer } from '../fixtures/probe.js';
 import { matchImageSnapshot } from '../fixtures/snapshot.js';
 import { styles } from './index.js';
 
@@ -32,6 +32,8 @@ type Probe = {
   overlay: (Rect & { color: string; fontFamily: string; fontWeight: string; fontSize: number; textAlign: string }) | null;
   logoCircle: Rect & { background: string; radius: string };
   logo: Rect & { tag: string; color: string; fontFamily: string; fontWeight: string };
+  /** Backgrounds of the card's short rule: accent first, then secondary. */
+  rule: string[];
 };
 type Slide = { fontsLoaded: boolean; safeAreaViolations: string[]; probe: Probe };
 
@@ -52,6 +54,7 @@ window.__layout = window.__layout.then((report) => {
       fontWeight: css(overlay).fontWeight, fontSize: parseFloat(css(overlay).fontSize), textAlign: css(overlay).textAlign },
     logoCircle: { ...rect(circle), background: css(circle).backgroundColor, radius: css(circle).borderTopLeftRadius },
     logo: { ...rect(logo), tag: logo.tagName, color: css(logo).color, fontFamily: css(logo).fontFamily, fontWeight: css(logo).fontWeight },
+    rule: [...document.querySelectorAll('.rule span')].map((n) => css(n).backgroundColor),
   } };
 });
 </script>`;
@@ -62,7 +65,6 @@ const NETWORKS: Network[] = ['instagram', 'facebook'];
 
 const images = createSharpImages();
 const store = memoryFileStore();
-const slides: Slide[] = [];
 let engine: DesignEngine;
 
 /** Assets: the renderer fixture by URL, anything else read from disk (the example set). */
@@ -75,27 +77,16 @@ const assets: AssetLoader = {
   },
 };
 
+const rasterizer = probingRasterizer(PROBE, (layout) => layout as Slide);
+const slides = rasterizer.slides;
+
 beforeAll(() => {
-  const real = createPlaywrightRasterizer();
-  engine = createDesignEngine({
-    assets,
-    store,
-    images,
-    styles,
-    rasterizer: {
-      async rasterize(page) {
-        const result = await real.rasterize({ ...page, html: page.html.replace('</body>', `${PROBE}</body>`) });
-        slides.push(result.layout as Slide);
-        return result;
-      },
-      close: () => real.close(),
-    },
-  });
+  engine = createDesignEngine({ assets, store, images, styles, rasterizer });
 });
 
 afterAll(async () => {
   await engine.close();
-});
+}, 30_000);
 
 function request(overrides: Partial<RenderRequest> = {}): RenderRequest {
   return {
@@ -115,12 +106,6 @@ async function render(req: RenderRequest, business: BusinessRenderContext = fixt
   const from = slides.length;
   const result = await engine.forBusiness(business).render(req);
   return { result, probes: slides.slice(from).map((s) => s.probe), reports: slides.slice(from) };
-}
-
-/** `rgb(r, g, b)` from getComputedStyle to `#RRGGBB`. */
-function hex(rgb: string): string {
-  const [r, g, b] = rgb.match(/\d+/g)!.slice(0, 3).map(Number);
-  return `#${[r, g, b].map((c) => c!.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
 }
 
 const inside = (inner: Rect, outer: Rect) =>
@@ -175,7 +160,7 @@ function expectWarmSlide(probe: Probe, kind: 'cover' | 'photo', dir: 'rtl' | 'lt
   expect(overlay.fontFamily).toContain('Frank Ruhl Libre');
   expect(overlay.fontWeight).toBe('700');
   expect(overlay.fontSize).toBeLessThanOrEqual(64);
-  expect(overlay.fontSize).toBeGreaterThanOrEqual(46);
+  expect(overlay.fontSize).toBeGreaterThanOrEqual(48);
   expect(overlay.textAlign).toBe('start');
   expect(contrastRatio(hex(overlay.color), hex(card.background))).toBeGreaterThanOrEqual(MIN_CONTRAST);
 }
@@ -192,7 +177,7 @@ describe('Warm style', { timeout: 120_000 }, () => {
       accent: '#B5683C',
       secondary: '#7A8450',
     });
-    expect(styles.warm.overlay).toEqual({ size: 64, minSize: 46 });
+    expect(styles.warm.overlay).toEqual({ size: 64, minSize: 48 });
   });
 
   it('lays out a Hebrew cover right to left within every Warm rule', async () => {
@@ -203,14 +188,14 @@ describe('Warm style', { timeout: 120_000 }, () => {
   });
 
   it('mirrors the layout left to right for an English business', async () => {
-    const { probes } = await render(request({ overlayText: 'Weekend sale: 20% off all bouquets' }), {
+    const { result, probes } = await render(request({ overlayText: 'Weekend sale: 20% off all bouquets' }), {
       ...fixtureBusiness,
       businessName: 'Garden Flowers',
       languages: ['en'],
     });
     expectWarmSlide(probes[0]!, 'cover', 'ltr');
     await expect(
-      matchImageSnapshot('warm-ltr-1', store.files.get([...store.files.keys()].at(-1)!)!.bytes),
+      matchImageSnapshot('warm-ltr-1', store.files.get(result.instagram![0]!.storagePath)!.bytes),
     ).resolves.toEqual({ ok: true });
   });
 
@@ -231,24 +216,15 @@ describe('Warm style', { timeout: 120_000 }, () => {
   it('uses brand colors for accent and secondary and keeps text contrast at 4.5:1', async () => {
     const { probes } = await render(request({ brandColors: ['#1F1F1F', '#C9A27E'] }));
     expectWarmSlide(probes[0]!, 'cover', 'rtl');
-    const css = styles.warm.css.call(styles.warm, {
-      kind: 'cover',
-      canvas: { width: W, height: H },
-      language: 'he',
-      dir: 'rtl',
-      palette: { ...styles.warm.palette, accent: '#1F1F1F', secondary: '#C9A27E' },
-      photo: { dataUri: 'data:,', width: 1, height: 1 },
-      logo: { kind: 'text', text: 'x' },
-      overlayText: 'x',
-      safeArea: 64,
-    });
-    expect(css).toContain('#1F1F1F');
-    expect(css).toContain('#C9A27E');
-    expect(css).not.toContain('#B5683C');
-    expect(css).not.toContain('#7A8450');
+    // The dark accent passes 3:1 on the card and is drawn as given; the pale tan does not,
+    // so it is darkened until it does (graphic-element contrast).
+    const [accent, secondary] = probes[0]!.rule.map(hex);
+    expect(accent).toBe('#1F1F1F');
+    expect(secondary).not.toBe('#C9A27E');
+    expect(contrastRatio(secondary!, '#FBF6EE')).toBeGreaterThanOrEqual(3);
   });
 
-  it('shrinks long overlay text toward 46 px and fails when two lines are not enough', async () => {
+  it('shrinks long overlay text toward 48 px and fails when two lines are not enough', async () => {
     const { probes } = await render(request({ overlayText: `${'ש'.repeat(13)} ${'ש'.repeat(13)} ${'ש'.repeat(9)}` }));
     expectWarmSlide(probes[0]!, 'cover', 'rtl');
     expect(probes[0]!.overlay!.fontSize).toBeLessThan(64);
@@ -267,44 +243,39 @@ describe('Warm style', { timeout: 120_000 }, () => {
   });
 });
 
-describe('Warm style: the example set', { timeout: 300_000 }, () => {
-  let entries: ExampleEntry[] = [];
-  beforeAll(async () => {
-    entries = await loadExampleSet();
-  });
+describe('Warm style: the example set', { timeout: 300_000 }, async () => {
+  const entries: ExampleEntry[] = await loadExampleSet();
 
   it('loads all six provisional entries', () => {
     expect(entries).toHaveLength(6);
   });
 
-  it('renders every entry in Warm for every network within the rules', async () => {
-    for (const entry of entries) {
-      const { profile } = entry;
-      const business: BusinessRenderContext = {
-        businessName: profile.name,
-        languages: profile.languages,
-        storagePrefix: `example/${entry.id}`,
-      };
-      const dir = profile.languages[0] === 'he' || profile.languages[0] === 'ar' ? 'rtl' : 'ltr';
-      const photoUrls = entry.photos.map((p, i) => {
-        const url = `${EXAMPLE_ORIGIN}/${entry.id}/${i + 1}`;
-        examplePaths.set(url, p.path);
-        return url;
-      });
-      const brandColors = profile.brand?.colors ?? [];
+  it.each(entries.map((e) => [e.id, e] as const))('renders %s in Warm for every network within the rules', async (_id, entry) => {
+    const { profile } = entry;
+    const business: BusinessRenderContext = {
+      businessName: profile.name,
+      languages: profile.languages,
+      storagePrefix: `example/${entry.id}`,
+    };
+    const dir = profile.languages[0] === 'he' || profile.languages[0] === 'ar' ? 'rtl' : 'ltr';
+    const photoUrls = entry.photos.map((p, i) => {
+      const url = `${EXAMPLE_ORIGIN}/${entry.id}/${i + 1}`;
+      examplePaths.set(url, p.path);
+      return url;
+    });
+    const brandColors = profile.brand?.colors ?? [];
 
-      for (const [t, overlayText] of entry.expected.overlayTexts.entries()) {
-        const { result, probes } = await render(
-          { style: 'warm', format: 'carousel', photoUrls, overlayText, brandColors, networks: NETWORKS },
-          business,
-        );
-        expect(probes, entry.id).toHaveLength(photoUrls.length);
-        probes.forEach((probe, i) => expectWarmSlide(probe, i === 0 ? 'cover' : 'photo', dir));
-        for (const network of NETWORKS) expect(result[network], `${entry.id} ${network}`).toHaveLength(photoUrls.length);
-        if (t === 0) {
-          const cover = store.files.get(result.instagram![0]!.storagePath)!.bytes;
-          await expect(matchImageSnapshot(`warm-example-${entry.id}-1`, cover)).resolves.toEqual({ ok: true });
-        }
+    for (const [t, overlayText] of entry.expected.overlayTexts.entries()) {
+      const { result, probes } = await render(
+        { style: 'warm', format: 'carousel', photoUrls, overlayText, brandColors, networks: NETWORKS },
+        business,
+      );
+      expect(probes, entry.id).toHaveLength(photoUrls.length);
+      probes.forEach((probe, i) => expectWarmSlide(probe, i === 0 ? 'cover' : 'photo', dir));
+      for (const network of NETWORKS) expect(result[network], `${entry.id} ${network}`).toHaveLength(photoUrls.length);
+      if (t === 0) {
+        const cover = store.files.get(result.instagram![0]!.storagePath)!.bytes;
+        await expect(matchImageSnapshot(`warm-example-${entry.id}-1`, cover)).resolves.toEqual({ ok: true });
       }
     }
   });
