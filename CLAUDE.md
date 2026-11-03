@@ -63,7 +63,7 @@ Modules: Messaging, Workflow, Model layer, Content, Design, Publishing, Business
 
 - All code, comments, commits, PRs, and technical docs are in English. User-facing product content (WhatsApp messages, captions) is in the business's chosen language, Hebrew by default.
 - Local and test environments use simulators for WhatsApp, publishing, models, and payments. Use only test accounts and test keys; never touch real customer channels or data.
-- Core (state machine, data model, main flow) is worked on by one agent at a time. Independent modules (design engine, vendor adapters, console) may be parallelized in separate worktrees once contracts exist.
+- Core (state machine, data model, main flow) is worked on by one agent at a time per set of files; several core sessions may run in parallel only on disjoint files (see the Lanes table in docs/implementation-plan.md). Independent modules (design engine, vendor adapters, console) may be parallelized in separate worktrees once contracts exist.
 - Flag for human review (an entry in [human-review-queue.md](docs/human-review-queue.md)) any change touching: approval/publishing code, RLS and tenant isolation, tokens/secrets/customer media, database migrations, or customer-facing prompts.
 - Contracts (state machine, DB schema, Zod schemas, provider interfaces) are human-written and approved before agents implement against them.
 - First milestone: the design engine and a Hebrew example set, without WhatsApp or publishing.
