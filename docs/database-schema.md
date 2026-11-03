@@ -43,7 +43,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | --- | --- | --- |
 | `phone_lookup` | `app_sys_phone_lookup` | Resolving an inbound number to a business; storing messages and console items from unknown numbers |
 | `scheduler` | `app_sys_scheduler` | Finding the businesses and rows due for a job, then fanning jobs out per business |
-| `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries, pauses, model settings |
+| `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries and manual scheduling (a publication still publishes only when the publishing job's hash check passes), pauses, model settings. The human-owned H5 tests use it to force states |
 | `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
 
 **Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
@@ -52,7 +52,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `business` | S | SIU | S | S | S | S |  | S | SU | S | S | SU |  |
 | `channel_connection` |  | S |  |  |  | SIU |  |  | S |  | S | SU |  |
-| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  | SU |  |
+| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  | SIU |  |
 | `message` | SIU | S | S |  | S |  |  |  |  | SI |  | S |  |
 | `media_asset` | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
 | `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
@@ -60,13 +60,13 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
 | `post_version` |  |  | SI | S | S | S |  |  | S |  |  | S |  |
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
-| `publication` |  |  |  |  |  | SIU |  |  | S |  | S | SU |  |
+| `publication` |  |  |  |  |  | SIU |  |  | S |  | S | SIU |  |
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  | S | S |  |
 | `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S | SI |
 | `console_item` |  | SI |  |  |  | SI | SI |  |  | SI |  | SIU |  |
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  | SU | S |
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  | SI | S |
-| `system_control` |  |  |  |  |  | S |  |  |  |  | S | SU |  |
+| `system_control` |  |  |  |  |  | S |  |  |  |  | S | SIU |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.

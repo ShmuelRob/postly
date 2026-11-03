@@ -50,6 +50,13 @@
       "when": 1793750403000,
       "tag": "0006_no_temp_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793750404000,
+      "tag": "0007_console_writes",
+      "breakpoints": true
     }
   ]
 }

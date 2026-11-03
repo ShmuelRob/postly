@@ -14,7 +14,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.ts', 'test/**/*.test.ts', 'scripts/**/*.test.ts'],
-          exclude: ['test/**/*.e2e.test.ts', 'test/fixtures/**', '**/*.db.test.ts', ...browserTests],
+          exclude: ['test/**/*.e2e.test.ts', 'test/fixtures/**', '**/*.db.test.ts', 'test/h5/**/*.h5.test.ts', ...browserTests],
         },
       },
       {
@@ -30,7 +30,8 @@ export default defineConfig({
         test: {
           // Against a real Postgres, started once per run by test/db/global-setup.ts.
           name: 'db',
-          include: ['src/**/*.db.test.ts'],
+          // Also the H5 human-owned approval and publishing tests.
+          include: ['src/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
         },

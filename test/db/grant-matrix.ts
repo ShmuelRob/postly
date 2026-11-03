@@ -7,7 +7,7 @@ const MATRIX = `
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | business | S | SIU | S | S | S | S |  | S | SU | S | S | SU |  |
 | channel_connection |  | S |  |  |  | SIU |  |  | S |  | S | SU |  |
-| conversation_state | SU | SIU |  |  |  |  |  |  |  |  |  | SU |  |
+| conversation_state | SU | SIU |  |  |  |  |  |  |  |  |  | SIU |  |
 | message | SIU | S | S |  | S |  |  |  |  | SI |  | S |  |
 | media_asset | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
 | preference_rule |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
@@ -15,13 +15,13 @@ const MATRIX = `
 | post |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
 | post_version |  |  | SI | S | S | S |  |  | S |  |  | S |  |
 | approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
-| publication |  |  |  |  |  | SIU |  |  | S |  | S | SU |  |
+| publication |  |  |  |  |  | SIU |  |  | S |  | S | SIU |  |
 | subscription |  |  |  |  |  |  |  | SIU |  |  | S | S |  |
 | model_run |  |  |  |  |  |  | SI |  |  |  |  | S | SI |
 | console_item |  | SI |  |  |  | SI | SI |  |  | SI |  | SIU |  |
 | model_task_config |  |  |  |  |  |  | S |  |  |  |  | SU | S |
 | prompt_template |  |  |  |  |  |  | S |  |  |  |  | SI | S |
-| system_control |  |  |  |  |  | S |  |  |  |  | S | SU |  |
+| system_control |  |  |  |  |  | S |  |  |  |  | S | SIU |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;
