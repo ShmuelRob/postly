@@ -1,0 +1,4 @@
+# H5 human-owned approval and publishing tests: changes need the human's review (gate H5).
+/test/h5/ @ShmuelRob
+/test/e2e/h5-* @ShmuelRob
+/src/contracts/approval.ts @ShmuelRob

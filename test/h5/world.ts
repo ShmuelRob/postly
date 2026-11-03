@@ -1,15 +1,15 @@
 /**
  * The test world the human-owned H5 tests run against (gate H5, docs/implementation-plan.md).
  * WP-33 and WP-34 implement `H5WorldFactory` over the real modules and a real database and bind
- * it in `subject.ts`; they never edit the tests. Every setup step goes through the real code paths
- * except `forgePublication`, which writes a row directly, the way a bug or tampering would.
+ * it in `subject.ts`; they never edit the tests. The world holds only the services and the setup
+ * steps, which go through the real code paths. Every observation the tests assert on, and every
+ * forced state (pauses, handoff, forged rows), is fixed SQL owned by the tests in `db.ts`.
  */
 import { it } from 'vitest';
 import type { ApprovalService, PublishingJob } from '../../src/contracts/approval.js';
 import type { Network } from '../../src/contracts/common.js';
 import type { MessagingProvider, PublishingProvider } from '../../src/contracts/providers/index.js';
-import type { PostState } from '../../src/contracts/state-machines/post.js';
-import type { PublicationState } from '../../src/contracts/state-machines/publication.js';
+import type { DatabaseUrls } from '../../src/db/index.js';
 import type { AppUnderTest } from '../e2e/harness/index.js';
 import { H5_PENDING, type H5Package } from './pending.js';
 import { createH5World as bound } from './subject.js';
@@ -38,19 +38,8 @@ export interface H5World {
   requestChange(businessId: string, postId: string, newCaption: string): Promise<Draft>;
   /** The owner confirms the times: one publication per verified channel, from the valid approval. */
   schedule(businessId: string, postId: string, scheduledFor: string): Promise<{ publicationId: string; network: Network }[]>;
-  /** Inserts a publication row directly, skipping every application check. May throw if the database refuses it. */
-  forgePublication(
-    businessId: string,
-    row: { postId: string; approvalId: string; approvedVersionHash: string; network: Network; scheduledFor: string },
-  ): Promise<string>;
-
-  postStatus(businessId: string, postId: string): Promise<PostState>;
-  approvals(businessId: string, postId: string): Promise<{ approvalId: string; versionHash: string; invalidated: boolean }[]>;
-  publicationStatus(publicationId: string): Promise<{ status: PublicationState; providerPostId?: string }>;
-
-  setGlobalPause(paused: boolean): Promise<void>;
-  setBusinessPaused(businessId: string, paused: boolean): Promise<void>;
-  setHandoff(businessId: string, on: boolean): Promise<void>;
+  /** The owner or team cancels the post. */
+  cancelPost(businessId: string, postId: string): Promise<void>;
 
   close(): Promise<void>;
 }
@@ -59,6 +48,8 @@ export type H5WorldFactory = (options: {
   messaging: MessagingProvider;
   publishing: PublishingProvider;
   now: () => Date;
+  /** The test database; the world opens its own connections. */
+  databaseUrls: DatabaseUrls;
 }) => Promise<H5World>;
 
 export function createH5World(options: Parameters<H5WorldFactory>[0]): Promise<H5World> {

@@ -19,6 +19,10 @@ export const ApprovalRefusal = z.enum([
   'stale_version',
   /** The post is not in `awaiting_approval`. */
   'wrong_state',
+  /** The business's conversation is in handoff, so no event is applied from inbound messages. */
+  'handoff',
+  /** This inbound message (same provider message id) was already handled. */
+  'duplicate',
 ]);
 export type ApprovalRefusal = z.infer<typeof ApprovalRefusal>;
 
@@ -30,6 +34,7 @@ export type ApprovalDecision = z.infer<typeof ApprovalDecision>;
 
 export interface ApprovalService {
   /**
+   * Takes only an inbound WhatsApp message, so no model output can ever reach it as an approval.
    * Applies `APPROVED` to a post only when the approval guard passes, records the `approval` row
    * tied to the version hash, and otherwise changes nothing. `businessId` is the business the
    * inbound message was routed to.

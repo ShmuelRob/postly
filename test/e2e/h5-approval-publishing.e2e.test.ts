@@ -2,9 +2,10 @@
  * H5 human-owned end-to-end tests: what the owner and the publishing simulator see around approval.
  * Written from the docs before WP-33/WP-34; pending until both flip `test/h5/pending.ts`.
  */
-import { expect } from 'vitest';
+import { expect, inject } from 'vitest';
 import type { ModelProvider, PaymentProvider, TemplateRenderer } from '../../src/contracts/providers/index.js';
 import { MessagingSimulator, PublishingSimulator } from '../../src/simulators/index.js';
+import { openH5Db } from '../h5/db.js';
 import { APPROVER, SCHEDULED_FOR, STRANGER } from '../h5/fixtures.js';
 import { H5_PENDING } from '../h5/pending.js';
 import { createH5World, type H5World } from '../h5/world.js';
@@ -23,18 +24,22 @@ h5e2e('H5 e2e: free text and stale buttons never publish; only the approver tapp
   let now = new Date('2026-11-03T08:00:00.000Z');
   const clock = () => now;
   const publishing = new PublishingSimulator({ now: clock });
+  const db = openH5Db();
   let world: H5World | undefined;
   const run = await e2e.start({
     providers: { messaging: new MessagingSimulator(), publishing, model, payment, renderer },
     app: async (p) => {
-      world = await createH5World({ messaging: p.messaging, publishing: p.publishing, now: clock });
+      world = await createH5World({ messaging: p.messaging, publishing: p.publishing, now: clock, databaseUrls: inject('databaseUrls') });
       return world.app;
     },
     ownerPhone: APPROVER,
     businessPhone: BUSINESS_PHONE,
     now: clock,
   });
-  if (!world) throw new Error('world not created');
+  if (!world) {
+    await db.close();
+    throw new Error('world not created');
+  }
   try {
     const businessId = await world.createBusiness(APPROVER);
     await world.connectChannel(businessId, 'instagram');
@@ -43,14 +48,17 @@ h5e2e('H5 e2e: free text and stale buttons never publish; only the approver tapp
     expect(run.owner.received().at(-1)?.buttons?.map((b) => b.title)).toEqual([first.buttons.approve, first.buttons.change]);
 
     for (const text of ['מאשר', 'אישור', 'ok', '👍']) await run.owner.sendsText(text);
-    expect(await world.postStatus(businessId, first.postId)).toBe('awaiting_approval');
+    expect(await db.postStatus(first.postId)).toBe('awaiting_approval');
+    expect(await db.approvals(first.postId)).toEqual([]);
+    // PRD: free text is not approval, so the owner is shown the approve button again.
+    expect(run.owner.received().at(-1)?.buttons?.map((b) => b.title)).toContain(first.buttons.approve);
 
     const second = await world.requestChange(businessId, first.postId, 'צבעונים חדשים הגיעו, 30 ₪ לזר');
     await run.owner.tapsButton(first.buttons.approve, { action: 'approve', postId: first.postId, versionHash: first.versionHash });
-    expect(await world.postStatus(businessId, first.postId)).toBe('awaiting_approval');
+    expect(await db.postStatus(first.postId)).toBe('awaiting_approval');
 
     await run.owner.tapsButton(second.buttons.approve, { action: 'approve', postId: second.postId, versionHash: second.versionHash });
-    expect(await world.postStatus(businessId, first.postId)).toBe('approved');
+    expect(await db.postStatus(first.postId)).toBe('approved');
 
     const publications = await world.schedule(businessId, first.postId, SCHEDULED_FOR);
     expect(run.networkPosts()).toEqual([]);
@@ -64,6 +72,7 @@ h5e2e('H5 e2e: free text and stale buttons never publish; only the approver tapp
     }
   } finally {
     await world.close();
+    await db.close();
   }
 });
 
@@ -72,18 +81,22 @@ h5e2e('H5 e2e: a stranger tapping approve publishes nothing, and a pause holds a
   const clock = () => now;
   const messaging = new MessagingSimulator();
   const publishing = new PublishingSimulator({ now: clock });
+  const db = openH5Db();
   let world: H5World | undefined;
   const run = await e2e.start({
     providers: { messaging, publishing, model, payment, renderer },
     app: async (p) => {
-      world = await createH5World({ messaging: p.messaging, publishing: p.publishing, now: clock });
+      world = await createH5World({ messaging: p.messaging, publishing: p.publishing, now: clock, databaseUrls: inject('databaseUrls') });
       return world.app;
     },
     ownerPhone: APPROVER,
     businessPhone: BUSINESS_PHONE,
     now: clock,
   });
-  if (!world) throw new Error('world not created');
+  if (!world) {
+    await db.close();
+    throw new Error('world not created');
+  }
   try {
     const businessId = await world.createBusiness(APPROVER);
     await world.connectChannel(businessId, 'instagram');
@@ -92,20 +105,21 @@ h5e2e('H5 e2e: a stranger tapping approve publishes nothing, and a pause holds a
     await world.app.deliverInbound(
       messaging.inboundButtonTap(STRANGER, { action: 'approve', postId: draft.postId, versionHash: draft.versionHash }),
     );
-    expect(await world.postStatus(businessId, draft.postId)).toBe('awaiting_approval');
+    expect(await db.postStatus(draft.postId)).toBe('awaiting_approval');
 
     await run.owner.tapsButton(draft.buttons.approve, { action: 'approve', postId: draft.postId, versionHash: draft.versionHash });
     const publications = await world.schedule(businessId, draft.postId, SCHEDULED_FOR);
     now = new Date('2026-11-04T08:01:00.000Z');
-    await world.setBusinessPaused(businessId, true);
+    await db.setBusinessPaused(businessId, true);
     for (const { publicationId } of publications) await world.publishingJob.runPublication(publicationId);
     expect(run.networkPosts()).toEqual([]);
 
-    await world.setBusinessPaused(businessId, false);
+    await db.setBusinessPaused(businessId, false);
     for (const { publicationId } of publications) await world.publishingJob.runPublication(publicationId);
     expect(run.networkPosts().map((p) => p.caption)).toEqual(['מבצע סוף שבוע: 20% הנחה']);
   } finally {
     await world.close();
+    await db.close();
   }
 });
 
