@@ -101,7 +101,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
   async function deliver(burst: InboundBurst): Promise<void> {
     await handler.handleInbound(burst);
     const processedAt = now();
-    await db.withBusiness(burst.businessId, async (tx) => {
+    await db.withBusiness('messaging', burst.businessId, async (tx) => {
       for (const m of burst.messages) {
         await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
       }
@@ -151,7 +151,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
 
     if (!businessId) {
       // technical-design.md, Failure handling: no reply, nothing accepted; a person looks at it.
-      return db.withSystem('console', async (tx) => {
+      return db.withSystem('phone_lookup', async (tx) => {
         const [row] = await tx
           .insert(schema.message)
           .values({ ...messageRow(message), businessId: null })
@@ -168,7 +168,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
       });
     }
 
-    const stored = await db.withBusiness(businessId, async (tx) => {
+    const stored = await db.withBusiness('messaging', businessId, async (tx) => {
       const [row] = await tx
         .insert(schema.message)
         .values({ ...messageRow(message), businessId })
@@ -214,7 +214,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
   }
 
   async function lastInboundAt(businessId: string, phone: string): Promise<Date | null> {
-    const [row] = await db.withBusiness(businessId, (tx) =>
+    const [row] = await db.withBusiness('messaging', businessId, (tx) =>
       tx
         .select({ at: schema.message.createdAt })
         .from(schema.message)
@@ -238,7 +238,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
     payload: unknown,
     result: SendResult,
   ): Promise<SendResult> {
-    await db.withBusiness(businessId, (tx) =>
+    await db.withBusiness('messaging', businessId, (tx) =>
       tx.insert(schema.message).values({
         businessId,
         direction: 'outbound',

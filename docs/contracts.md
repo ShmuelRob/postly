@@ -120,3 +120,16 @@ The provider returns raw output. Only the model layer validates it against the t
 | `render` | `style`, `format`, `photoUrls`, `overlayText`, optional `logoUrl`, `brandColors`, `networks` | Per network, a list of files (several for a carousel), each with `storagePath`, `width`, `height`, `mimeType` |
 
 The business context a render needs but `RenderRequest` does not carry (the business name for the no-logo fallback, the business languages for text direction, the storage prefix, and the `image_review` crops) is bound when the renderer is created: the design module's `forBusiness()` returns a `TemplateRenderer` for one business. A single post with more than one photo is rejected. Decided 2026-11-02 and queued for the human; moving these fields onto `RenderRequest` later is a contract change.
+
+## Approval and publishing
+
+Status: added 2026-11-03 by the H5 test author, queued for the human. The narrow surfaces of the [approval guard and publishing guard](state-machines.md#approval-guard), in `src/contracts/approval.ts`. WP-33 implements `ApprovalService` and WP-34 implements `PublishingJob`; the human-owned tests in `test/h5/` call only these and the test world described there.
+
+| Interface | Method | Request | Response |
+| --- | --- | --- | --- |
+| `ApprovalService` | `handleApprovalReply` | `businessId`, an `InboundMessage` | `ApprovalDecision`: `approved` with `approvalId`, or `refused` with a reason |
+| `PublishingJob` | `runPublication` | `publicationId` | `PublishOutcome` |
+
+Approval refusals: `not_a_button` (free text, voice, or image, whatever it says), `not_approver` (sender is not `business.approver_phone`), `unknown_post` (no such post for this business, including another business's post), `stale_version` (the button's hash is not the current version's hash), `wrong_state` (the post is not `awaiting_approval`), `handoff` (the conversation is in [handoff](state-machines.md#human-handoff), so no event is applied), `duplicate` (the same inbound message, by provider message id, was already handled; `approval.message_id` is unique). A refusal changes nothing. `handleApprovalReply` takes only an `InboundMessage`, so no model output can reach it as an approval.
+
+Publish outcomes: `published` and `already_published` (the provider status check found the post live, so `publish` was not called again) carry `providerPostId`; `retry_pending` and `failed` carry the error; `deferred` (`global_pause`, `business_pause`, `handoff`) and `refused` (`not_approved`, `not_current_version`, `cross_business`, `wrong_state`) change nothing and reach no provider.

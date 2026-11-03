@@ -71,26 +71,67 @@ describe('tenant isolation', () => {
     ).toEqual(['business', 'model_task_config', 'prompt_template', 'system_control']);
   });
 
-  it.each([...businessOwned.map((t) => t.name), 'business'])('%s has RLS and a tenant policy for app_user', (name) => {
+  it.each([...businessOwned.map((t) => t.name), 'business'])('%s has RLS and a tenant policy for every role', (name) => {
+    // Roles and their grants live in hand-written, human-reviewed migrations (database-schema.md,
+    // "Least privilege"); the policy applies to all of them, and only the system roles bypass it.
     const config = byName(name);
     expect(config.enableRLS || config.policies.length > 0).toBe(true);
     const policy = config.policies.find((p) => p.name === 'tenant_isolation');
     expect(policy).toBeDefined();
     expect(policy?.for ?? 'all').toBe('all');
-    expect(policy?.to).toEqual([schema.appUser]);
+    expect(policy?.to).toBe('public');
     expect(policy?.using).toBeDefined();
     expect(policy?.withCheck).toBeDefined();
   });
+});
 
-  // BYPASSRLS for app_system is granted in a hand-written, human-reviewed migration.
-  it('declares app_user and app_system as roles managed outside Drizzle', () => {
-    expect(schema.appUser.name).toBe('app_user');
-    expect(schema.appSystem.name).toBe('app_system');
-    // `_existing` is how Drizzle marks a role it must not create.
-    const isExisting = (role: object) => (role as { _existing?: boolean })._existing;
-    expect(isExisting(schema.appUser)).toBe(true);
-    expect(isExisting(schema.appSystem)).toBe(true);
+describe('same-business references', () => {
+  // database-schema.md, "Same-business references", copied: from table, reference column, to table.
+  const expected = [
+    ['post', 'weekly_update_id', 'weekly_update'],
+    ['post', 'current_version_id', 'post_version'],
+    ['post_version', 'post_id', 'post'],
+    ['preference_rule', 'source_message_id', 'message'],
+    ['preference_rule', 'source_post_version_id', 'post_version'],
+    ['approval', 'post_id', 'post'],
+    ['approval', 'post_version_id', 'post_version'],
+    ['approval', 'message_id', 'message'],
+    ['publication', 'post_id', 'post'],
+    ['publication', 'approval_id', 'approval'],
+    ['publication', 'channel_connection_id', 'channel_connection'],
+  ];
+  const owned = new Set(tables.filter((t) => t.columns.some((c) => c.name === 'business_id')).map((t) => t.name));
+  const keys = tables.flatMap((t) =>
+    t.foreignKeys.map((fk) => {
+      const ref = fk.reference();
+      return {
+        from: t.name,
+        columns: ref.columns.map((c) => c.name),
+        to: getTableConfig(ref.foreignTable).name,
+        foreignColumns: ref.foreignColumns.map((c) => c.name),
+      };
+    }),
+  );
+  const between = keys.filter((k) => owned.has(k.from) && owned.has(k.to));
+
+  it('every foreign key between business-owned tables is (business_id, ref) to (business_id, id)', () => {
+    for (const k of between) {
+      expect(k.columns[0], `${k.from} -> ${k.to}`).toBe('business_id');
+      expect(k.columns).toHaveLength(2);
+      expect(k.foreignColumns).toEqual(['business_id', 'id']);
+    }
   });
+
+  it('has exactly the keys in database-schema.md', () => {
+    expect(between.map((k) => [k.from, k.columns[1], k.to]).sort()).toEqual([...expected].sort());
+  });
+
+  it.each(['weekly_update', 'post', 'post_version', 'message', 'approval', 'channel_connection'])(
+    '%s is unique on business_id,id',
+    (name) => {
+      expect(uniqueSets(name)).toContain('business_id,id');
+    },
+  );
 });
 
 describe('enums', () => {

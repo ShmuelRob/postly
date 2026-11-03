@@ -40,7 +40,7 @@ const appFor =
 
 e2eTest('invalid model output is retried and then lands in the team console', async ({ e2e }) => {
   const businessId = randomUUID();
-  await db.withSystem('console', (tx) =>
+  await db.withBusiness('workflow', businessId, (tx) =>
     tx.insert(schema.business).values({ id: businessId, name: 'מאפיית השכונה', approverPhone: OWNER }),
   );
   const model = new ModelSimulator({ defaults: false });
@@ -62,7 +62,7 @@ e2eTest('invalid model output is retried and then lands in the team console', as
     ['intent_detection', false],
     ['intent_detection', false],
   ]);
-  const { runs, items } = await db.withBusiness(businessId, async (tx) => ({
+  const { runs, items } = await db.withBusiness('model', businessId, async (tx) => ({
     runs: await tx.select().from(schema.modelRun).orderBy(schema.modelRun.attempt),
     items: await tx.select().from(schema.consoleItem),
   }));

@@ -125,7 +125,7 @@ Any new `post_version` invalidates earlier approvals (`approval.invalidated_at` 
 
 ### Publishing guard
 
-The publishing job publishes a publication only when its `approved_version_hash` equals the hash of an approval that is not invalidated, that approval belongs to the post's current version, and neither the global pause nor a business pause is active.
+The publishing job publishes a publication only when its `approved_version_hash` equals the hash of an approval that is not invalidated, that approval belongs to the post's current version, neither the global pause nor a business pause is active, and the business's conversation is not in [handoff](#human-handoff) (added 2026-11-03 for H5, queued for the human). A pause or handoff defers the publication without changing its state.
 
 ## Publication
 

@@ -25,10 +25,12 @@ afterAll(() => db.close());
 async function newBusiness(): Promise<string> {
   const businessId = randomUUID();
   // approver_phone is unique, so free the fixture number from an earlier run first.
-  await db.withSystem('console', async (tx) => {
-    await tx.update(schema.business).set({ approverPhone: `+9720${Date.now()}` }).where(eq(schema.business.approverPhone, OWNER));
-    await tx.insert(schema.business).values({ id: businessId, name: 'מאפיית השכונה', approverPhone: OWNER });
-  });
+  await db.withSystem('console', (tx) =>
+    tx.update(schema.business).set({ approverPhone: `+9720${Date.now()}` }).where(eq(schema.business.approverPhone, OWNER)),
+  );
+  await db.withBusiness('workflow', businessId, (tx) =>
+    tx.insert(schema.business).values({ id: businessId, name: 'מאפיית השכונה', approverPhone: OWNER }),
+  );
   return businessId;
 }
 
@@ -85,7 +87,7 @@ e2eTest('a webhook delivered twice is processed once', async ({ e2e }) => {
   expect(ctx.statuses).toEqual([200, 200, 200]);
   expect(ctx.bursts.map((b) => b.text)).toEqual(['השבוע יש מבצע על חלות\n2 ב-20 ש"ח']);
   expect(run.owner.received().map((m) => m.text)).toEqual([ACK]);
-  const inbound = await db.withBusiness(ctx.businessId, (tx) =>
+  const inbound = await db.withBusiness('messaging', ctx.businessId, (tx) =>
     tx.select().from(schema.message).where(eq(schema.message.direction, 'inbound')),
   );
   expect(inbound).toHaveLength(2);

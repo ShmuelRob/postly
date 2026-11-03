@@ -30,7 +30,7 @@ function manualTimers() {
 async function setup(options: { now?: () => Date } = {}) {
   const businessId = randomUUID();
   const owner = `+97250${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
-  await db.withSystem('console', (tx) => tx.insert(schema.business).values({ id: businessId, name: 'עסק', approverPhone: owner }));
+  await db.withBusiness('workflow', businessId, (tx) => tx.insert(schema.business).values({ id: businessId, name: 'עסק', approverPhone: owner }));
   const sim = new MessagingSimulator({ businessNumber: BUSINESS_NUMBER, ...(options.now ? { now: options.now } : {}) });
   // Provider message ids are unique across the whole table, and every simulator counts from 1.
   const inbound = sim.inbound.bind(sim);
@@ -56,7 +56,7 @@ describe('messaging module', () => {
     expect(await messaging.handleWebhook(hook)).toEqual(['duplicate']);
     await messaging.flushBursts();
     expect(bursts).toHaveLength(1);
-    const rows = await db.withBusiness(businessId, (tx) => tx.select().from(schema.message));
+    const rows = await db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.message));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processedAt).not.toBeNull();
   });
@@ -113,7 +113,7 @@ describe('messaging module', () => {
     );
     await messaging.sendTemplate(businessId, { to: owner, templateName: 'weekly_reminder', language: 'he', variables: {} });
     expect(sim.sent.map((m) => m.kind)).toEqual(['text', 'template']);
-    const outbound = await db.withBusiness(businessId, (tx) =>
+    const outbound = await db.withBusiness('messaging', businessId, (tx) =>
       tx.select().from(schema.message).where(eq(schema.message.direction, 'outbound')),
     );
     expect(outbound.map((m) => m.kind).sort()).toEqual(['template', 'text']);
