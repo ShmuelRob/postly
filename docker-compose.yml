@@ -5,6 +5,7 @@ x-app: &app
   build: .
   image: postly:local
   environment: &app-env
+    POSTLY_ENV: local
     POSTLY_PROVIDERS: simulators
     DATABASE_URL: postgres://postgres:5432/postly
     PUBLIC_BASE_URL: http://localhost:8080

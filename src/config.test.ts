@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { ALL_LOGINS } from './db/index.js';
+import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
 const passwords = Object.fromEntries(ALL_LOGINS.map((l) => [`DB_PASSWORD_${l.toUpperCase()}`, `pw-${l}`]));
 const base: Record<string, string> = {
@@ -31,5 +32,29 @@ describe('process configuration', () => {
 
   it('refuses a database URL that carries its own user', () => {
     expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://admin:x@db:5432/postly' })).toThrow('no user');
+  });
+
+  describe('webhook secret', () => {
+    it('lets a local run use the public simulator secret', () => {
+      expect(loadConfig(base).webhookSecret).toBe(SIMULATOR_WEBHOOK_SECRET);
+      expect(loadConfig({ ...base, POSTLY_ENV: 'test' }).webhookSecret).toBe(SIMULATOR_WEBHOOK_SECRET);
+    });
+
+    it('reads the secret from the environment (Secret Manager on Cloud Run)', () => {
+      expect(loadConfig({ ...base, POSTLY_ENV: 'staging', MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager' }).webhookSecret).toBe('s3cret-from-manager');
+    });
+
+    it('refuses to start in staging or prod without a secret', () => {
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'staging' })).toThrow('MESSAGING_WEBHOOK_SECRET');
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: '' })).toThrow('MESSAGING_WEBHOOK_SECRET');
+    });
+
+    it('refuses the public default secret in staging or prod', () => {
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
+    });
+
+    it('refuses an unknown environment', () => {
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'production' })).toThrow('POSTLY_ENV');
+    });
   });
 });
