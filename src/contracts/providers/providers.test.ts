@@ -29,7 +29,7 @@ describe('InboundMessage', () => {
     provider: 'simulator',
     providerMessageId: 'SM1',
     from: '+972501234567',
-    to: '+972521111111',
+    to: '+972501234562',
     receivedAt: '2026-11-02T10:00:00.000Z',
   };
 

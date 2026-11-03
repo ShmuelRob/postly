@@ -22,10 +22,10 @@
     "brand": { "colors": [] },
     "style": "dynamic",
     "callToAction": "call",
-    "contact": { "phone": "+97289000005", "whatsapp": "+972500000105" },
+    "contact": { "phone": "+972501234567", "whatsapp": "+972501234567" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים"],
     "fixedHashtags": [],
-    "approverPhone": "+972500000105"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { E2eRecord, ImageAttachment, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
 
@@ -187,3 +187,37 @@ td p { margin: 0 0 4px; white-space: pre-wrap; }
 .ok { color: var(--pass); } .fail { color: var(--fail); }
 @media (max-width: 600px) { table, tbody, tr, td { display: block; } thead { display: none; } td { border-top: none; } tr { border-top: 1px solid var(--line); padding: 6px 0; } }
 `;
+
+const RUN_DIR = /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-z]+$/;
+
+/** Writes a run to `<root>/<stamp>-<sha>/`, refreshes `<root>/latest/` and the runs index; returns the run's report path. */
+export function writeRunReport(root: string, run: ReportRun, stamp: string, sha: string): string {
+  const name = `${stamp}-${sha}`;
+  const path = writeReport(join(root, name), run);
+  rmSync(join(root, 'latest'), { recursive: true, force: true });
+  cpSync(join(root, name), join(root, 'latest'), { recursive: true });
+  writeRunsIndex(root);
+  return path;
+}
+
+/** Writes `<root>/index.html` listing every run folder, newest first, with its pass/fail counts. */
+export function writeRunsIndex(root: string): void {
+  const runs = readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && RUN_DIR.test(d.name) && existsSync(join(root, d.name, 'index.html')))
+    .map((d) => d.name)
+    .sort()
+    .reverse();
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const rows = runs.map((name, i) => {
+    const html = readFileSync(join(root, name, 'index.html'), 'utf8');
+    const passed = /(\d+) passed/.exec(html)?.[1] ?? '?';
+    const failed = /(\d+) failed/.exec(html)?.[1] ?? '?';
+    const state = failed === '0' ? 'passed' : 'failed';
+    return `<tr data-state="${state}"><td><a href="${esc(name)}/index.html">${esc(name)}</a>${i === 0 ? ' (latest)' : ''}</td><td>${passed} passed · ${failed} failed</td></tr>`;
+  });
+  writeFileSync(
+    join(root, 'index.html'),
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>E2E runs</title><style>body{font:15px system-ui;margin:2rem}td{padding:.3rem 1rem}tr[data-state=failed]{color:#b00020}</style></head><body><h1>End-to-end runs</h1><table>${rows.join('')}</table></body></html>`,
+    'utf8',
+  );
+}

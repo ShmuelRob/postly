@@ -45,7 +45,7 @@ export class MessagingSimulator implements MessagingProvider {
   private nextId = 1;
 
   constructor(options: MessagingSimulatorOptions = {}) {
-    this.businessNumber = options.businessNumber ?? '+972520000000';
+    this.businessNumber = options.businessNumber ?? '+972501234564';
     this.secret = options.webhookSecret ?? 'simulator-webhook-secret';
     this.url = options.webhookUrl ?? 'https://postly.example.test/webhooks/messaging';
     this.now = options.now ?? (() => new Date());

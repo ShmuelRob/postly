@@ -22,10 +22,10 @@
     "brand": { "colors": ["#4A6B5D", "#E9DCC9"] },
     "style": "warm",
     "callToAction": "message",
-    "contact": { "whatsapp": "+972500000106", "website": "https://yoga.example.com" },
+    "contact": { "whatsapp": "+972501234567", "website": "https://yoga.example.com" },
     "forbiddenTopics": ["פוליטיקה", "השוואה למתחרים", "הבטחות רפואיות"],
     "fixedHashtags": ["#סטודיונשימה"],
-    "approverPhone": "+972500000106"
+    "approverPhone": "+972501234567"
   },
   "photos": [
     {
