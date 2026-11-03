@@ -1,0 +1,56 @@
+:root {
+  --bg: #eef0f2; --panel: #fff; --ink: #1d2327; --muted: #67737c; --line: #dde2e6;
+  --wa-head: #075e54; --wa-bg: #efe7dd; --wa-out: #d9fdd3; --wa-in: #fff; --accent: #128c7e;
+  font-family: system-ui, "Segoe UI", Arial, sans-serif; color: var(--ink);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+.layout { display: grid; grid-template-columns: minmax(340px, 420px) minmax(340px, 1fr) 300px; grid-template-rows: auto 1fr;
+  gap: 16px; padding: 16px; height: 100vh; }
+.top { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; }
+.tag { color: var(--muted); font-size: 14px; }
+.error { color: #b3261e; font-size: 13px; margin-inline-start: auto; }
+section, aside { background: var(--panel); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); min-height: 0; }
+.chat { display: flex; flex-direction: column; }
+.chat-head { background: var(--wa-head); color: #fff; display: flex; gap: 10px; align-items: center; padding: 10px 14px; }
+.avatar { width: 38px; height: 38px; border-radius: 50%; background: #25d366; display: grid; place-items: center; font-weight: 700; color: #fff; }
+.avatar.small { width: 30px; height: 30px; background: #c13584; font-size: 14px; }
+.chat-title { font-weight: 600; }
+.chat-sub { font-size: 12px; opacity: .8; }
+.chat-body { flex: 1; overflow-y: auto; background: var(--wa-bg); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.hint { color: var(--muted); text-align: center; font-size: 14px; margin: 24px auto; max-width: 260px; }
+.bubble { max-width: 80%; padding: 7px 10px 18px; border-radius: 10px; position: relative; box-shadow: 0 1px 0 rgba(0,0,0,.08); white-space: pre-wrap; }
+/* Right to left: the owner's own messages sit on the right, Postly's on the left. */
+.bubble.from_owner { align-self: flex-start; background: var(--wa-out); }
+.bubble.to_owner { align-self: flex-end; background: var(--wa-in); }
+.bubble img { display: block; min-width: 120px; max-width: 220px; image-rendering: pixelated; border-radius: 6px; margin-bottom: 4px; }
+.bubble audio { width: 220px; }
+.bubble time { position: absolute; bottom: 3px; inset-inline-end: 8px; font-size: 11px; color: var(--muted); }
+.buttons { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.buttons button { border: 0; border-top: 1px solid var(--line); background: none; color: #027eb5; padding: 6px; font: inherit; cursor: pointer; }
+.composer { display: flex; gap: 6px; padding: 8px; background: #f0f2f5; align-items: center; }
+.attach { cursor: pointer; font-size: 20px; padding: 4px; }
+.type { flex: 1; border: 0; border-radius: 20px; padding: 10px 14px; font: inherit; }
+.send { border: 0; background: var(--accent); color: #fff; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; transform: scaleX(-1); }
+.feed { display: flex; flex-direction: column; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; background: none; padding: 12px; font: inherit; cursor: pointer; color: var(--muted); }
+.tabs button.on { color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--ink); }
+.posts { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; align-items: center; }
+.post { width: 100%; max-width: 420px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.post.facebook .avatar.small { background: #1877f2; }
+.post-head { display: flex; align-items: center; gap: 8px; padding: 10px; }
+.post img { width: 100%; display: block; }
+.post p { margin: 10px; }
+.post time { display: block; margin: 0 10px 10px; color: var(--muted); font-size: 12px; }
+.status { margin-inline-start: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #e7f5ec; color: #18794e; font-family: ui-monospace, monospace; }
+.status.scheduled { background: #fff4d6; color: #8a5a00; }
+.status.failed { background: #fde8e7; color: #b3261e; }
+.state { padding: 14px 16px; overflow-y: auto; font-size: 14px; }
+.state h3 { font-size: 13px; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+.state h3:first-child { margin-top: 0; }
+.state dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+.state dt { color: var(--muted); }
+.state dd { margin: 0; }
+.state ul { margin: 0; padding-inline-start: 18px; }
+.code { font-family: ui-monospace, monospace; background: #f3f4f6; padding: 0 6px; border-radius: 4px; }

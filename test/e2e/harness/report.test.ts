@@ -110,6 +110,15 @@ describe('renderReport', () => {
     expect(html).toContain('token expired');
   });
 
+  it('embeds screenshots of a driven UI with their titles', () => {
+    const r = record();
+    r.screenshots = [{ at: '2026-11-03T10:00:00.000Z', title: 'playground', image: { ref: 'shot.png', mimeType: 'image/png', src: 'data:image/png;base64,AAAA' } }];
+    const html = renderReport(run([test({ record: r })]));
+    expect(html).toContain('<h3>Screenshots</h3>');
+    expect(html).toContain('src="data:image/png;base64,AAAA"');
+    expect(html).toContain('playground · 2026-11-03T10:00:00.000Z');
+  });
+
   it('escapes HTML in recorded content', () => {
     const r = emptyRecord();
     r.transcript.push({ at, direction: 'from_owner', phone: '+972501234567', kind: 'text', text: '<script>x</script>' });

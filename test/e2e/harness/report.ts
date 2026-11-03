@@ -7,6 +7,7 @@ import type {
   ModelCallEntry,
   PublishingEntry,
   RenderedImage,
+  ScreenshotEntry,
   TranscriptEntry,
 } from './record.js';
 
@@ -82,7 +83,8 @@ function renderTest(test: ReportTest): string {
         renderRenders(r.renders) +
         renderPublishing(r.publishing) +
         renderModelCalls(r.modelCalls ?? []) +
-        renderConsole(r.consoleItems ?? [])
+        renderConsole(r.consoleItems ?? []) +
+        renderScreenshots(r.screenshots ?? [])
       : ''
   }
 </article>`;
@@ -170,6 +172,12 @@ function renderConsole(items: ConsoleEntry[]): string {
 <tbody>${rows}</tbody></table></section>`;
 }
 
+function renderScreenshots(shots: ScreenshotEntry[]): string {
+  if (!shots.length) return '';
+  const cards = shots.map((s) => `<figure>${img(s.image)}<figcaption>${esc(s.title)} · ${esc(s.at)}</figcaption></figure>`).join('');
+  return `<section><h3>Screenshots</h3><div class="screenshots">${cards}</div></section>`;
+}
+
 function img(image: ImageAttachment): string {
   if (!image.src?.startsWith('data:image/')) {
     return `<p class="note">[image not available: ${esc(image.ref)}]</p>`;
@@ -217,6 +225,7 @@ pre.error { white-space: pre-wrap; overflow-x: auto; background: var(--bg); bord
 .note { color: var(--muted); font-size: 13px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .button { border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; color: #0a7cff; background: var(--card); }
+.screenshots figure { max-width: 960px; }
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 figure { margin: 0; } figure img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
 figcaption { font-size: 13px; color: var(--muted); }

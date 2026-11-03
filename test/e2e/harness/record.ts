@@ -63,6 +63,13 @@ export interface ConsoleEntry {
   details: unknown;
 }
 
+/** A screenshot of a UI the test drove, such as the local playground. */
+export interface ScreenshotEntry {
+  at: string;
+  title: string;
+  image: ImageAttachment;
+}
+
 /** Everything one end-to-end test recorded about what the owner and the networks would see. */
 export interface E2eRecord {
   transcript: TranscriptEntry[];
@@ -70,6 +77,7 @@ export interface E2eRecord {
   publishing: PublishingEntry[];
   modelCalls?: ModelCallEntry[];
   consoleItems?: ConsoleEntry[];
+  screenshots?: ScreenshotEntry[];
 }
 
 export function emptyRecord(): E2eRecord {

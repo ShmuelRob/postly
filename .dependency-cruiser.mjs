@@ -67,18 +67,25 @@ export default {
       },
     },
     {
-      name: 'db-driver-outside-db',
-      comment: 'Only src/db/ opens database connections.',
+      name: 'no-playground',
+      comment: 'The local playground (playground/) is dev-only; product code never imports it.',
       severity: 'error',
-      from: { pathNot: '^src/db/' },
+      from: { path: '^src/' },
+      to: { path: '^playground/' },
+    },
+    {
+      name: 'db-driver-outside-db',
+      comment: 'Only src/db/ opens database connections (and test/db/, which starts the test database).',
+      severity: 'error',
+      from: { pathNot: ['^src/db/', '^test/db/'] },
       to: { path: packagePattern(databaseDrivers) },
     },
     {
       name: 'db-internals',
       comment:
-        'Outside src/db/, import only src/db/index.ts (the business-context helper) and src/db/schema.ts.',
+        'Outside src/db/ (and test/db/, which migrates the test database), import only src/db/index.ts (the business-context helper) and src/db/schema.ts.',
       severity: 'error',
-      from: { pathNot: '^src/db/' },
+      from: { pathNot: ['^src/db/', '^test/db/'] },
       to: {
         path: '^src/db/',
         pathNot: '^src/db/(index|schema)\\.ts$',
