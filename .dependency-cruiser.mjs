@@ -25,13 +25,14 @@ const databaseDrivers = [
   'postgres',
   '@electric-sql/pglite',
   'drizzle-orm/node-postgres',
+  'pg-boss',
   'drizzle-orm/postgres-js',
   'drizzle-orm/pglite',
   'drizzle-orm/neon-serverless',
 ];
 
 // Matches a bare specifier when unresolved, or its node_modules path when resolved.
-const packagePattern = (names) => `(^|/node_modules/)(${names.join('|')})(/|$)`;
+const packagePattern = (names) => `(^|(^|/)node_modules/)(${names.join('|')})(/|$)`;
 
 const vendorRules = Object.entries(vendorPackages).map(([owner, names]) => ({
   name: 'vendor-outside-adapter',
@@ -86,7 +87,6 @@ export default {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)node_modules/' },
     // TypeScript 7 has no JS compiler API, so .ts files are parsed with swc.
     parser: 'swc',
   },

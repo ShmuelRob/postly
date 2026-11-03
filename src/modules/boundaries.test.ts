@@ -29,7 +29,9 @@ async function cruiseTree(baseDir: string): Promise<ICruiseResult> {
   return output;
 }
 
-const format = (v: IViolation) => `${v.rule.name}: ${v.from} -> ${v.to}`;
+// An installed package resolves into node_modules; name it by its package, as when it is not installed.
+const format = (v: IViolation) =>
+  `${v.rule.name}: ${v.from} -> ${v.to.replace(/^(\.\.\/)*node_modules\/((@[^/]+\/)?[^/]+).*$/, '$2')}`;
 
 describe('module boundaries', () => {
   let fixtures: ICruiseResult;

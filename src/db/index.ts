@@ -4,6 +4,8 @@ import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema.js';
 
+export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions } from './jobs.js';
+
 // The only way into the database from outside src/db/ (see src/modules/README.md). Each role in
 // database-schema.md, "Least privilege", is its own login with its own pool, opened on first use.
 // No login owns the tables or is a member of another role, so no SQL inside a transaction can

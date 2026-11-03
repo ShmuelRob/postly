@@ -1,4 +1,15 @@
 // Workflow: state machines for onboarding, conversation, and posts.
 // Public surface of the module: other code imports only from this file (see ../README.md).
 
-export {};
+export type { MachineName } from './machines.js';
+export {
+  consoleLogger,
+  createWorkflow,
+  type EventRequest,
+  type EventResult,
+  type EventSource,
+  type Guard,
+  type RejectionLog,
+  type Workflow,
+  type WorkflowLogger,
+} from './workflow.js';
