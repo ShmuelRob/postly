@@ -170,9 +170,9 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   const [promo, dough] = await posts(businessId);
   expect([promo?.status, dough?.status]).toEqual(['needs_review', 'awaiting_approval']);
   const afterUpdate = run.owner.received();
-  // The update reply, the Facebook render (its own size), then the draft with the Instagram render and the buttons.
-  expect(afterUpdate.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([weeklyCopy.updateReceived(2), draftsCopy.networkRender('facebook', 1, 1), 'טיוטה: הבצק שלנו']);
-  expect(afterUpdate[1]?.image?.src).toMatch(/^data:image\/jpeg/);
+  // The update reply, then the draft with the render and the buttons. The Facebook render is the same
+  // image as Instagram's here, so it is not sent twice.
+  expect(afterUpdate.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([weeklyCopy.updateReceived(2), 'טיוטה: הבצק שלנו']);
   expect(afterUpdate[0]?.text).toBe(weeklyCopy.updateReceived(2));
   expect(afterUpdate.some((m) => m.text?.includes('20'))).toBe(false);
   expect(await versions(businessId, promo!.id)).toEqual([]);
@@ -211,9 +211,9 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   // "Sounds good" is not an approval: the draft comes back with its buttons, unchanged.
   modelSim.script('intent_detection', { intent: 'other', confidence: 0.8 });
   await run.owner.sendsText('נשמע טוב');
-  const resent = run.owner.received().slice(3);
-  expect(resent.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([draftsCopy.notAnApproval, draftsCopy.networkRender('facebook', 1, 1), draft1.text?.split('\n')[0]]);
-  expect(resent[2]?.buttons).toEqual(draft1.buttons);
+  const resent = run.owner.received().slice(2);
+  expect(resent.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([draftsCopy.notAnApproval, draft1.text?.split('\n')[0]]);
+  expect(resent[1]?.buttons).toEqual(draft1.buttons);
   expect((await posts(businessId))[1]?.status).toBe('awaiting_approval');
 
   // Change: tap, then say what to change.
@@ -287,12 +287,9 @@ e2eTest('several photos for a single post: the owner chooses a carousel', { time
   expect((version!.renderedMedia as Record<string, string[]>).instagram).toHaveLength(2);
   const afterChoice = run.owner.received().slice(3);
   expect(afterChoice.map((m) => (m.kind === 'buttons' ? 'buttons' : m.text))).toEqual([
-    draftsCopy.networkRender('facebook', 1, 2),
-    draftsCopy.networkRender('facebook', 2, 2),
     draftsCopy.carouselSlide(1, 2),
     draftsCopy.carouselSlide(2, 2),
     'buttons',
-    draftsCopy.networkRender('facebook', 1, 1),
     'buttons',
   ]);
   expect(await step(businessId)).toBe('reviewing_drafts');

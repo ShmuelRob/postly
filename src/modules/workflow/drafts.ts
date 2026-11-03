@@ -195,15 +195,17 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     // jsonb does not keep key order: Instagram first, then Facebook.
     const networks = NETWORKS.filter((n) => captions[n]);
     const [network] = networks as [Network];
-    const urls = await db.withBusiness('content', businessId, async (tx) => {
-      const ids = networks.flatMap((n) => media[n] ?? []);
-      const rows = await tx.select().from(schema.mediaAsset).where(inArray(schema.mediaAsset.id, ids));
-      return (n: Network) => (media[n] ?? []).map((id) => deps.urlFor(rows.find((r) => r.id === id)!.storagePath));
-    });
+    const rows = await db.withBusiness('content', businessId, (tx) =>
+      tx.select().from(schema.mediaAsset).where(inArray(schema.mediaAsset.id, networks.flatMap((n) => media[n] ?? []))),
+    );
+    const files = (n: Network) => (media[n] ?? []).map((id) => rows.find((r) => r.id === id)!);
+    const urls = (n: Network) => files(n).map((f) => deps.urlFor(f.storagePath));
+    // Renders are compared by content: a network whose render is byte for byte the first's is not shown twice.
+    const sameAsFirst = (n: Network) => files(n).map((f) => f.sha256).join() === files(network).map((f) => f.sha256).join();
     const slides = urls(network);
     for (const other of networks.slice(1)) {
       const own = urls(other);
-      if (own.join() === slides.join()) continue;
+      if (sameAsFirst(other)) continue;
       for (const [i, url] of own.entries()) await deps.messaging.sendText(businessId, { to, text: copy.networkRender(other, i + 1, own.length), mediaUrl: url });
     }
     if (slides.length > 1) {

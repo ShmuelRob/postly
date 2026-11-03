@@ -178,8 +178,7 @@ e2eTest('an update by text, voice, and photo comes in and the week plan is store
   // The owner hears back first; the update, the facts, and three planned posts are stored. Drafting
   // (WP-32, its own e2e) then sends one draft per post.
   expect(run.owner.received()[0]?.text).toBe(copy.updateReceived(3));
-  // Each draft is its Facebook render, then the draft itself with the buttons.
-  expect(run.owner.received().slice(1).map((m) => m.kind)).toEqual(['text', 'buttons', 'text', 'buttons', 'text', 'buttons']);
+  expect(run.owner.received().slice(1).map((m) => m.kind)).toEqual(['buttons', 'buttons', 'buttons']);
   const [week] = await weeks(businessId);
   expect(week).toMatchObject({ weekStart: '2026-11-01', status: 'planned', originalText: UPDATE_TEXT, transcript: UPDATE_VOICE });
   expect(week?.mediaAssetIds).toHaveLength(1);
