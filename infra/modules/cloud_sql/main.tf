@@ -56,6 +56,13 @@ resource "google_sql_database_instance" "postgres" {
       name  = "log_min_duration_statement"
       value = "1000"
     }
+
+    # Must stay "none": the migration job's ALTER ROLE ... PASSWORD statements carry the login
+    # passwords, and statement logging would write them to Cloud Logging (docs/deployment.md).
+    database_flags {
+      name  = "log_statement"
+      value = "none"
+    }
   }
 
   lifecycle {

@@ -6,8 +6,11 @@ import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 // Secret Manager secret mounted as an environment variable; locally docker-compose sets them.
 
 const Env = z.object({
-  /** `local` and `test` may use the public simulator webhook secret; `staging` and `prod` may not. */
-  POSTLY_ENV: z.enum(['local', 'test', 'staging', 'prod'], { error: 'POSTLY_ENV must be local, test, staging or prod' }).default('local'),
+  /**
+   * Required, with no default: a deployed service missing it must not fall back to the public
+   * simulator webhook secret. `local` and `test` may use that secret; `staging` and `prod` may not.
+   */
+  POSTLY_ENV: z.enum(['local', 'test', 'staging', 'prod'], { error: 'POSTLY_ENV must be local, test, staging or prod' }),
   /** Verifies inbound messaging webhooks; from Secret Manager on Cloud Run. */
   MESSAGING_WEBHOOK_SECRET: z.string().optional(),
   /** Only `simulators` until the vendor adapters land (WP-41); staging and prod wait for that. */

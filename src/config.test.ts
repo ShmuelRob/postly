@@ -5,6 +5,7 @@ import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
 const passwords = Object.fromEntries(ALL_LOGINS.map((l) => [`DB_PASSWORD_${l.toUpperCase()}`, `pw-${l}`]));
 const base: Record<string, string> = {
+  POSTLY_ENV: 'local',
   POSTLY_PROVIDERS: 'simulators',
   DATABASE_URL: 'postgres://db.internal:5432/postly',
   PUBLIC_BASE_URL: 'https://staging.example.test',
@@ -51,6 +52,12 @@ describe('process configuration', () => {
 
     it('refuses the public default secret in staging or prod', () => {
       expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
+    });
+
+    it('refuses to start without POSTLY_ENV, so a deployed service never falls back to the public secret', () => {
+      const { POSTLY_ENV: _, ...rest } = base;
+      expect(() => loadConfig(rest)).toThrow('POSTLY_ENV');
+      expect(() => loadConfig({ ...rest, MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('POSTLY_ENV');
     });
 
     it('refuses an unknown environment', () => {

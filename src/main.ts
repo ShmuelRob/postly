@@ -38,7 +38,7 @@ async function main(command: string | undefined) {
     console.log(JSON.stringify({ level: 'info', msg: 'migrations applied and logins provisioned' }));
     return;
   }
-  if (command !== 'web' && command !== 'worker') throw new Error('usage: node src/main.ts web|worker|migrate');
+  if (command !== 'web' && command !== 'worker') throw new Error('usage: node dist/src/main.js web|worker|migrate');
 
   const config = loadConfig(process.env);
   const db = createDatabase(config.databaseUrls);
