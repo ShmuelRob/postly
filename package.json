@@ -23,6 +23,8 @@
     "pg-boss": "^12.38.0",
     "playwright": "^1.64.1",
     "postgres": "^3.4.9",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
@@ -30,6 +32,8 @@
     "@swc/core": "1.16.21",
     "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "dependency-cruiser": "18.7.2",
     "drizzle-kit": "^0.31.11",
     "typescript": "^7.0.2",
