@@ -10,13 +10,15 @@ Then open http://127.0.0.1:5175. Docker must be running: the playground starts `
 
 ## What is on the page
 
-- **Chat** (right): you are the approver number. Send text, photos (📷, any image file), voice notes (🎤, any audio file), and tap reply buttons. Messages go through the simulator's signed webhook, the real webhook route, deduplication and burst merge (1.5 seconds of quiet), then to the playground's flow.
-- **Feed** (middle): what reached the publishing simulator, per network, with the images. Until the publishing flow (WP-34) lands, it holds two scripted demo posts.
-- **State** (left): the business status, the conversation step and handoff flag, the posts, and the review queue (console items), read from the database.
+- **Chat** (right): you are the approver number. Send text, photos (📷, any image file), voice notes (🎤, any audio file), and tap reply buttons. Messages go through the simulator's signed webhook, the real webhook route, deduplication and burst merge (1.5 seconds of quiet), then to the workflow.
+- **Feed** (middle): what reached the publishing simulator, per network, with the images. Until the publishing flow (WP-34) lands, it holds two scripted demo posts on a separate demo account.
+- **State** (left): the business status, the conversation step and handoff flag, the channel connections, the posts, and the review queue (console items), read from the database.
 
 ## Flows
 
-`server/flows.ts` decides what handles each inbound burst. No product flow exists yet, so everything goes to an echo with placeholder copy: it repeats the text, acknowledges photos and voice notes, and sends two buttons when you write `כפתורים`. Button payloads are demo values and never reach the approval path. When onboarding (WP-30) and the weekly flows (WP-31 to WP-34) export their handlers, route bursts to them there.
+The playground runs the product's composition root, `createApp` (`src/app.ts`), on the simulators: messaging hands each burst to the workflow, which runs onboarding (WP-30) for the new business. Onboarding is playable end to end: write first, answer the profile questions by text or voice note, send a logo, write `סיימתי` to get the three style samples (rendered by the design engine), pick a style, approve the summary with `מאשר`, then press **חיבור הרשתות בסימולטור** in the state panel (it completes the connection link on the publishing simulator) and write `חיברתי`. The business turns `active`.
+
+Two stand-ins replace the model, so free Hebrew works without a real model: `server/extraction.ts` fills the asked profile fields from each answer with simple rules (playground only, not product logic), and voice notes transcribe to the model simulator's fixed text. Reply buttons are shown but no flow sends them yet; tapping one reports an error until the approval flow (WP-33). The weekly flows (WP-31 to WP-34) become playable as `createApp` routes active businesses to them.
 
 ## Boundaries
 
@@ -28,11 +30,11 @@ Then open http://127.0.0.1:5175. Docker must be running: the playground starts `
 
 | Path | What |
 | --- | --- |
-| `server/playground.ts` | Builds the app in-process (database, messaging module, webhook server, workflow, simulators) and serves `/api/*` |
-| `server/flows.ts` | The inbound handler: today the echo |
+| `server/playground.ts` | Builds the app in-process (`createApp`, the webhook server, the design engine, in-memory storage, simulators) and serves `/api/*` |
+| `server/extraction.ts` | The rule-based stand-in for profile extraction on the model simulator |
 | `server/seed.ts` | Scripted feed posts |
 | `server/start.ts` | Starts Postgres and the playground for `npm run playground` |
 | `vite-plugin.ts`, `vite.config.ts`, `ui-server.ts` | Mounts the API on the Vite dev server; `ui-server.ts` serves an already-built playground for the e2e test |
 | `web/` | The React UI |
 
-The end-to-end test `test/e2e/playground.e2e.test.ts` drives the UI with Playwright and saves a screenshot to `reports/playground/`.
+The end-to-end test `test/e2e/playground.e2e.test.ts` plays onboarding through the UI with Playwright and saves screenshots to `reports/playground/`.

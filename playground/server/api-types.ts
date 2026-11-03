@@ -27,6 +27,10 @@ export interface PlaygroundState {
   owner: string;
   business: { id: string; name: string; status: string };
   conversation: { step: string; handoff: boolean } | null;
+  /** The owner's channels as the database records them, after the owner connected them. */
+  channels: { network: Network; status: string }[];
+  /** Onboarding sent the connection link, so the human can connect on the publishing simulator. */
+  connectionLinkSent: boolean;
   posts: { id: string; status: string; format: string }[];
   reviewQueue: { id: string; kind: string; status: string; details: unknown }[];
   messages: ChatMessage[];

@@ -1,17 +1,19 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { eq } from 'drizzle-orm';
+import { createApp } from '../../src/app.js';
 import type { Network } from '../../src/contracts/common.js';
 import type { InboundMessage } from '../../src/contracts/providers/index.js';
 import { createDatabase, type Database, type DatabaseUrls } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
-import { createMessaging, WEBHOOK_PATH, type Messaging } from '../../src/modules/messaging/index.js';
-import { createWorkflow } from '../../src/modules/workflow/index.js';
+import { createDesignRenderer } from '../../src/modules/design/index.js';
+import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
 import { buildServer } from '../../src/server.js';
 import { MessagingSimulator, ModelSimulator, PublishingSimulator } from '../../src/simulators/index.js';
+import { placeholderPng } from '../../test/e2e/harness/png.js';
 import type { PublishingEntry, TranscriptEntry } from '../../test/e2e/harness/record.js';
 import type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-types.js';
-import { createFlows, type ButtonRegistry } from './flows.js';
+import { playgroundExtraction } from './extraction.js';
 import { seedFeed } from './seed.js';
 
 export interface PlaygroundOptions {
@@ -22,6 +24,11 @@ export interface PlaygroundOptions {
   businessPhone?: string;
   /** How long messaging waits for more messages before handing a burst to the flow. */
   burstQuietMs?: number;
+  /**
+   * Sweep inbound messages never processed, as the web process does (default true). Off when the
+   * database is shared with other tests, whose pending messages the sweep would otherwise take.
+   */
+  sweep?: boolean;
 }
 
 export type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-types.js';
@@ -30,6 +37,8 @@ export interface Playground {
   /** Connect-style middleware for `/api/*`; anything else goes to `next`. */
   handle(req: IncomingMessage, res: ServerResponse, next: () => void): void;
   send(input: OwnerInput): Promise<void>;
+  /** The owner finishes the connection link on the publishing simulator (every network it names). */
+  connect(): Promise<void>;
   state(): Promise<PlaygroundState>;
   /** The conversation in the e2e report's format. */
   transcript(): TranscriptEntry[];
@@ -39,9 +48,13 @@ export interface Playground {
 
 const NETWORKS: Network[] = ['instagram', 'facebook'];
 
+/** Where the in-memory storage (standing in for Cloud Storage) serves files from. */
+const MEDIA_ORIGIN = 'https://media.playground.test/';
+
 /**
- * The real app in-process against the simulators: inbound messages go through the signed webhook
- * route and the messaging module, which hands bursts to the playground's flows (flows.ts).
+ * The real app in-process against the simulators (`createApp`, the product's composition root):
+ * inbound messages go through the signed webhook route and the messaging module to the workflow,
+ * which runs onboarding for the new business. The design engine renders the style samples.
  */
 export async function createPlayground(options: PlaygroundOptions): Promise<Playground> {
   const ownerPhone = options.ownerPhone ?? '+972501230000';
@@ -50,29 +63,52 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   const sim = new MessagingSimulator({ businessNumber: businessPhone });
   const publishing = new PublishingSimulator();
   const model = new ModelSimulator();
-  const workflow = createWorkflow(db, { rejected: (entry) => console.warn('[playground] rejected', entry) });
-  const businessId = await createBusiness(db, ownerPhone);
+  model.setDefault('profile_extraction', playgroundExtraction);
 
-  /** Media the browser can load: inbound media by provider id, and media at a URL (seeded posts). */
-  const mediaByUrl = new Map<string, { mimeType: string; data: Uint8Array }>();
-  const inbound: { at: string; message: InboundMessage; title?: string }[] = [];
-  const buttons: ButtonRegistry = new Map();
+  /** Files the browser can load, by storage path or URL: inbound media, renders, seeded posts. */
+  const files = new Map<string, { mimeType: string; data: Uint8Array }>();
+  const media = {
+    async put(path: string, data: Uint8Array, mimeType: string) {
+      files.set(path, { mimeType, data });
+    },
+    urlFor: (path: string) => MEDIA_ORIGIN + path,
+  };
+  const stored = (ref: string) => files.get(ref.startsWith(MEDIA_ORIGIN) ? ref.slice(MEDIA_ORIGIN.length) : ref);
+  await media.put('bundled/sample.png', placeholderPng(1080, 1080, [246, 232, 210], [150, 82, 40]), 'image/png');
+  const inbound: { at: string; message: InboundMessage }[] = [];
 
-  let messaging: Messaging;
-  messaging = createMessaging({
-    db,
-    provider: sim,
-    businessNumber: businessPhone,
-    ...(options.burstQuietMs === undefined ? {} : { burstQuietMs: options.burstQuietMs }),
-    handler: createFlows({ send: () => messaging, workflow, model, buttons }),
+  const design = createDesignRenderer({
+    assets: {
+      load: async (url) => {
+        const file = stored(url);
+        if (!file) throw new Error(`no stored file at ${url}`);
+        return file.data;
+      },
+    },
+    store: { put: (path, bytes, mimeType) => media.put(path, bytes, mimeType) },
   });
-  const server = buildServer({ messaging, publicBaseUrl: 'https://postly.example.test' });
-  await seedFeed(publishing, businessId, mediaByUrl);
+  const app = createApp({
+    db,
+    providers: { messaging: sim, publishing, models: { google: model } },
+    design,
+    media,
+    businessNumber: businessPhone,
+    samplePhotoUrl: media.urlFor('bundled/sample.png'),
+    ...(options.burstQuietMs === undefined ? {} : { burstQuietMs: options.burstQuietMs }),
+    logger: { rejected: (entry) => console.warn('[playground] rejected', entry) },
+  });
+  const server = buildServer({ messaging: app.messaging, publicBaseUrl: 'https://postly.example.test' });
+  await freePhone(db, ownerPhone);
+  // Signing up creates the business in onboarding; the owner then writes first.
+  const businessId = await app.onboarding.createBusiness({ approverPhone: ownerPhone });
+  const stopSweep = options.sweep === false ? () => {} : app.start();
+  // Demo posts on a separate demo account, so the owner's own networks start unconnected.
+  await seedFeed(publishing, randomUUID(), files);
 
-  const deliver = async (content: InboundMessage['content'], title?: string) => {
+  const deliver = async (content: InboundMessage['content']) => {
     // Unique across runs: provider message ids are unique across the whole message table.
     const message = { ...sim.inbound(ownerPhone, content), providerMessageId: `pg-in-${randomUUID()}` };
-    inbound.push({ at: message.receivedAt, message, ...(title === undefined ? {} : { title }) });
+    inbound.push({ at: message.receivedAt, message });
     const hook = sim.webhook(message);
     const res = await server.inject({ method: 'POST', url: WEBHOOK_PATH, headers: hook.headers, payload: hook.body });
     if (res.statusCode !== 200) throw new Error(`webhook returned ${res.statusCode}: ${res.body}`);
@@ -92,34 +128,43 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
         const id = sim.addMedia(input.mimeType, Buffer.from(input.dataBase64, 'base64'));
         return deliver({ kind: 'voice', providerMediaId: id });
       }
-      case 'button': {
-        const button = buttons.get(input.buttonId);
-        if (!button) throw new Error(`no button ${input.buttonId} was sent to the owner`);
-        return deliver({ kind: 'button_reply', buttonId: input.buttonId, payload: button.payload }, button.title);
-      }
+      case 'button':
+        // No product flow sends reply buttons yet; approval buttons and their payloads come with WP-33.
+        throw new Error(`button ${input.buttonId}: no flow handles reply buttons yet`);
     }
   };
 
+  const connect = async () => {
+    const link = publishing.connectionLinks.filter((l) => l.request.businessId === businessId).at(-1);
+    if (!link) throw new Error('onboarding has not sent the connection link yet');
+    for (const network of link.request.networks) publishing.connect(businessId, network);
+  };
+
   const messages = (): ChatMessage[] => {
-    const fromOwner = inbound.map(({ at, message, title }): ChatMessage => {
+    const fromOwner = inbound.map(({ at, message }): ChatMessage => {
       const c = message.content;
       const base = { id: message.providerMessageId, at, direction: 'from_owner' as const, kind: c.kind };
       switch (c.kind) {
         case 'text':
           return { ...base, text: c.text };
         case 'button_reply':
-          return { ...base, text: title ?? c.buttonId };
+          return { ...base, text: c.buttonId };
         case 'image':
           return { ...base, ...(c.caption ? { text: c.caption } : {}), media: { url: mediaUrl(c.providerMediaId), mimeType: 'image' } };
         case 'voice':
           return { ...base, media: { url: mediaUrl(c.providerMediaId), mimeType: 'audio' } };
       }
     });
-    const toOwner = sim.sent.map((m): ChatMessage => {
+    const toOwner = sim.sent.filter((m) => m.request.to === ownerPhone).map((m): ChatMessage => {
       const base = { id: m.providerMessageId, at: m.sentAt, direction: 'to_owner' as const };
       switch (m.kind) {
         case 'text':
-          return { ...base, kind: 'text', text: m.request.text };
+          return {
+            ...base,
+            kind: 'text',
+            text: m.request.text,
+            ...(m.request.mediaUrl ? { media: { url: mediaUrl(m.request.mediaUrl), mimeType: 'image' } } : {}),
+          };
         case 'buttons':
           return {
             ...base,
@@ -160,6 +205,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     const rows = await db.withBusiness('workflow', businessId, async (tx) => ({
       business: await tx.select().from(schema.business),
       conversation: await tx.select().from(schema.conversationState),
+      channels: await tx.select().from(schema.channelConnection),
       posts: await tx.select().from(schema.post),
       items: await tx.select().from(schema.consoleItem),
     }));
@@ -169,6 +215,8 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       owner: ownerPhone,
       business: { id: businessId, name: b?.name ?? '', status: b?.status ?? 'unknown' },
       conversation: c ? { step: c.step, handoff: c.handoffAt !== null } : null,
+      channels: rows.channels.map((ch) => ({ network: ch.network, status: ch.status })),
+      connectionLinkSent: publishing.connectionLinks.some((l) => l.request.businessId === businessId),
       posts: rows.posts.map((p) => ({ id: p.id, status: p.status, format: p.format })),
       reviewQueue: rows.items.map((i) => ({ id: i.id, kind: i.kind, status: i.status, details: i.details })),
       messages: messages(),
@@ -176,7 +224,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     };
   };
 
-  const readMedia = async (ref: string) => mediaByUrl.get(ref) ?? (await sim.getMedia(ref).catch(() => undefined));
+  const readMedia = async (ref: string) => stored(ref) ?? (await sim.getMedia(ref).catch(() => undefined));
 
   const handle: Playground['handle'] = (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://playground.local');
@@ -192,12 +240,16 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       await send((await readJson(req)) as OwnerInput);
       return json(res, 200, { ok: true });
     }
+    if (req.method === 'POST' && url.pathname === '/api/connect') {
+      await connect();
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && url.pathname === '/api/media') {
-      const media = await readMedia(url.searchParams.get('ref') ?? '');
-      if (!media) return json(res, 404, { error: 'unknown media' });
-      const type = MEDIA_TYPES.has(media.mimeType) ? media.mimeType : 'application/octet-stream';
+      const file = await readMedia(url.searchParams.get('ref') ?? '');
+      if (!file) return json(res, 404, { error: 'unknown media' });
+      const type = MEDIA_TYPES.has(file.mimeType) ? file.mimeType : 'application/octet-stream';
       res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff' });
-      return void res.end(Buffer.from(media.data));
+      return void res.end(Buffer.from(file.data));
     }
     json(res, 404, { error: 'not found' });
   };
@@ -205,6 +257,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   return {
     handle,
     send,
+    connect,
     state,
     transcript: () =>
       messages().map((m) => ({
@@ -237,7 +290,9 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
         })),
       ),
     close: async () => {
+      stopSweep();
       await server.close();
+      await design.close();
       await db.close();
     },
   };
@@ -263,18 +318,11 @@ function allowed(mimeType: string, kind: 'image' | 'audio') {
 
 const mediaUrl = (ref: string) => `/api/media?ref=${encodeURIComponent(ref)}`;
 
-/** A fresh business for this run, in the state a new sign-up starts in (onboarding, intro). */
-async function createBusiness(db: Database, ownerPhone: string): Promise<string> {
-  const businessId = randomUUID();
-  // approver_phone is unique: free the playground number from an earlier run on the same database.
+/** approver_phone is unique: free the playground number from an earlier run on the same database. */
+async function freePhone(db: Database, ownerPhone: string) {
   await db.withSystem('console', (tx) =>
     tx.update(schema.business).set({ approverPhone: `+97250${randomInt(1_000_000, 10_000_000)}` }).where(eq(schema.business.approverPhone, ownerPhone)),
   );
-  await db.withBusiness('workflow', businessId, async (tx) => {
-    await tx.insert(schema.business).values({ id: businessId, name: 'העסק של המגרש', approverPhone: ownerPhone });
-    await tx.insert(schema.conversationState).values({ businessId });
-  });
-  return businessId;
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -287,4 +335,3 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   for await (const chunk of req) chunks.push(chunk as Buffer);
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
-
