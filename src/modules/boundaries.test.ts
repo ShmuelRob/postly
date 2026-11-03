@@ -51,6 +51,7 @@ describe('module boundaries', () => {
         'module-internals: src/modules/content/leaks-internal.ts -> src/modules/messaging/internal/dedupe.ts',
         'module-internals: src/modules/content/type-only.ts -> src/modules/messaging/internal/types.ts',
         'module-internals: src/shared/leak.ts -> src/modules/messaging/internal/dedupe.ts',
+        'no-playground: src/shared/imports-playground.ts -> playground/app.ts',
         'vendor-outside-adapter: src/modules/content/calls-vendor.ts -> twilio',
         'vendor-outside-adapter: src/modules/publishing/adapters/wrong-vendor.ts -> twilio',
       ].sort(),

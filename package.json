@@ -7,7 +7,7 @@
     "node": ">=26"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p playground/web",
     "lint:links": "node scripts/check-links.ts",
     "lint:boundaries": "depcruise src --config .dependency-cruiser.mjs",
     "test": "vitest run",
@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint:links && npm run lint:boundaries && npm run test",
     "gallery": "vitest run --config vitest.gallery.config.ts",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "playground": "vite --config playground/vite.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",
@@ -30,9 +31,15 @@
     "@swc/core": "1.16.21",
     "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
     "dependency-cruiser": "18.7.2",
     "drizzle-kit": "^0.31.11",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
+    "vite": "^8.3.5",
     "vitest": "^5.1.0"
   },
   "overrides": {

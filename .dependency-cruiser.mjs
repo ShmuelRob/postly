@@ -67,6 +67,13 @@ export default {
       },
     },
     {
+      name: 'no-playground',
+      comment: 'The local playground (playground/) is dev-only; product code never imports it.',
+      severity: 'error',
+      from: { path: '^src/' },
+      to: { path: '^playground/' },
+    },
+    {
       name: 'db-driver-outside-db',
       comment: 'Only src/db/ opens database connections.',
       severity: 'error',

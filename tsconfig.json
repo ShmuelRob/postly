@@ -14,5 +14,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test/e2e", "test/db", "*.config.ts", "scripts"]
+  "include": ["src", "test/e2e", "test/db", "*.config.ts", "scripts", "playground"],
+  "exclude": ["playground/web"]
 }
