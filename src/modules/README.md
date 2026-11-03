@@ -1,6 +1,6 @@
 # Modules
 
-Each module from [technical-design.md](../../technical-design.md#modules) has a folder here:
+Each module from [technical-design.md](../../docs/technical-design.md#modules) has a folder here:
 `messaging`, `workflow`, `model-layer`, `content`, `design`, `publishing`, `business-data`, `billing`, and `console`.
 
 ## Rules

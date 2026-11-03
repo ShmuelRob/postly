@@ -13,6 +13,7 @@ Requires Node 26 LTS (`.node-version`), with TypeScript 7 and Vitest 5.
 ```bash
 npm run check                                   # typecheck + module boundaries + all tests; run before finishing any change
 npm run lint:boundaries                         # dependency-cruiser import rules only
+npm run lint:links                              # relative markdown links must resolve
 npm test                                        # vitest run (unit and e2e projects)
 npm run test:e2e                                # e2e project only; writes reports/e2e/index.html
 npx vitest run src/db/schema.test.ts            # one file
@@ -29,19 +30,19 @@ Code layout: `src/shared/state-machine.ts` is the generic transition-table engin
 Before any task, read all three:
 
 - [PRD.md](PRD.md): product behavior, onboarding, business profile fields and defaults, approval rules, Phase 1 scope.
-- [technical-design.md](technical-design.md): stack, modules, data model, internal interfaces, failure handling.
-- [agentic-development.md](agentic-development.md): language rules, work division, human-review areas.
+- [technical-design.md](docs/technical-design.md): stack, modules, data model, internal interfaces, failure handling.
+- [agentic-development.md](docs/agentic-development.md): language rules, work division, human-review areas.
 
-The contract docs refine the technical design and are equally binding. Read the one that covers your change: [state-machines.md](state-machines.md) (states, events, guards), [database-schema.md](database-schema.md) (tables, RLS), [contracts.md](contracts.md) (Zod schemas for the profile, model tasks, and provider interfaces), and [design-styles.md](design-styles.md) (style rules and output sizes for the design engine; provisional). Code in `src/contracts/` and `src/db/schema.ts` mirrors them one to one.
+The contract docs refine the technical design and are equally binding. Read the one that covers your change: [state-machines.md](docs/state-machines.md) (states, events, guards), [database-schema.md](docs/database-schema.md) (tables, RLS), [contracts.md](docs/contracts.md) (Zod schemas for the profile, model tasks, and provider interfaces), and [design-styles.md](docs/design-styles.md) (style rules and output sizes for the design engine; provisional). Code in `src/contracts/` and `src/db/schema.ts` mirrors them one to one.
 
-[implementation-plan.md](implementation-plan.md) lists the work packages, their lanes and human gates, and the session-manager loop. A work session reads its own package there; only the manager session edits package status.
+[implementation-plan.md](docs/implementation-plan.md) lists the work packages, their lanes and human gates, and the session-manager loop. A work session reads its own package there; only the manager session edits package status.
 
 ## Workflow: docs first, tests first, code last
 
 1. **Check against the docs.** Before writing any code, confirm the change matches the three docs above. If the request, existing code, or a needed decision conflicts with or is missing from the docs, stop and resolve it in the docs first (ask the user when the right answer is not clear), then write code that follows the updated docs. Never let code drift ahead of the docs.
 2. **TDD.** Write failing tests before the implementation, then write the code to make them pass.
 3. **End-to-end tests are the most trusted.** A feature is done only when an end-to-end test covers its flow, running the real code against simulators and asserting on what the owner and the networks would see. Show the user every end-to-end test you add or change, together with a run of it: the WhatsApp conversation, screenshots of rendered posts, and the result (send screenshots and reports with SendUserFile). Never skip, weaken, or delete a failing end-to-end test to make a change pass; report it instead.
-4. **Human-owned tests.** For the approval and publishing code paths (including the check that only an approved version hash goes live), the human writes the tests or approves them before any implementation is written. Under the current operating mode in [implementation-plan.md](implementation-plan.md#operating-mode), a separate test-author session writes them, they merge before implementation, and they are queued for the human in [human-review-queue.md](human-review-queue.md).
+4. **Human-owned tests.** For the approval and publishing code paths (including the check that only an approved version hash goes live), the human writes the tests or approves them before any implementation is written. Under the current operating mode in [implementation-plan.md](docs/implementation-plan.md#operating-mode), a separate test-author session writes them, they merge before implementation, and they are queued for the human in [human-review-queue.md](docs/human-review-queue.md).
 
 When a doc changes, update its Hebrew companion in `docs/`: [docs/product-spec.he.md](docs/product-spec.he.md) is the full Hebrew mirror of the PRD; the other docs have short `*.summary.he.md` companions. Every new document needs a Hebrew summary companion.
 
@@ -63,6 +64,6 @@ Modules: Messaging, Workflow, Model layer, Content, Design, Publishing, Business
 - All code, comments, commits, PRs, and technical docs are in English. User-facing product content (WhatsApp messages, captions) is in the business's chosen language, Hebrew by default.
 - Local and test environments use simulators for WhatsApp, publishing, models, and payments. Use only test accounts and test keys; never touch real customer channels or data.
 - Core (state machine, data model, main flow) is worked on by one agent at a time. Independent modules (design engine, vendor adapters, console) may be parallelized in separate worktrees once contracts exist.
-- Flag for human review (an entry in [human-review-queue.md](human-review-queue.md)) any change touching: approval/publishing code, RLS and tenant isolation, tokens/secrets/customer media, database migrations, or customer-facing prompts.
+- Flag for human review (an entry in [human-review-queue.md](docs/human-review-queue.md)) any change touching: approval/publishing code, RLS and tenant isolation, tokens/secrets/customer media, database migrations, or customer-facing prompts.
 - Contracts (state machine, DB schema, Zod schemas, provider interfaces) are human-written and approved before agents implement against them.
 - First milestone: the design engine and a Hebrew example set, without WhatsApp or publishing.

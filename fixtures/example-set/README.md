@@ -1,6 +1,6 @@
 # Example set
 
-The Hebrew example set the design engine and the model tasks are judged against ([design-styles.md](../../design-styles.md#provisional-example-set), gate H3 in [implementation-plan.md](../../implementation-plan.md#human-gates)). The six entries here are provisional and fictional: a florist, a bakery, a hair salon, a falafel stand, a pet shop, and a yoga studio. The human replaces them with the real set.
+The Hebrew example set the design engine and the model tasks are judged against ([design-styles.md](../../docs/design-styles.md#provisional-example-set), gate H3 in [implementation-plan.md](../../docs/implementation-plan.md#human-gates)). The six entries here are provisional and fictional: a florist, a bakery, a hair salon, a falafel stand, a pet shop, and a yoga studio. The human replaces them with the real set.
 
 `src/example-set/` loads and validates the set: `loadExampleSet()` returns every entry or throws one error that lists every problem. `npx vitest run src/example-set` checks it.
 
@@ -18,7 +18,7 @@ fixtures/example-set/<slug>/       folder name is the entry id, kebab-case (a-z,
 | Field | Content |
 | --- | --- |
 | `provisional` | `true` for drafted entries, `false` for entries the human supplied |
-| `profile` | A complete `BusinessProfile` ([contracts.md](../../contracts.md)); omitted optional fields get the PRD defaults |
+| `profile` | A complete `BusinessProfile` ([contracts.md](../../docs/contracts.md)); omitted optional fields get the PRD defaults |
 | `photos[]` | `file` (path under `photos/`), `description` (what the photo shows, in English), and `placeholder` only for code-generated photos |
 | `photos[].placeholder` | `width`, `height`, `colors` (gradient start, gradient end, shape color), `motif` (`circles`, `rings`, `petals`, `stripes`, `dots`, `arches`), `seed`. The file must be the SVG that `placeholderPhotoSvg()` draws from it |
 | `expected.facts` | The `fact_extraction` output the update should produce: `id`, `type`, `value`, `sourceQuote`. Every `sourceQuote` must appear verbatim in `weekly-update.txt` |
