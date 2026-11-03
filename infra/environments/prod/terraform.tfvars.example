@@ -1,0 +1,7 @@
+# Placeholders only. Copy to terraform.tfvars (git-ignored) and fill in.
+project_id        = "REPLACE_WITH_PROJECT_ID"
+region            = "me-west1"
+public_base_url   = "https://REPLACE_WITH_WEB_HOST"
+business_number   = "+0000000000"
+github_repository = "OWNER/REPO"
+alert_email       = "REPLACE_WITH_ALERT_EMAIL"

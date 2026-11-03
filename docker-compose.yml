@@ -1,0 +1,59 @@
+# Local run of the production image on the simulators only (docs/deployment.md): Postgres, the
+# migration job, web and worker. Every password here is a local test value; nothing reaches a vendor.
+#   docker compose up --build
+x-app: &app
+  build: .
+  image: postly:local
+  environment: &app-env
+    POSTLY_PROVIDERS: simulators
+    DATABASE_URL: postgres://postgres:5432/postly
+    PUBLIC_BASE_URL: http://localhost:8080
+    BUSINESS_NUMBER: "+972500000000"
+    DB_PASSWORD_APP_MESSAGING: local-only
+    DB_PASSWORD_APP_WORKFLOW: local-only
+    DB_PASSWORD_APP_CONTENT: local-only
+    DB_PASSWORD_APP_DESIGN: local-only
+    DB_PASSWORD_APP_APPROVAL: local-only
+    DB_PASSWORD_APP_PUBLISHING: local-only
+    DB_PASSWORD_APP_MODEL: local-only
+    DB_PASSWORD_APP_BILLING: local-only
+    DB_PASSWORD_APP_BUSINESS_DATA: local-only
+    DB_PASSWORD_APP_SYS_PHONE_LOOKUP: local-only
+    DB_PASSWORD_APP_SYS_SCHEDULER: local-only
+    DB_PASSWORD_APP_SYS_CONSOLE: local-only
+    DB_PASSWORD_APP_SYS_EXAMPLE_SET: local-only
+    DB_PASSWORD_APP_JOBS: local-only
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: postly
+      POSTGRES_PASSWORD: local-only
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postly"]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    environment:
+      <<: *app-env
+      MIGRATE_ADMIN_URL: postgres://postgres:local-only@postgres:5432/postly
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    <<: *app
+    command: ["web"]
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }

@@ -4,7 +4,8 @@ import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema.js';
 
-export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions } from './jobs.js';
+export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
+export { passwordStatements, provisionDatabase, quoteLiteral, type ProvisionOptions } from './provision.js';
 
 // The only way into the database from outside src/db/ (see src/modules/README.md). Each role in
 // database-schema.md, "Least privilege", is its own login with its own pool, opened on first use.
@@ -37,6 +38,13 @@ export type SystemPurpose = (typeof SYSTEM_PURPOSES)[number];
 export function loginFor(role: BusinessRole | SystemPurpose): string {
   return (SYSTEM_PURPOSES as readonly string[]).includes(role) ? `app_sys_${role}` : `app_${role}`;
 }
+
+/** pg-boss's own login (docs/deployment.md): it owns only the `pgboss` schema and has no grant on any business table. */
+export const JOBS_LOGIN = 'app_jobs';
+export const JOBS_SCHEMA = 'pgboss';
+
+/** Every login the migration job gives a password: one per role and purpose, plus the job queue's. */
+export const ALL_LOGINS: readonly string[] = [...BUSINESS_ROLES.map(loginFor), ...SYSTEM_PURPOSES.map(loginFor), JOBS_LOGIN];
 
 export interface DatabaseUrls {
   /** One connection string per business role, logging in as `loginFor(role)`. */

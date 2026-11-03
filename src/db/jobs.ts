@@ -9,7 +9,19 @@ export type JobHandler<T = unknown> = (data: T) => Promise<void>;
 export interface JobQueue {
   register<T>(name: string, handler: JobHandler<T>): Promise<void>;
   send<T>(name: string, data: T, options?: { startAfter?: Date }): Promise<void>;
+  /**
+   * Registers `handler` for `name` and runs it on a cron (UTC). The queue has pg-boss's singleton
+   * policy: at most one job of that name is active at a time across every worker instance, and
+   * pg-boss creates each cron job once however many instances run. A failed run is retried.
+   */
+  schedule(name: string, cron: string, handler: JobHandler<null>): Promise<void>;
   stop(): Promise<void>;
+}
+
+export interface ScheduledJob {
+  name: string;
+  cron: string;
+  singleton: boolean;
 }
 
 export interface PgBossQueueOptions {
@@ -21,11 +33,13 @@ export interface PgBossQueueOptions {
    * review (CLAUDE.md), so the job schema is expected to exist already.
    */
   migrate?: boolean;
+  /** With `migrate`, whether pg-boss also creates its schema (default: same as `migrate`). The migration job creates it first, owned by the job login. */
+  createSchema?: boolean;
 }
 
 export async function createPgBossQueue(options: PgBossQueueOptions): Promise<JobQueue> {
   const migrate = options.migrate ?? false;
-  const boss = new PgBoss({ connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: migrate });
+  const boss = new PgBoss({ connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate });
   boss.on('error', (error) => console.error(JSON.stringify({ level: 'error', msg: 'pg-boss error', error: String(error) })));
   await boss.start();
   return {
@@ -38,6 +52,14 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
     async send(name, data, opts) {
       await boss.send(name, data as object, opts?.startAfter ? { startAfter: opts.startAfter } : {});
     },
+    async schedule(name, cron, handler) {
+      // The policy is fixed when the queue is created, so a scheduled queue is created here.
+      if (!(await boss.getQueue(name))) await boss.createQueue(name, { policy: 'singleton', retryLimit: 3 });
+      await boss.work(name, async (jobs) => {
+        for (const job of jobs) await handler(null);
+      });
+      await boss.schedule(name, cron, null, { tz: 'UTC' });
+    },
     async stop() {
       await boss.stop({ graceful: true });
     },
@@ -45,9 +67,15 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
 }
 
 /** An in-process queue for tests and local runs: jobs run when `drain()` is called. */
-export function createMemoryQueue(): JobQueue & { drain(): Promise<number> } {
+export function createMemoryQueue(): JobQueue & {
+  drain(): Promise<number>;
+  schedules(): ScheduledJob[];
+  /** Queues one run of a scheduled job, as its cron firing would. */
+  fire(name: string): Promise<void>;
+} {
   const handlers = new Map<string, JobHandler<never>>();
   const pending: Array<{ name: string; data: unknown }> = [];
+  const scheduled: ScheduledJob[] = [];
   return {
     async register(name, handler) {
       if (handlers.has(name)) throw new Error(`job already registered: ${name}`);
@@ -56,6 +84,15 @@ export function createMemoryQueue(): JobQueue & { drain(): Promise<number> } {
     async send(name, data) {
       if (!handlers.has(name)) throw new Error(`no handler for job: ${name}`);
       pending.push({ name, data });
+    },
+    async schedule(name, cron, handler) {
+      await this.register(name, handler);
+      scheduled.push({ name, cron, singleton: true });
+    },
+    schedules: () => [...scheduled],
+    async fire(name) {
+      if (!scheduled.some((s) => s.name === name)) throw new Error(`not scheduled: ${name}`);
+      pending.push({ name, data: null });
     },
     async stop() {},
     async drain() {

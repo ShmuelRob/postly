@@ -8,6 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p playground/web",
+    "build": "tsc -p tsconfig.build.json",
     "lint:links": "node scripts/check-links.ts",
     "lint:boundaries": "depcruise src playground --config .dependency-cruiser.mjs",
     "test": "vitest run",
