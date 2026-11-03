@@ -65,9 +65,25 @@ export class InvalidWebhookSignatureError extends Error {
   override name = 'InvalidWebhookSignatureError';
 }
 
+/**
+ * A free-form send (text or buttons) outside the 24-hour WhatsApp window. Only an approved
+ * template may go out; the caller sends one or waits for the owner.
+ */
+export class WindowClosedError extends Error {
+  override name = 'WindowClosedError';
+  constructor(
+    readonly to: string,
+    /** The owner's last inbound message, or null when the number never wrote. */
+    readonly lastInboundAt: Date | null,
+  ) {
+    super(`The 24-hour window to ${to} is closed`);
+  }
+}
+
 /** The only code that knows the WhatsApp provider implements this. */
 export interface MessagingProvider {
   readonly name: string;
+  /** Throws WindowClosedError outside the 24-hour window, as does sendButtons. */
   sendText(request: SendTextRequest): Promise<SendResult>;
   sendTemplate(request: SendTemplateRequest): Promise<SendResult>;
   sendButtons(request: SendButtonsRequest): Promise<SendResult>;
