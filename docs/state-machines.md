@@ -34,7 +34,7 @@ Stored in `conversation_state.step` while the business is `onboarding`. The step
 | From | Event | To | Guard |
 | --- | --- | --- | --- |
 | `intro` | `INTRO_SENT` | `profile_questions` | |
-| `profile_questions` | `PROFILE_FIELDS_COMPLETE` | `brand_assets` | All required profile fields are filled |
+| `profile_questions` | `PROFILE_FIELDS_COMPLETE` | `brand_assets` | All required profile fields are filled, except `style`, which `style_selection` fills |
 | `brand_assets` | `BRAND_ASSETS_DONE` | `style_selection` | Owner sent assets or skipped them |
 | `style_selection` | `STYLE_CHOSEN` | `profile_review` | Chosen style is one of the three styles |
 | `profile_review` | `PROFILE_CORRECTED` | `profile_review` | Summary is resent after the correction |
@@ -42,6 +42,13 @@ Stored in `conversation_state.step` while the business is `onboarding`. The step
 | `channel_connection` | `CHANNEL_CONNECTED` | `channel_test` | At least one connection is `connected` |
 | `channel_test` | `CHANNEL_TEST_FAILED` | `channel_connection` | |
 | `channel_test` | `CHANNEL_TEST_PASSED` | `completed` | Every chosen channel is `verified` |
+
+How onboarding starts and ends (decided in WP-30, 2026-11-03, queued for the human):
+
+- **Start.** A business is created in `onboarding` together with its `conversation_state` row (step `intro`) and a draft profile holding `approverPhone`, by a team or sign-up action; an unknown number never starts onboarding by itself. The owner's first inbound message then gets the intro, and `INTRO_SENT` moves to `profile_questions`, whose first question goes out in the same reply.
+- **Channel test (interim).** Until publishing exists (WP-34), the test of a `connected` channel is a provider status check: `getConnectionStatus` reports the account `connected` with a `providerAccountId`. No post is scheduled or published, because nothing goes live without an approved post version. This interim definition is queued for the human, and WP-34 restores the PRD's check that a post can be scheduled. The owner tells the agent when the link flow is done (any message while in `channel_connection`), and the agent then asks the provider.
+- **Recovery.** A burst that finds the onboarding in `channel_test` runs the test again; one that finds it `completed` while the business is still `onboarding` retries the activation. If activation cannot pass its guard, the owner is told a person will help and the conversation is handed off (a `handoff` console item).
+- **End.** On `completed` the business moves to `active` (`ONBOARDING_COMPLETED`), `business.profile` becomes the full `BusinessProfile` with its defaults applied, and `conversation_state.step` is set to the conversation machine's start state `idle` in the same transaction.
 
 `completed` is terminal and triggers `ONBOARDING_COMPLETED` on the business.
 
@@ -151,7 +158,7 @@ Stored in `channel_connection.status`.
 | From | Event | To | Guard |
 | --- | --- | --- | --- |
 | `pending` | `CONNECTED` | `connected` | Provider reports the account is linked |
-| `connected` | `TEST_PASSED` | `verified` | A test schedule succeeded on this channel |
+| `connected` | `TEST_PASSED` | `verified` | Interim until WP-34: the provider reports the channel connected with an account id. WP-34 restores: a test schedule succeeded on this channel |
 | `connected` | `TEST_FAILED` | `pending` | A new connection link is sent |
 | `verified` | `HEALTH_CHECK_FAILED` | `disconnected` | Owner is notified with a template |
 | `disconnected` | `RECONNECT_REQUESTED` | `pending` | A new connection link is sent |

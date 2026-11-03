@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   type ApprovalButtonPayload,
   type GetMediaResult,
@@ -53,6 +53,8 @@ export class MessagingSimulator implements MessagingProvider {
   private readonly enforceWindow: boolean;
   private readonly lastInbound = new Map<string, Date>();
   private nextId = 1;
+  /** Per instance, so message ids stay unique across simulators sharing one database. */
+  private readonly run = randomUUID().slice(0, 8);
 
   constructor(options: MessagingSimulatorOptions = {}) {
     this.businessNumber = options.businessNumber ?? '+972501234564';
@@ -135,7 +137,7 @@ export class MessagingSimulator implements MessagingProvider {
     this.lastInbound.set(from, this.now());
     return InboundMessage.parse({
       provider: this.name,
-      providerMessageId: `SM-sim-in-${this.nextId++}`,
+      providerMessageId: `SM-sim-in-${this.run}-${this.nextId++}`,
       from,
       to: this.businessNumber,
       receivedAt: this.now().toISOString(),
@@ -166,7 +168,7 @@ export class MessagingSimulator implements MessagingProvider {
   private record(message: Omit<SentMessage, 'providerMessageId' | 'sentAt'>): SendResult {
     const failure = this.sendFailures.shift();
     if (failure) throw failure;
-    const providerMessageId = `SM-sim-out-${this.nextId++}`;
+    const providerMessageId = `SM-sim-out-${this.run}-${this.nextId++}`;
     this.sent.push({ ...message, providerMessageId, sentAt: this.now().toISOString() } as SentMessage);
     return { providerMessageId };
   }

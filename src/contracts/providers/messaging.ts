@@ -26,7 +26,12 @@ export const InboundMessage = z.object({
 });
 export type InboundMessage = z.infer<typeof InboundMessage>;
 
-export const SendTextRequest = z.object({ to: Phone, text: z.string().min(1) });
+export const SendTextRequest = z.object({
+  to: Phone,
+  text: z.string().min(1),
+  /** An image sent with the text as its caption (the onboarding style samples). */
+  mediaUrl: Url.optional(),
+});
 export type SendTextRequest = z.infer<typeof SendTextRequest>;
 
 export const SendTemplateRequest = z.object({

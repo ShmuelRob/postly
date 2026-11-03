@@ -122,6 +122,18 @@ These are defaults stored in configuration, so they can change without a code ch
 | Channel health check | Daily at 06:00 |
 | No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, by the business's city when `@hebcal/core` knows it, otherwise Jerusalem |
 
+## Onboarding flow
+
+Built in WP-30 (2026-11-03); the copy is provisional (H6) and queued for the human. The workflow module runs the [onboarding machine](state-machines.md#onboarding); each step uses the module that owns it.
+
+- **Inbound media.** Messaging downloads every voice note and image through `getMedia`, stores the file, records a `media_asset` row (`voice` or `photo`, source `owner`), and passes the asset ids with the burst. Voice notes are transcribed with the `transcription` task before anything reads the text.
+- **Profile questions.** One or two topics per message, in a fixed order: name, field and products; location, hours, and pickup or delivery; audience and differentiator; channels and Shabbat publishing. Each answer goes to `profile_extraction` with the fields asked, and the fields found merge into the `BusinessProfileDraft` in `business.profile`. A question whose required fields stay empty is asked again, up to three times in all, and then the conversation is handed off to a person.
+- **Brand assets.** The agent asks for a logo, then for photos of the business; the owner can skip each. The first image after the logo question is the logo (`brand.logoAssetId`).
+- **Style samples.** The design module renders one sample post per style from the owner's first photo (or a bundled sample photo when there is none), with the business name and logo, and messaging sends each with its style name. The owner answers with a style name or number.
+- **Profile review.** A short summary; the owner approves by text from the approver number, or writes a correction, which goes through `profile_extraction` and resends the summary.
+- **Channel connection.** The publishing module creates a `pending` `channel_connection` per chosen network and sends the provider link. The owner writes when done; the module reads the provider status and applies `CONNECTED`, then the test (`TEST_PASSED`), and the business becomes `active`.
+- **Unprocessed messages.** A burst waits in memory for the quiet window, and its messages stay in `message` with `processed_at` null until the workflow has consumed them. A sweep at startup and then every quiet window hands every such message older than the quiet window to the workflow again, grouped by business and sender, so a restart, a second instance, or a failed handler loses nothing (review queue item 14). The sweep runs in the web process (`App.start()`), next to the bursts it must skip: a message still waiting or still being handled there is never handed over twice. Across two web instances a slow burst can still be handed over twice; that waits for durable bursts (a pg-boss job keyed by business and sender).
+
 ## Failure handling required in Phase 1
 
 - The 24-hour window closes mid-flow: send an approved template, or wait for the owner.

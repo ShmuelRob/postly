@@ -1,4 +1,5 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
+import { and, asc, desc, eq, isNotNull, isNull, lt } from 'drizzle-orm';
 import {
   InboundMessage,
   type MessagingProvider,
@@ -23,6 +24,8 @@ export interface ReceivedMessage {
   providerMessageId: string;
   receivedAt: string;
   content: InboundMessage['content'];
+  /** `media_asset` rows for a voice note or image; empty for text and button replies. */
+  mediaAssetIds: string[];
 }
 
 /** Inbound messages from one known number, merged into one unit of work. */
@@ -49,6 +52,12 @@ export interface Timers {
   clear(handle: unknown): void;
 }
 
+/** Where inbound media files go, and the URL a model provider or the renderer fetches them from. */
+export interface MediaStorage {
+  put(path: string, bytes: Uint8Array, mimeType: string): Promise<void>;
+  urlFor(path: string): string;
+}
+
 export interface MessagingOptions {
   db: Database;
   provider: MessagingProvider;
@@ -58,6 +67,8 @@ export interface MessagingOptions {
   burstQuietMs?: number;
   now?: () => Date;
   timers?: Timers;
+  /** Stores voice notes and images as `media_asset` rows; without it media stays at the provider. */
+  media?: MediaStorage;
   /** Called when a burst handed over by a timer fails; defaults to console.error. */
   onError?: (error: unknown, burst: InboundBurst) => void;
 }
@@ -75,6 +86,17 @@ export interface Messaging {
   sendTemplate(businessId: string, request: SendTemplateRequest): Promise<SendResult>;
   /** When the owner's 24-hour window to `phone` closes, or null when it is closed. */
   windowClosesAt(businessId: string, phone: string): Promise<Date | null>;
+  /** The URL of one of the business's media assets, for the model layer and the renderer. */
+  mediaUrl(businessId: string, mediaAssetId: string): Promise<string>;
+  /**
+   * Hands every stored inbound message the workflow never consumed (`processed_at` null) and older
+   * than the quiet window to the handler again, grouped by business and sender. Run at startup and
+   * then every quiet window (technical-design.md, Onboarding flow; review queue item 14). `businessId`
+   * limits it to one business (tests that share a database).
+   */
+  sweepUnprocessed(options?: { businessId?: string }): Promise<number>;
+  /** Runs the sweep now and then every `everyMs` (default: the quiet window); returns a stop function. */
+  startSweep(everyMs?: number): () => void;
   /** Hands every pending burst to the handler now. */
   flushBursts(): Promise<void>;
   /** Flushes pending bursts and stops the timers. */
@@ -95,17 +117,60 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const timers = options.timers ?? nodeTimers;
   const onError = options.onError ?? ((error: unknown) => console.error('inbound burst failed', error));
   const pending = new Map<string, PendingBurst>();
+  /** Ids of messages handed to the handler and not yet marked processed. */
+  const delivering = new Set<string>();
 
   const key = (businessId: string, from: string) => `${businessId}:${from}`;
 
-  async function deliver(burst: InboundBurst): Promise<void> {
-    await handler.handleInbound(burst);
-    const processedAt = now();
-    await db.withBusiness('messaging', burst.businessId, async (tx) => {
-      for (const m of burst.messages) {
-        await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
-      }
+  const burstText = (messages: ReceivedMessage[]) =>
+    messages
+      .map((m) => (m.content.kind === 'text' ? m.content.text : m.content.kind === 'image' ? m.content.caption : undefined))
+      .filter((t): t is string => t !== undefined && t !== '')
+      .join('\n');
+
+  async function storeMedia(businessId: string, messageId: string, content: InboundMessage['content']): Promise<string[]> {
+    if (!options.media || (content.kind !== 'voice' && content.kind !== 'image')) return [];
+    const file = await provider.getMedia(content.providerMediaId);
+    const storagePath = `${businessId}/inbound/${randomUUID()}`;
+    await options.media.put(storagePath, file.data, file.mimeType);
+    return db.withBusiness('messaging', businessId, async (tx) => {
+      const [asset] = await tx
+        .insert(schema.mediaAsset)
+        .values({
+          businessId,
+          kind: content.kind === 'voice' ? 'voice' : 'photo',
+          source: 'owner',
+          storagePath,
+          mimeType: file.mimeType,
+          sha256: createHash('sha256').update(file.data).digest('hex'),
+        })
+        .returning({ id: schema.mediaAsset.id });
+      if (!asset) throw new Error('media_asset insert returned no row');
+      await tx.update(schema.message).set({ mediaAssetIds: [asset.id] }).where(eq(schema.message.id, messageId));
+      return [asset.id];
     });
+  }
+
+  /**
+   * Hands a burst to the handler and marks its messages processed. Its message ids stay in
+   * `delivering` until that finishes, so the sweep never hands the same messages over twice in this
+   * process. Returns false, doing nothing, when one of them is already being delivered.
+   */
+  async function deliver(burst: InboundBurst): Promise<boolean> {
+    if (burst.messages.some((m) => delivering.has(m.id))) return false;
+    for (const m of burst.messages) delivering.add(m.id);
+    try {
+      await handler.handleInbound(burst);
+      const processedAt = now();
+      await db.withBusiness('messaging', burst.businessId, async (tx) => {
+        for (const m of burst.messages) {
+          await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
+        }
+      });
+      return true;
+    } finally {
+      for (const m of burst.messages) delivering.delete(m.id);
+    }
   }
 
   async function flush(k: string): Promise<void> {
@@ -183,6 +248,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
       providerMessageId: message.providerMessageId,
       receivedAt: message.receivedAt,
       content: message.content,
+      mediaAssetIds: await storeMedia(businessId, stored.id, message.content),
     };
     const k = key(businessId, message.from);
 
@@ -197,10 +263,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
       timer: undefined,
     };
     entry.burst.messages.push(received);
-    entry.burst.text = entry.burst.messages
-      .map((m) => (m.content.kind === 'text' ? m.content.text : m.content.kind === 'image' ? m.content.caption : undefined))
-      .filter((t): t is string => t !== undefined && t !== '')
-      .join('\n');
+    entry.burst.text = burstText(entry.burst.messages);
     pending.set(k, entry);
     schedule(k, entry);
     return 'accepted';
@@ -266,7 +329,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
     receive,
     async sendText(businessId, request) {
       await requireOpenWindow(businessId, request.to);
-      return recordOutbound(businessId, 'text', request.to, request.text, null, await provider.sendText(request));
+      const payload = request.mediaUrl ? { mediaUrl: request.mediaUrl } : null;
+      return recordOutbound(businessId, 'text', request.to, request.text, payload, await provider.sendText(request));
     },
     async sendButtons(businessId, request) {
       await requireOpenWindow(businessId, request.to);
@@ -278,6 +342,73 @@ export function createMessaging(options: MessagingOptions): Messaging {
       return recordOutbound(businessId, 'template', request.to, null, { templateName: request.templateName, language: request.language, variables: request.variables }, result);
     },
     windowClosesAt,
+    async mediaUrl(businessId, mediaAssetId) {
+      if (!options.media) throw new Error('No media storage configured');
+      const [row] = await db.withBusiness('messaging', businessId, (tx) =>
+        tx.select({ path: schema.mediaAsset.storagePath }).from(schema.mediaAsset).where(eq(schema.mediaAsset.id, mediaAssetId)),
+      );
+      if (!row) throw new Error(`No media asset ${mediaAssetId} for this business`);
+      return options.media.urlFor(row.path);
+    },
+    async sweepUnprocessed(sweepOptions = {}) {
+      const m = schema.message;
+      const cutoff = new Date(now().getTime() - quietMs);
+      const rows = await db.withSystem('phone_lookup', (tx) =>
+        tx
+          .select()
+          .from(m)
+          .where(and(
+              eq(m.direction, 'inbound'),
+              isNull(m.processedAt),
+              sweepOptions.businessId ? eq(m.businessId, sweepOptions.businessId) : isNotNull(m.businessId),
+              lt(m.createdAt, cutoff),
+            ))
+          .orderBy(asc(m.createdAt)),
+      );
+      const waiting = new Set([...pending.values()].flatMap((p) => p.burst.messages.map((x) => x.id)));
+      const groups = new Map<string, InboundBurst[]>();
+      for (const row of rows) {
+        if (waiting.has(row.id) || delivering.has(row.id) || !row.businessId) continue;
+        const content = InboundMessage.shape.content.parse(row.payload);
+        const received: ReceivedMessage = {
+          id: row.id,
+          providerMessageId: row.providerMessageId,
+          receivedAt: row.createdAt.toISOString(),
+          content,
+          mediaAssetIds: row.mediaAssetIds,
+        };
+        const k = key(row.businessId, row.fromPhone);
+        const bursts = groups.get(k) ?? [];
+        groups.set(k, bursts);
+        const last = bursts.at(-1);
+        // A button reply is never merged, as on the live path.
+        const mergeable = content.kind !== 'button_reply' && last !== undefined && last.messages[0]?.content.kind !== 'button_reply';
+        if (mergeable) last.messages.push(received);
+        else bursts.push({ businessId: row.businessId, from: row.fromPhone, messages: [received], text: '' });
+      }
+      let delivered = 0;
+      for (const bursts of groups.values()) {
+        for (const burst of bursts) {
+          burst.text = burstText(burst.messages);
+          try {
+            if (await deliver(burst)) delivered += burst.messages.length;
+          } catch (error) {
+            // Later bursts of this sender wait for the next sweep, so their order is kept.
+            onError(error, burst);
+            break;
+          }
+        }
+      }
+      return delivered;
+    },
+    startSweep(everyMs = quietMs) {
+      const sweep = () => {
+        this.sweepUnprocessed().catch((error: unknown) => console.error('inbound sweep failed', error));
+      };
+      sweep();
+      const timer = setInterval(sweep, everyMs);
+      return () => clearInterval(timer);
+    },
     async flushBursts() {
       for (const k of [...pending.keys()]) await flush(k);
     },

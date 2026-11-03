@@ -41,7 +41,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 
 | Purpose | Login | Used for |
 | --- | --- | --- |
-| `phone_lookup` | `app_sys_phone_lookup` | Resolving an inbound number to a business; storing messages and console items from unknown numbers |
+| `phone_lookup` | `app_sys_phone_lookup` | Resolving an inbound number to a business; storing messages and console items from unknown numbers; finding inbound messages never processed (the messaging sweep, WP-30) |
 | `scheduler` | `app_sys_scheduler` | Finding the businesses and rows due for a job, then fanning jobs out per business |
 | `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries and manual scheduling (a publication still publishes only when the publishing job's hash check passes), pauses, model settings. The human-owned H5 tests use it to force states |
 | `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
