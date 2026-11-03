@@ -7,6 +7,7 @@ export {
   WINDOW_MS,
   type InboundBurst,
   type InboundHandler,
+  type MediaStorage,
   type Messaging,
   type MessagingOptions,
   type ReceivedMessage,

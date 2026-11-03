@@ -13,3 +13,14 @@ export {
   type Workflow,
   type WorkflowLogger,
 } from './workflow.js';
+export {
+  createOnboarding,
+  MAX_QUESTION_ATTEMPTS,
+  mergeDraft,
+  parseStyle,
+  PROFILE_QUESTIONS,
+  type Onboarding,
+  type OnboardingBurst,
+  type OnboardingDeps,
+} from './onboarding.js';
+export * as onboardingCopy from './onboarding-copy.js';

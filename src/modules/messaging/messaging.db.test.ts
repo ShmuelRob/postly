@@ -132,3 +132,81 @@ describe('messaging module', () => {
     await server.close();
   });
 });
+
+describe('inbound media (WP-30)', () => {
+  it('stores a voice note as a media_asset and passes its id with the burst', async () => {
+    const { businessId, owner, sim } = await setup();
+    const files = new Map<string, Uint8Array>();
+    const bursts: InboundBurst[] = [];
+    const messaging = createMessaging({
+      db,
+      provider: sim,
+      businessNumber: BUSINESS_NUMBER,
+      handler: { handleInbound: async (b) => void bursts.push(b) },
+      timers: manualTimers().timers,
+      media: { put: async (path, bytes) => void files.set(path, bytes), urlFor: (path) => `https://media.postly.test/${path}` },
+    });
+    const voice = sim.addMedia('audio/ogg', new Uint8Array([7, 8, 9]));
+    await messaging.receive({ ...sim.inboundVoice(owner, voice), providerMessageId: `SM-${randomUUID()}` });
+    await messaging.flushBursts();
+
+    const [assetId] = bursts[0]!.messages[0]!.mediaAssetIds;
+    const assets = await db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.mediaAsset));
+    expect(assets).toMatchObject([{ id: assetId, kind: 'voice', source: 'owner', mimeType: 'audio/ogg' }]);
+    expect([...files.values()]).toEqual([new Uint8Array([7, 8, 9])]);
+    expect(await messaging.mediaUrl(businessId, assetId!)).toBe(`https://media.postly.test/${assets[0]!.storagePath}`);
+    const [row] = await db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.message));
+    expect(row?.mediaAssetIds).toEqual([assetId]);
+  });
+});
+
+describe('sweep of unprocessed messages (review queue item 14)', () => {
+  it('hands a burst lost in a restart, and one whose handler failed, to the workflow again', async () => {
+    const minuteAgo = new Date(Date.now() - 60_000);
+    const { businessId, owner, sim } = await setup({ now: () => minuteAgo });
+    const lost = createMessaging({ db, provider: sim, businessNumber: BUSINESS_NUMBER, handler: { handleInbound: async () => {} }, timers: manualTimers().timers });
+    for (const text of ['יש מבצע', 'על חלות']) await lost.receive({ ...sim.inboundText(owner, text), providerMessageId: `SM-${randomUUID()}` });
+    // The process stops before the quiet window ends: the burst only ever existed in memory.
+
+    const errors: unknown[] = [];
+    let failOnce = true;
+    const mine: InboundBurst[] = [];
+    const restarted = createMessaging({
+      db,
+      provider: sim,
+      businessNumber: BUSINESS_NUMBER,
+      timers: manualTimers().timers,
+      onError: (e) => errors.push(e),
+      handler: {
+        handleInbound: async (b) => {
+          if (b.businessId !== businessId) return;
+          if (failOnce) {
+            failOnce = false;
+            throw new Error('workflow down');
+          }
+          mine.push(b);
+        },
+      },
+    });
+    await restarted.sweepUnprocessed();
+    expect(errors).toHaveLength(1);
+    expect(mine).toEqual([]);
+
+    await restarted.sweepUnprocessed();
+    expect(mine.map((b) => [b.from, b.text])).toEqual([[owner, 'יש מבצע\nעל חלות']]);
+    await restarted.sweepUnprocessed();
+    expect(mine).toHaveLength(1);
+  });
+
+  it('leaves a burst still waiting in this process alone', async () => {
+    const { businessId, owner, sim } = await setup({ now: () => new Date(Date.now() - 60_000) });
+    const bursts: InboundBurst[] = [];
+    const handler = { handleInbound: async (b: InboundBurst) => void bursts.push(b) };
+    const messaging = createMessaging({ db, provider: sim, businessNumber: BUSINESS_NUMBER, handler, timers: manualTimers().timers });
+    await messaging.receive({ ...sim.inboundText(owner, 'שלום'), providerMessageId: `SM-${randomUUID()}` });
+    await messaging.sweepUnprocessed();
+    expect(bursts.filter((b) => b.businessId === businessId)).toEqual([]);
+    await messaging.flushBursts();
+    expect(bursts.filter((b) => b.businessId === businessId)).toHaveLength(1);
+  });
+});
