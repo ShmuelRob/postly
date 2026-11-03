@@ -48,7 +48,7 @@ Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the
 
 The tooling choices and operational defaults are recorded in [technical-design.md](technical-design.md) (Stack and Operational defaults), and the output sizes and fonts in [design-styles.md](design-styles.md). Human decisions on 2026-11-03 (review queue items 1 to 7): H2 styles accepted for now, to be made professional later (WP-14); H3 the provisional set is the working set until the human brings a better one; H5 the test-author approach is accepted; H6 drafted copy is fine for the demo.
 
-Still open: what happens to an update that arrives after the week cutoff; WP-31 raises it before it starts.
+An update that arrives after the week cutoff counts as next week's update (decided by WP-31 on 2026-11-03 and queued for the human as review queue item 20; see [technical-design.md](technical-design.md#weekly-update-flow)).
 
 Contract gaps found while building the simulators (WP-03). Each is a contract change that the named package proposes in the docs, and queues for the human, before its implementation:
 

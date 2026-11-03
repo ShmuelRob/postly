@@ -7,7 +7,15 @@ import { type BusinessRenderContext, renderStyleSamples } from './modules/design
 import { createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
 import { createModelLayer } from './modules/model-layer/index.js';
 import { createChannels } from './modules/publishing/index.js';
-import { createOnboarding, createWorkflow, type Onboarding, type Workflow, type WorkflowLogger } from './modules/workflow/index.js';
+import {
+  createOnboarding,
+  createWeeklyUpdates,
+  createWorkflow,
+  type Onboarding,
+  type WeeklyUpdates,
+  type Workflow,
+  type WorkflowLogger,
+} from './modules/workflow/index.js';
 
 export interface AppOptions {
   db: Database;
@@ -34,6 +42,8 @@ export interface App {
   messaging: Messaging;
   workflow: Workflow;
   onboarding: Onboarding;
+  /** The weekly update; its `tick` is the hourly scheduler job. */
+  weekly: WeeklyUpdates;
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
    * never processed (review queue item 14), at startup and then every quiet window. It runs in the
@@ -44,19 +54,27 @@ export interface App {
 
 /**
  * The composition root for the product flows: messaging hands each burst to the workflow, which
- * runs onboarding for a business in `onboarding`. Later flows (WP-31+) route active businesses.
+ * runs onboarding for a business in `onboarding` and the weekly update for an active one.
  */
 export function createApp(options: AppOptions): App {
   const { db, providers } = options;
   const workflow = createWorkflow(db, options.logger);
   let onboarding: Onboarding | undefined;
+  let weekly: WeeklyUpdates | undefined;
 
   const messaging = createMessaging({
     db,
     provider: providers.messaging,
     businessNumber: options.businessNumber,
     media: options.media,
-    handler: { handleInbound: (burst) => onboarding!.handle(burst) },
+    handler: {
+      // Each flow ignores a business outside its status. The weekly flow runs first, so a burst that
+      // completes onboarding is not read again as a weekly update.
+      async handleInbound(burst) {
+        await weekly!.handle(burst);
+        await onboarding!.handle(burst);
+      },
+    },
     ...(options.burstQuietMs !== undefined ? { burstQuietMs: options.burstQuietMs } : {}),
     ...(options.timers ? { timers: options.timers } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -79,5 +97,7 @@ export function createApp(options: AppOptions): App {
     },
   });
 
-  return { messaging, workflow, onboarding, start: () => messaging.startSweep() };
+  weekly = createWeeklyUpdates({ db, workflow, messaging, model, ...(options.now ? { now: options.now } : {}) });
+
+  return { messaging, workflow, onboarding, weekly, start: () => messaging.startSweep() };
 }
