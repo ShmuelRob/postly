@@ -1,4 +1,6 @@
 import { PgBoss } from 'pg-boss';
+import { withLogContext } from '../shared/logger.js';
+import { log } from '../shared/logger.js';
 
 // Background jobs (technical-design.md: pg-boss). pg-boss opens its own connections, so it lives in
 // src/db/ with the other drivers. Handlers are registered by name; the queue behind them is an
@@ -40,13 +42,13 @@ export interface PgBossQueueOptions {
 export async function createPgBossQueue(options: PgBossQueueOptions): Promise<JobQueue> {
   const migrate = options.migrate ?? false;
   const boss = new PgBoss({ connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate });
-  boss.on('error', (error) => console.error(JSON.stringify({ level: 'error', msg: 'pg-boss error', error: String(error) })));
+  boss.on('error', (error) => log.error('pg-boss error', { error: String(error) }));
   await boss.start();
   return {
     async register(name, handler) {
       await boss.createQueue(name);
       await boss.work(name, async (jobs) => {
-        for (const job of jobs) await handler(job.data as never);
+        for (const job of jobs) await withLogContext({ jobId: job.id, jobName: name }, () => handler(job.data as never));
       });
     },
     async send(name, data, opts) {
@@ -56,7 +58,7 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
       // The policy is fixed when the queue is created, so a scheduled queue is created here.
       if (!(await boss.getQueue(name))) await boss.createQueue(name, { policy: 'singleton', retryLimit: 3 });
       await boss.work(name, async (jobs) => {
-        for (const job of jobs) await handler(null);
+        for (const job of jobs) await withLogContext({ jobId: job.id, jobName: name }, () => handler(null));
       });
       await boss.schedule(name, cron, null, { tz: 'UTC' });
     },
@@ -98,7 +100,7 @@ export function createMemoryQueue(): JobQueue & {
     async drain() {
       let ran = 0;
       for (let job = pending.shift(); job; job = pending.shift()) {
-        await handlers.get(job.name)!(job.data as never);
+        await withLogContext({ jobId: `memory-${ran + 1}`, jobName: job.name }, () => handlers.get(job.name)!(job.data as never));
         ran++;
       }
       return ran;

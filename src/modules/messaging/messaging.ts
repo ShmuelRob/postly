@@ -29,6 +29,10 @@ export interface ReceivedMessage {
 }
 
 /** Inbound messages from one known number, merged into one unit of work. */
+import { log, withLogContext } from '../../shared/logger.js';
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 export interface InboundBurst {
   businessId: string;
   from: string;
@@ -69,7 +73,7 @@ export interface MessagingOptions {
   timers?: Timers;
   /** Stores voice notes and images as `media_asset` rows; without it media stays at the provider. */
   media?: MediaStorage;
-  /** Called when a burst handed over by a timer fails; defaults to console.error. */
+  /** Called when a burst handed over by a timer fails; defaults to an error log line with the ids. */
   onError?: (error: unknown, burst: InboundBurst) => void;
 }
 
@@ -121,7 +125,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const quietMs = options.burstQuietMs ?? DEFAULT_BURST_QUIET_MS;
   const now = options.now ?? (() => new Date());
   const timers = options.timers ?? nodeTimers;
-  const onError = options.onError ?? ((error: unknown) => console.error('inbound burst failed', error));
+  const onError = options.onError ?? ((error: unknown, burst: InboundBurst) => log.error('inbound burst failed', { businessId: burst.businessId, messageId: burst.messages[0]?.id, error: errorMessage(error) }));
   const pending = new Map<string, PendingBurst>();
   /** Ids of messages handed to the handler and not yet marked processed. */
   const delivering = new Set<string>();
@@ -166,7 +170,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
     if (burst.messages.some((m) => delivering.has(m.id))) return false;
     for (const m of burst.messages) delivering.add(m.id);
     try {
-      await handler.handleInbound(burst);
+      await withLogContext({ businessId: burst.businessId, messageId: burst.messages[0]?.id }, () => handler.handleInbound(burst));
       const processedAt = now();
       await db.withBusiness('messaging', burst.businessId, async (tx) => {
         for (const m of burst.messages) {
@@ -427,7 +431,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
     },
     startSweep(everyMs = quietMs) {
       const sweep = () => {
-        this.sweepUnprocessed().catch((error: unknown) => console.error('inbound sweep failed', error));
+        this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: errorMessage(error) }));
       };
       sweep();
       const timer = setInterval(sweep, everyMs);

@@ -22,6 +22,8 @@ Cloud Storage: customer media bucket (private, versioned, lifecycle)
 Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 ```
 
+**Logs.** Every process writes one JSON line per event to stdout in Cloud Logging's structured format (`severity`, `message`, the trace field, and labels with the request, business, message and job ids); Cloud Run ships them to Cloud Logging with no agent. No customer content, phone numbers or secrets reach a line. Format and rules: [observability.md](observability.md).
+
 - **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, `console`, or `migrate` (`src/main.ts`).
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
 - **console** serves only the internal console and `/healthz`, as its own service with internal-only ingress and no public invoker, because ingress is set per service ([security.md](security.md#console-exposure)). It is not a sign-in.

@@ -37,6 +37,8 @@ export type EventResult =
   | { ok: false; reason: RejectionReason; from?: string; detail?: string };
 
 /** A rejected event, written to the structured log. */
+import { log } from '../../shared/logger.js';
+
 export interface RejectionLog {
   businessId: string;
   machine: MachineName;
@@ -53,7 +55,7 @@ export interface WorkflowLogger {
 }
 
 export const consoleLogger: WorkflowLogger = {
-  rejected: (entry) => console.warn(JSON.stringify({ level: 'warn', msg: 'workflow event rejected', ...entry })),
+  rejected: (entry) => log.warn('workflow event rejected', { ...entry }),
 };
 
 export interface Workflow {
