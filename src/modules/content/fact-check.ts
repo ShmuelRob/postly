@@ -54,8 +54,12 @@ function details(raw: string): Details {
   };
   let rest = text;
   const phone = take(PHONE, (m) => phoneDigits(m[0]));
-  // 100% is emphasis ("100% טבעי"), never a discount.
-  const discount = take(DISCOUNT, (m) => m[1]!).filter((d) => d !== '100');
+  // 100% is emphasis ("100% טבעי") unless it names a discount ("100% הנחה", "הנחה של 100%").
+  const discount = take(DISCOUNT, (m) => {
+    const after = m.input!.slice(m.index! + m[0].length, m.index! + m[0].length + 8);
+    const before = m.input!.slice(Math.max(0, m.index! - 12), m.index!);
+    return m[1] === '100' && !/^\s*הנחה/u.test(after) && !/הנחה(?:\s+של)?\s*$/u.test(before) ? '' : m[1]!;
+  }).filter((d) => d !== '');
   const price = take(PRICE, (m) => (m[1] ?? m[2])!);
   const time = take(TIME, (m) => canonicalTime(m[1]!));
   const date = take(DATE, (m) => canonicalDate(m[1]!));

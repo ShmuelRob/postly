@@ -30,8 +30,8 @@ const DAY_LETTERS = 'אבגדהוש';
 
 const alt = (words: string[]) => [...words].sort((a, b) => b.length - a.length).join('|');
 const NUMBER_WORD = alt([...Object.keys(UNITS), ...Object.keys(TENS), ...BIG]);
-/** A run of number words: an optional ב/ל/מ/ה prefix on the first, ו before any later one. */
-const PHRASE = String.raw`${START}([בלמה]?)((?:${NUMBER_WORD})${END}(?:\s+ו?(?:${NUMBER_WORD})${END})*)`;
+/** A run of number words: an optional prefix on the first (ו, כ, ב, ל, מ, ה, or ו with one of them), ו before any later one. */
+const PHRASE = String.raw`${START}((?:ו?[כבלמה]|ו)?)((?:${NUMBER_WORD})${END}(?:\s+ו?(?:${NUMBER_WORD})${END})*)`;
 const MONTH = String.raw`(?:ב|ל)[-־]?(${alt(Object.keys(MONTHS))})${END}(?:\s+(\d{4}))?`;
 const CURRENCY = String.raw`(?=\s*(?:₪|ש"ח|ש״ח|שקל))`;
 const PERCENT = String.raw`\s*אחוז(?:ים)?${END}`;
