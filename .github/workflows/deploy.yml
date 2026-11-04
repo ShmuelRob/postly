@@ -29,6 +29,13 @@ concurrency:
 
 jobs:
   deploy:
+    # Skip (not fail) until Terraform configured this environment. A job-level `if` cannot read the
+    # environment's own variables (GCP_PROJECT_ID lives there), so modules/github_environment also
+    # sets a repository variable POSTLY_DEPLOY_<ENV> = "true" (docs/deployment.md, CI).
+    if: >-
+      (github.ref_name == 'dev' && vars.POSTLY_DEPLOY_DEV == 'true') ||
+      (github.ref_name == 'stage' && vars.POSTLY_DEPLOY_STAGE == 'true') ||
+      (github.ref_name == 'main' && vars.POSTLY_DEPLOY_PROD == 'true')
     runs-on: ubuntu-latest
     # dev, stage or main (prod). Any other ref has no environment and the job fails before it starts.
     environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}

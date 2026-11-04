@@ -11,6 +11,18 @@ variable "noncurrent_days" {
   type        = number
 }
 variable "coldline_after_days" { type = number }
+variable "retention_days" {
+  description = "Data retention after cancellation (technical-design.md); every lifecycle age must be longer."
+  type        = number
+  default     = 30
+}
+
+check "lifecycle_after_retention" {
+  assert {
+    condition     = var.noncurrent_days > var.retention_days && var.coldline_after_days > var.retention_days
+    error_message = "Media lifecycle ages must be longer than the retention period (docs/deployment.md, Media lifecycle and retention)."
+  }
+}
 
 resource "google_storage_bucket" "media" {
   project                     = var.project_id

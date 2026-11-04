@@ -41,13 +41,12 @@ module "postly" {
   business_number   = var.business_number
   github_repository = var.github_repository
   alert_email       = var.alert_email
-  # Not db-f1-micro: its ~25 connections are too few for 15 logins with per-process pools plus pg-boss.
-  sql_tier                  = "db-g1-small"
+  sql_tier                  = "db-custom-2-7680"
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1
-  media_noncurrent_days     = 3
-  media_coldline_after_days = 30
+  media_noncurrent_days     = 60
+  media_coldline_after_days = 180
   sql_retained_backups      = 3
   log_retention_days        = 7
 }

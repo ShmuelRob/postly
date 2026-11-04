@@ -13,6 +13,10 @@ variable "private_services_connection" {
 }
 variable "tier" { type = string }
 variable "high_availability" { type = bool }
+variable "max_connections" {
+  description = "Set explicitly so the connection budget in the stack module holds (docs/deployment.md, Sizing)."
+  type        = number
+}
 variable "deletion_protection" { type = bool }
 variable "retained_backups" {
   type    = number
@@ -54,6 +58,11 @@ resource "google_sql_database_instance" "postgres" {
 
     insights_config {
       query_insights_enabled = true
+    }
+
+    database_flags {
+      name  = "max_connections"
+      value = tostring(var.max_connections)
     }
 
     database_flags {
