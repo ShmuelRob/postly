@@ -42,7 +42,9 @@ describe('checkCaptions (the code fact check)', () => {
   });
 
   it('rejects a weekday name with no source', () => {
-    expect(checkCaptions(caption('המבצע עד יום חמישי'), context)).toMatch(/חמישי/);
+    // The hours' range א׳-ה׳ vouches for Sunday to Thursday, but not for Saturday.
+    expect(checkCaptions(caption('המבצע עד יום שבת'), context)).toMatch(/שבת/);
+    expect(checkCaptions(caption('המבצע עד יום חמישי'), context)).toBeNull();
   });
 
   it('rejects a phone number that is not the business phone', () => {
@@ -60,6 +62,62 @@ describe('checkCaptions (the code fact check)', () => {
     expect(checkCaptions({ ...caption('2 ב-25 ₪'), usedFactIds: ['f1'] }, context)).toMatch(/has no source/);
     expect(checkCaptions({ ...caption('מבצע'), usedFactIds: ['f9'] }, context)).toMatch(/f9/);
     expect(checkCaptions({ ...caption('מבצע'), usedFactIds: ['f2'] }, { ...context, planFactIds: ['f1'] })).toMatch(/f2/);
+  });
+});
+
+describe('checkCaptions: Hebrew details written in words (T8)', () => {
+  const f: Fact[] = [
+    { id: 'p', type: 'price', value: 'מגש בורקס ב-45 ₪', sourceQuote: 'מגש בורקס ב-45 ₪' },
+    { id: 'd', type: 'discount_percent', value: '20%', sourceQuote: '20% הנחה' },
+    { id: 'dt', type: 'date', value: '15.11', sourceQuote: 'עד 15.11' },
+    { id: 't', type: 'time', value: '20:00', sourceQuote: 'פתוחים עד 20:00' },
+    { id: 'w', type: 'date', value: 'ביום רביעי', sourceQuote: 'ביום רביעי' },
+  ];
+  const ctx = { planFactIds: f.map((x) => x.id), facts: f, profile: { location: { hours: 'ראשון עד חמישי 8:00-20:00' } } };
+  const check = (text: string) => checkCaptions({ captions: { instagram: { text, hashtags: [] } }, usedFactIds: f.map((x) => x.id) }, ctx);
+
+  it.each([
+    'מגש בורקס ב-45 ₪ בלבד, עד 15.11',
+    'מגש בורקס בארבעים וחמישה שקלים בלבד!',
+    'רק ארבעים וחמישה ש"ח למגש שלם 🥐',
+    'עשרים אחוז הנחה על כל המגשים',
+    '20 אחוז הנחה, עד חמישה עשר בנובמבר',
+    'המבצע בתוקף עד ה-15 בנובמבר',
+    'נתראה ביום רביעי! פתוחים עד השעה 20:00',
+    'פתוחים עד השעה שמונה בערב',
+    'מחכים לכם בשעה 8 בבוקר עם בורקס חם',
+    'פעם אחת טועמים ולא שוכחים. אחד הטעמים הכי אהובים עלינו',
+    'שני סוגי מילוי, שלוש דקות הליכה מהתחנה',
+    'טעים מאה אחוז, 100% טבעי',
+    'בחמישי אנחנו פתוחים כרגיל',
+    'יום ה׳ כרגיל, ובשני טעמים חדשים',
+  ])('passes a realistic caption: %s', (text) => {
+    expect(check(text)).toBeNull();
+  });
+
+  it.each([
+    ['מגש בורקס בארבעים שקלים בלבד!', /price "40"/],
+    ['רק חמישים ש"ח למגש', /price "50"/],
+    ['מאה ועשרים ₪ לסלסלה', /price "120"/],
+    ['שלושים אחוז הנחה על הכול', /discount "30"/],
+    ['30 אחוז הנחה', /discount "30"/],
+    ['המבצע עד שישה עשר בנובמבר', /date "16\/11"/],
+    ['המבצע עד ה-16 בנובמבר', /date "16\/11"/],
+    ['המבצע עד הראשון בדצמבר', /date "1\/12"/],
+    ['פתוחים עד השעה תשע בערב', /time "21:00"/],
+    ['פתוחים עד השעה 21:00', /time "21:00"/],
+    ['נתראה בשישי!', /שישי/],
+    ['נתראה ביום ו׳', /שישי/],
+    ['נתראה בשבת', /שבת/],
+  ])('blocks a mismatch: %s', (text, error) => {
+    expect(check(text)).toMatch(error);
+  });
+
+  it('reads written amounts up to the thousands', () => {
+    const big: Fact[] = [{ id: 'x', type: 'price', value: 'עוגת חתונה 1250 ₪', sourceQuote: 'עוגת חתונה 1250 ₪' }];
+    const run = (text: string) => checkCaptions({ captions: { instagram: { text, hashtags: [] } }, usedFactIds: ['x'] }, { planFactIds: ['x'], facts: big, profile: {} });
+    expect(run('עוגת חתונה באלף מאתיים וחמישים שקלים')).toBeNull();
+    expect(run('עוגת חתונה באלף ומאתיים ₪')).toMatch(/price "1200"/);
   });
 });
 
