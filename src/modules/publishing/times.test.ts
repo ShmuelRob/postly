@@ -60,7 +60,9 @@ describe('proposeTimes (technical-design.md, Scheduling and publishing flow)', (
   it('computes the window from 30 minutes before candle lighting to 30 minutes after havdalah, by the city when known', () => {
     const [jerusalem] = noPublishingWindows(NOW, new Date('2026-11-08T00:00:00.000Z'), undefined);
     const [haifa] = noPublishingWindows(NOW, new Date('2026-11-08T00:00:00.000Z'), 'Haifa');
+    const [hebrewHaifa] = noPublishingWindows(NOW, new Date('2026-11-08T00:00:00.000Z'), 'חיפה');
     expect(jerusalem).toEqual({ from: new Date('2026-11-06T13:35:00.000Z'), to: new Date('2026-11-07T15:53:00.000Z') });
     expect(haifa?.from.getTime()).not.toBe(jerusalem?.from.getTime());
+    expect(hebrewHaifa).toEqual(haifa);
   });
 });
