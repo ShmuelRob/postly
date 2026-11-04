@@ -1,6 +1,6 @@
-# Secret Manager secrets by name only. Terraform never holds a value: the human adds each version
-# (gcloud secrets versions add) after the first apply. Each secret is readable only by the accounts
-# listed for it.
+# Secret Manager secrets and their reader bindings. The stack adds the generated values
+# (stack/secret_values.tf); vendor secrets stay without a version until WP-41. Each secret is
+# readable only by the accounts listed for it.
 
 variable "project_id" { type = string }
 variable "prefix" { type = string }
@@ -30,4 +30,5 @@ resource "google_secret_manager_secret_iam_member" "reader" {
   member    = "serviceAccount:${each.value.email}"
 }
 
+output "names" { value = { for k, s in google_secret_manager_secret.this : k => s.id } }
 output "ids" { value = { for k, s in google_secret_manager_secret.this : k => s.secret_id } }
