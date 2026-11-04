@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Fact, ModelTaskOutput } from '../../contracts/model-tasks.js';
 import type { FactSource } from '../../contracts/post-version.js';
+import { normalizeHebrewDetails, weekdays } from './hebrew-details.js';
 
 // The code fact check on caption_writing output and the version content hash (technical-design.md,
 // Drafts flow; contracts.md, Model tasks). Code compares every factual detail in a caption with its
@@ -24,7 +25,7 @@ const PHONE = /(?:\+972[\s-]?|\b0)\d{1,2}[\s-]?\d{3}[\s-]?\d{4}\b/gu;
 const AMOUNT = String.raw`\d+(?:[.,]\d+)?`;
 const DISCOUNT = new RegExp(String.raw`(${AMOUNT})\s*%`, 'gu');
 const PRICE = new RegExp(String.raw`(${AMOUNT})\s*(?:₪|ש"ח|ש״ח|שקל(?:ים)?)|₪\s*(${AMOUNT})`, 'gu');
-const TIME = /(?<!\d)(\d{1,2}:\d{2})(?!\d)/gu;
+const TIME = /(?<!\d)(~?\d{1,2}:\d{2})(?!\d)/gu;
 const DATE = /(?<![\d.\/])(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)(?![\d\/])/gu;
 const NUMBER = /\d+(?:[.,:/]\d+)*/gu;
 const WEEKDAY = /יום\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)(?![\u0590-\u05FF])/gu;
@@ -35,8 +36,17 @@ const phoneDigits = (phone: string) => phone.replace(/\D/gu, '').replace(/^972/u
 type Kind = 'phone' | 'price' | 'discount' | 'time' | 'date' | 'weekday' | 'number';
 type Details = Record<Kind, string[]>;
 
+/** `08:00` → `8:00`; `~8:00` (an hour with no part of day) stays marked. */
+const canonicalTime = (t: string) => t.replace(/^(~?)0(\d)/u, '$1$2');
+/** `05.11.26` → `5/11/2026`. */
+function canonicalDate(d: string): string {
+  const [day, month, year] = d.split(/[./]/u).map(Number);
+  return `${day}/${month}${year === undefined ? '' : `/${year < 100 ? 2000 + year : year}`}`;
+}
+
 /** Each detail in a text, by kind. A detail is taken out of the text once it has a kind. */
-function details(text: string): Details {
+function details(raw: string): Details {
+  const text = normalizeHebrewDetails(raw);
   const take = (re: RegExp, map: (m: RegExpMatchArray) => string) => {
     const found = [...rest.matchAll(re)].map(map);
     rest = rest.replace(re, ' ');
@@ -44,11 +54,12 @@ function details(text: string): Details {
   };
   let rest = text;
   const phone = take(PHONE, (m) => phoneDigits(m[0]));
-  const discount = take(DISCOUNT, (m) => m[1]!);
+  // 100% is emphasis ("100% טבעי"), never a discount.
+  const discount = take(DISCOUNT, (m) => m[1]!).filter((d) => d !== '100');
   const price = take(PRICE, (m) => (m[1] ?? m[2])!);
-  const time = take(TIME, (m) => m[1]!);
-  const date = take(DATE, (m) => m[1]!);
-  const weekday = [...rest.matchAll(WEEKDAY)].map((m) => m[1]!);
+  const time = take(TIME, (m) => canonicalTime(m[1]!));
+  const date = take(DATE, (m) => canonicalDate(m[1]!));
+  const weekday = weekdays(rest);
   const number = [...rest.matchAll(NUMBER)].map((m) => m[0]);
   return { phone, price, discount, time, date, weekday, number };
 }
@@ -72,7 +83,9 @@ function sourceDetails(usedFactIds: readonly string[], facts: readonly Fact[], p
     // Every number in the text, of whatever kind, is a plain number source too.
     out.number.push(...[...text.replace(PHONE, ' ').matchAll(NUMBER)].map((m) => m[0]));
     // A fact typed as a price (or discount, time, date) vouches for its numbers in that role.
-    if (kind && kind !== 'phone') out[kind].push(...[...text.matchAll(NUMBER)].map((m) => m[0]));
+    if (kind === 'time') out.time.push(...[...text.matchAll(NUMBER)].map((m) => canonicalTime(m[0])));
+    else if (kind === 'date') out.date.push(...[...text.matchAll(NUMBER)].map((m) => canonicalDate(m[0])));
+    else if (kind) out[kind].push(...[...text.matchAll(NUMBER)].map((m) => m[0]));
     if (kind === 'phone') out.phone.push(phoneDigits(text));
   };
   for (const f of facts.filter((f) => usedFactIds.includes(f.id))) for (const t of [f.value, f.sourceQuote]) add(t, KIND_OF_FACT[f.type]);
@@ -80,6 +93,19 @@ function sourceDetails(usedFactIds: readonly string[], facts: readonly Fact[], p
   for (const t of [location?.address, location?.city, location?.hours, differentiator]) if (t) add(t);
   for (const t of Object.values(contact ?? {})) if (t) add(t, 'phone');
   return out;
+}
+
+/**
+ * Whether a caption detail has a source. A date with no year matches the same day and month with a
+ * year; an hour with no part of day (`~8:00`) matches 8:00 or 20:00.
+ */
+function matches(kind: Kind, d: string, sources: readonly string[]): boolean {
+  if (kind === 'date') return sources.some((s) => s === d || (d.split('/').length === 2 && s.startsWith(`${d}/`)));
+  if (kind === 'time' && d.startsWith('~')) {
+    const [h, m] = d.slice(1).split(':').map(Number);
+    return [`${h}:${String(m).padStart(2, '0')}`, `${h! + 12}:${String(m).padStart(2, '0')}`].some((t) => sources.includes(t) || sources.includes(`~${t}`));
+  }
+  return sources.includes(d);
 }
 
 /** The text a caption's details must come from: the used facts and the profile. */
@@ -107,8 +133,8 @@ export function checkCaptions(output: ModelTaskOutput<'caption_writing'>, contex
     if (!caption) continue;
     const found = details([caption.text, ...caption.hashtags].join('\n'));
     for (const kind of Object.keys(found) as Kind[]) {
-      const missing = found[kind].find((d) => !source[kind].includes(d));
-      if (missing) return `${network}: ${kind} "${kind === 'weekday' ? `יום ${missing}` : missing}" has no source`;
+      const missing = found[kind].find((d) => !matches(kind, d, source[kind]));
+      if (missing) return `${network}: ${kind} "${kind === 'weekday' ? `יום ${missing}` : missing.replace(/^~/u, '')}" has no source`;
     }
   }
   return null;

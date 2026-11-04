@@ -249,6 +249,55 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   expect(run.networkPosts()).toEqual([]);
 });
 
+e2eTest('a price written in Hebrew words that does not match blocks a draft; the matching words pass (T8)', { timeout: 180_000 }, async ({ e2e }) => {
+  const owner = '+972501230058';
+  const { messagingSim, modelSim, providers, app, ref, burst, storage } = await setup();
+  const run = await e2e.start({ providers, app, ownerPhone: owner, businessPhone: BUSINESS_PHONE, readMedia: storage.read, now: () => NOW });
+  const businessId = await activeBusiness(ref.postly!, owner, 2);
+
+  modelSim.script('fact_extraction', { facts: [...FACTS], missingDetails: [] });
+  modelSim.script('weekly_planning', (input) => ({
+    posts: [
+      { topic: 'מבצע חלות', contentType: 'promotions', format: 'single', factIds: ['f1', 'f2', 'f3'], mediaAssetIds: [...input.mediaAssetIds], brief: 'המבצע על החלות' },
+      { topic: 'תזכורת למבצע', contentType: 'promotions', format: 'single', factIds: ['f1', 'f2', 'f3'], mediaAssetIds: [], brief: 'תזכורת' },
+    ],
+  }));
+  // The first caption writes the price in words and gets it wrong (twenty instead of twenty-five);
+  // the second writes the right price, the date as a weekday, and a number word that is not a detail.
+  const WRONG = 'מבצע! שתי חלות בעשרים שקלים בלבד, עד יום שישי 🥖';
+  const RIGHT = 'רק השבוע: שתי חלות בעשרים וחמישה שקלים, עד יום שישי. פעם אחת טועמים ולא שוכחים';
+  modelSim.setDefault('caption_writing', (input) => {
+    const text = input.plan.topic === 'מבצע חלות' ? WRONG : RIGHT;
+    return { captions: Object.fromEntries(input.networks.map((n) => [n, { text, hashtags: ['#מאפייה'] }])), usedFactIds: input.plan.factIds };
+  });
+
+  const photo = messagingSim.addMedia('image/jpeg', await svgPhoto('challah.svg'));
+  await burst(async () => {
+    await run.owner.sendsText(UPDATE_TEXT);
+    await run.owner.sendsImage(photo);
+  });
+
+  const [promo, reminder] = await posts(businessId);
+  expect([promo?.status, reminder?.status]).toEqual(['needs_review', 'awaiting_approval']);
+  const received = run.owner.received();
+  expect(received.map((m) => m.text?.split('\n')[0] ?? m.kind)).toEqual([weeklyCopy.updateReceived(2), 'טיוטה: תזכורת למבצע']);
+  expect(received.some((m) => m.text?.includes('בעשרים שקלים'))).toBe(false);
+  expect(received.at(-1)?.text).toContain(RIGHT);
+  const captionRuns = await db.withBusiness('model', businessId, (tx) =>
+    tx.select().from(schema.modelRun).where(eq(schema.modelRun.task, 'caption_writing')).orderBy(schema.modelRun.createdAt),
+  );
+  expect(captionRuns.map((r) => [r.valid, r.error])).toEqual([
+    [false, expect.stringMatching(/code check.*price "20" has no source/)],
+    [false, expect.stringMatching(/code check.*price "20" has no source/)],
+    [false, expect.stringMatching(/code check.*price "20" has no source/)],
+    [true, null],
+  ]);
+  const items = await db.withSystem('console', (tx) => tx.select().from(schema.consoleItem).where(eq(schema.consoleItem.businessId, businessId)));
+  expect(items.map((i) => i.kind)).toEqual(['model_validation_failed']);
+  run.recordConsoleItems(items.map((i) => ({ kind: i.kind, details: i.details })));
+  expect(run.networkPosts()).toEqual([]);
+});
+
 e2eTest('several photos for a single post: the owner chooses a carousel', { timeout: 180_000 }, async ({ e2e }) => {
   const owner = '+972501230051';
   const { storage, messagingSim, modelSim, providers, app, ref, burst } = await setup();
