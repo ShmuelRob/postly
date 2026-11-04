@@ -293,6 +293,9 @@ Immutable except for `invalidated_at`.
 | `provider_customer_id` | text | |
 | `provider_subscription_id` | text | |
 | `current_period_end` | timestamptz | |
+| `grace_started_at` | timestamptz | Billing hold (T16): set when the row is first stored `pending` and when it becomes `past_due`; null once paid |
+| `reminders_sent` | integer | Default 0; reminders of the current grace period |
+| `held_at` | timestamptz | When billing paused the business; null when billing holds nothing |
 
 Payment card details are never stored.
 
