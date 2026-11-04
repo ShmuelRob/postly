@@ -94,6 +94,7 @@ The full schema is in [database-schema.md](database-schema.md), and the state ma
 | `message` | Every inbound and outbound WhatsApp message, for deduplication, the 24-hour window, and the console |
 | `media_asset` | Owner photos, logos, voice messages, and rendered files |
 | `console_item` | Work routed to a person: failed validation, failed publishing, unknown numbers, and handoffs |
+| `workflow_event` | Audit trail: every applied and rejected workflow event, with business, machine, from and to state, event, guard result, reason, actor and correlation id. Append-only and kept after the business is deleted |
 | `model_task_config`, `prompt_template`, `system_control` | System tables: model settings per task, prompt versions, and the global pause |
 
 Every business-owned table is protected by row-level security. The publishing job accepts only a publication tied to an approved version hash.

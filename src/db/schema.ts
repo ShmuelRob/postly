@@ -403,6 +403,33 @@ export const consoleItem = pgTable(
   (t) => [tenantIsolation(t.businessId)],
 );
 
+/**
+ * The workflow audit trail (WP-46), append-only. business_id is a plain value with no foreign key, so
+ * the rows stay after the business is deleted (database-schema.md, "workflow_event").
+ */
+export const workflowEvent = pgTable(
+  'workflow_event',
+  {
+    id: id(),
+    businessId: uuid('business_id').notNull(),
+    machine: text('machine').notNull(),
+    rowId: uuid('row_id').notNull(),
+    event: text('event').notNull(),
+    source: text('source').notNull(),
+    role: text('role').notNull(),
+    actor: text('actor').notNull(),
+    outcome: text('outcome').notNull(),
+    fromState: text('from_state'),
+    toState: text('to_state'),
+    guard: text('guard'),
+    reason: text('reason'),
+    detail: text('detail'),
+    correlationId: text('correlation_id'),
+    createdAt: createdAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
+);
+
 // System tables: no business_id.
 
 export const modelTaskConfig = pgTable('model_task_config', {
