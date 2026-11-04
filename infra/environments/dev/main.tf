@@ -33,15 +33,16 @@ provider "github" {
 }
 
 module "postly" {
-  source                    = "../../modules/stack"
-  project_id                = var.project_id
-  region                    = var.region
-  env_name                  = "dev"
-  public_base_url           = var.public_base_url
-  business_number           = var.business_number
-  github_repository         = var.github_repository
-  alert_email               = var.alert_email
-  sql_tier                  = "db-f1-micro"
+  source            = "../../modules/stack"
+  project_id        = var.project_id
+  region            = var.region
+  env_name          = "dev"
+  public_base_url   = var.public_base_url
+  business_number   = var.business_number
+  github_repository = var.github_repository
+  alert_email       = var.alert_email
+  # Not db-f1-micro: its ~25 connections are too few for 15 logins with per-process pools plus pg-boss.
+  sql_tier                  = "db-g1-small"
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1

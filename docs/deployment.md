@@ -57,7 +57,7 @@ Terraform does everything that needs no human decision:
 
 | | dev | stage | prod |
 | --- | --- | --- | --- |
-| Cloud SQL | `db-f1-micro`, zonal, no deletion protection | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
+| Cloud SQL | `db-g1-small`, zonal, no deletion protection (`db-f1-micro` allows about 25 connections, too few for 15 logins with a pool each per process plus pg-boss) | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
 | Cloud SQL backups kept | 3 | 14 | 14 |
 | Worker instances | at most 1 | at most 1 | at most 2 |
 | Media: old object versions kept | 3 days | 7 days | 30 days |
@@ -103,7 +103,7 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 
 All of this costs money or creates cloud resources, so agents never do it. Per environment (one GCP project each, or start with dev):
 
-1. **GCP project and billing.** Create the project and link billing.
+1. **GCP project and billing.** Create the project and link billing. Each environment needs its own project: dev's 7-day `_Default` log retention applies to the whole project.
 2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Environments and Variables write on the repository).
 3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
