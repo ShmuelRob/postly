@@ -134,9 +134,9 @@ In WhatsApp Business, a business-initiated message more than 24 hours after the 
 
 - Payment: the planned price is ILS 299 a month, with a short trial. What is included and the trial length will be set after the cost check. The agent sends a payment link in WhatsApp, payment happens on the payment provider's page, and only identifiers and status are stored. The payment provider is not yet selected, so a placeholder implementation sits behind an internal layer.
 - Support: when the agent gets stuck, the founder responds during the pilot, in hours to be defined.
-- Cancellation and disconnection: channels are disconnected immediately, and data is deleted after a period to be defined.
+- Cancellation and disconnection: channels are disconnected immediately, and data is deleted after a retention period, 30 days by default (provisional until the human sets it).
 - Global pause: a console button stops all publishing during security events and days of mourning.
-- Monthly report: the owner receives a simple performance report, if the publishing provider supplies the data.
+- Monthly report: the owner receives a simple performance report, if the publishing provider supplies the data: on the first of each month, the number of posts published in the previous month, their total reach, and their total engagement (likes, comments, and shares). A month with no published post, or with no metric from the provider, sends nothing.
 
 ## Architecture
 
@@ -246,7 +246,7 @@ flowchart TD
 
 - Payment provider: PayPlus and Grow are the candidates, with a placeholder implementation for now.
 - What ILS 299 includes, and the trial length.
-- Pilot support hours, and the data deletion period after cancellation.
+- Pilot support hours, and the data deletion period after cancellation (30 days provisionally).
 - A written answer on WhatsApp policy, plus legal entity setup, Meta Business verification, a phone number, and templates.
 - Testing Zernio and Ayrshare: link-based connection, Hebrew, carousels, failure notifications, performance data, and terms of use.
 - Model and transcription quality in Hebrew, and full per-customer costs.

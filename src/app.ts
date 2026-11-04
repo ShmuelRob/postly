@@ -36,6 +36,8 @@ import {
   type WorkflowLogger,
 } from './modules/workflow/index.js';
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
+
 export interface AppOptions {
   db: Database;
   providers: {
@@ -208,7 +210,7 @@ export function createApp(options: AppOptions): App {
             variables: { networks: scheduleCopy.networks(lost) },
           });
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: String(error) }));
+          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: errorText(error) }));
         }
       }
     },

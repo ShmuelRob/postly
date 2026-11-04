@@ -45,6 +45,7 @@ function fakes() {
     },
     getPublicationStatus: notUsed('getPublicationStatus'),
     getMetrics: notUsed('getMetrics'),
+    disconnectAccount: notUsed('disconnectAccount'),
     testSchedule: notUsed('testSchedule'),
   };
   const renderer: TemplateRenderer = {

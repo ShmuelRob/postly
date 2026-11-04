@@ -64,6 +64,13 @@
       "when": 1793750405000,
       "tag": "0008_caption_changes_prompt",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793750406000,
+      "tag": "0009_deletion_role",
+      "breakpoints": true
     }
   ]
 }

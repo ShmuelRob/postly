@@ -36,6 +36,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `model` | `app_model` | Model layer | Model settings, prompt versions, `model_run` records, console routing |
 | `billing` | `app_billing` | Billing | Subscriptions |
 | `business_data` | `app_business_data` | Business data | Profile edits, preference rules, the media library, post history |
+| `deletion` | `app_deletion` | Business data (data deletion) | Deleting a cancelled business past `data_delete_after` (WP-43): reads its media paths and deletes its `business` row; the cascade removes the rest |
 
 **System roles** (bypass RLS; opened with `withSystem(purpose, fn)`, one per purpose):
 
@@ -48,29 +49,29 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 
 **Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
 
-| Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | phone_lookup | scheduler | console | example_set |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `business` | S | SIU | S | S | S | S |  | S | SU | S | S | SU |  |
-| `channel_connection` |  | S |  |  |  | SIU |  |  | S |  | S | SU |  |
-| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  | SIU |  |
-| `message` | SIU | S | S |  | S |  |  |  |  | SI |  | S |  |
-| `media_asset` | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
-| `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
-| `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  | S | S |  |
-| `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
-| `post_version` |  |  | SI | S | S | S |  |  | S |  |  | S |  |
-| `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
-| `publication` |  |  |  |  |  | SIU |  |  | S |  | S | SIU |  |
-| `subscription` |  |  |  |  |  |  |  | SIU |  |  | S | S |  |
-| `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S | SI |
-| `console_item` |  | SI |  |  |  | SI | SI |  |  | SI |  | SIU |  |
-| `model_task_config` |  |  |  |  |  |  | S |  |  |  |  | SU | S |
-| `prompt_template` |  |  |  |  |  |  | S |  |  |  |  | SI | S |
-| `system_control` |  |  |  |  |  | S |  |  |  |  | S | SIU |  |
+| Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | deletion | phone_lookup | scheduler | console | example_set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `business` | S | SIU | S | S | S | S |  | S | SU | SD | S | S | SU |  |
+| `channel_connection` |  | S |  |  |  | SIU |  |  | S |  |  | S | SU |  |
+| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  |  | SIU |  |
+| `message` | SIU | S | S |  | S |  |  |  |  |  | SI |  | S |  |
+| `media_asset` | SI |  | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
+| `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  |  | S |  |
+| `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  |  | S | S |  |
+| `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | SU |  |
+| `post_version` |  |  | SI | S | S | S |  |  | S |  |  |  | S |  |
+| `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
+| `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SIU |  |
+| `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
+| `model_run` |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
+| `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SIU |  |
+| `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
+| `prompt_template` |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
+| `system_control` |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
-- **Deletes:** only `business_data` deletes, and only preference rules and media. Data deletion after cancellation (WP-43) adds its own role.
+- **Deletes:** `business_data` deletes only preference rules and media. The `deletion` role deletes only `business` rows, and its code deletes only a `cancelled` business past `data_delete_after` (the condition is in the `delete` itself). Every business-owned table references `business` with `on delete cascade`, and the cascade runs with the table owner's rights, so it also removes `post_version` and `approval` rows, which no role may delete directly (WP-43).
 - **Creating a business:** `workflow` inserts the `business` row inside `withBusiness('workflow', newId, ...)`, so RLS checks the new row against the new id. No system role inserts businesses.
 - A module that needs a table or verb its role lacks changes this matrix first (docs first), then a new migration.
 
@@ -139,7 +140,7 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `approver_phone` | text | Unique; the only number whose approvals count |
 | `timezone` | text | Default `Asia/Jerusalem` |
 | `cancelled_at` | timestamptz | Null unless cancelled |
-| `data_delete_after` | timestamptz | Set on cancellation |
+| `data_delete_after` | timestamptz | Set on cancellation: `cancelled_at` plus the retention period (30 days by default); the data deletion job deletes the business after it |
 
 ### `channel_connection`
 

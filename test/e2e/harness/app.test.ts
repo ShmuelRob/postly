@@ -24,6 +24,7 @@ function providers(overrides: Partial<Providers> = {}): Providers {
     publish: () => Promise.reject(new Error('token expired')),
     getPublicationStatus: unused,
     getMetrics: unused,
+    disconnectAccount: unused,
     testSchedule: unused,
   };
   return {

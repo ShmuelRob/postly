@@ -129,6 +129,21 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
   const storeProviderId = (businessId: string, publicationId: string, providerPostId: string | null) =>
     db.withBusiness('publishing', businessId, (tx) => tx.update(p).set({ providerPostId }).where(eq(p.id, publicationId)));
 
+  /**
+   * One open `publication_failed` item per publication (review of PR #52, item b): the publication row
+   * is locked first, so sibling publications finishing in parallel cannot both insert one.
+   */
+  async function openFailedItem(tx: Tx, businessId: string, publicationId: string, details: Record<string, unknown>) {
+    await tx.select({ id: p.id }).from(p).where(eq(p.id, publicationId)).for('update');
+    const ci = schema.consoleItem;
+    const [open] = await tx
+      .select({ id: ci.id })
+      .from(ci)
+      .where(and(eq(ci.kind, 'publication_failed'), eq(ci.referenceId, publicationId), eq(ci.status, 'open')));
+    if (open) return;
+    await tx.insert(ci).values({ businessId, kind: 'publication_failed', referenceId: publicationId, details });
+  }
+
   async function succeed(businessId: string, publicationId: string, providerPostId: string) {
     // `published_at` waits for the provider to report the post live (finish).
     const result = await event(businessId, 'publication', publicationId, 'SUCCEEDED', async (tx) => {
@@ -142,20 +157,16 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
    * A failed attempt: `ATTEMPT_FAILED` below the limit, otherwise `ATTEMPTS_EXHAUSTED`. A console item
    * opens on exhaustion and on every error that did not come from the provider (`internal`).
    */
-  async function fail(businessId: string, publicationId: string, error: string, options: { internal: boolean; clearProviderId?: boolean }): Promise<PublishOutcome> {
+  async function fail(businessId: string, publicationId: string, error: string, options: { internal: boolean; exhausted?: boolean }): Promise<PublishOutcome> {
     const [row] = await db.withBusiness('publishing', businessId, (tx) => tx.select({ attempts: p.attempts }).from(p).where(eq(p.id, publicationId)));
     const attempts = row?.attempts ?? MAX_ATTEMPTS;
-    const exhausted = attempts >= MAX_ATTEMPTS;
+    // A provider-reported failure of a known post ends the publication at any attempt count (review of PR #52, item a).
+    const exhausted = options.exhausted === true || attempts >= MAX_ATTEMPTS;
     const result = await event(businessId, 'publication', publicationId, exhausted ? 'ATTEMPTS_EXHAUSTED' : 'ATTEMPT_FAILED', async (tx) => {
-      await tx.update(p).set({ lastError: error, ...(options.clearProviderId ? { providerPostId: null } : {}) }).where(eq(p.id, publicationId));
+      await tx.update(p).set({ lastError: error }).where(eq(p.id, publicationId));
       if (exhausted || options.internal) {
         const [pub] = await tx.select().from(p).where(eq(p.id, publicationId));
-        await tx.insert(schema.consoleItem).values({
-          businessId,
-          kind: 'publication_failed',
-          referenceId: publicationId,
-          details: { postId: pub!.postId, network: pub!.network, error, attempts, ...(options.internal ? { internal: true } : {}) },
-        });
+        await openFailedItem(tx, businessId, publicationId, { postId: pub!.postId, network: pub!.network, error, attempts, ...(options.internal ? { internal: true } : {}) });
       }
       return null;
     });
@@ -170,26 +181,32 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
    */
   async function finish(businessId: string, postId: string) {
     const rows = await db.withBusiness('publishing', businessId, (tx) =>
-      tx.select({ id: p.id, status: p.status, network: p.network, providerPostId: p.providerPostId, publishedAt: p.publishedAt }).from(p).where(eq(p.postId, postId)),
+      tx
+        .select({ id: p.id, status: p.status, network: p.network, providerPostId: p.providerPostId, publishedAt: p.publishedAt, lastError: p.lastError })
+        .from(p)
+        .where(eq(p.postId, postId)),
     );
     if (rows.some((r) => !['published', 'failed', 'cancelled'].includes(r.status))) return;
-    for (const row of rows.filter((r) => r.status === 'published' && r.publishedAt === null)) {
+    // A `published` publication the provider later reported failed (last_error, never live) counts as failed.
+    const dropped = new Set(rows.filter((r) => r.status === 'published' && r.publishedAt === null && r.lastError !== null).map((r) => r.id));
+    for (const row of rows.filter((r) => r.status === 'published' && r.publishedAt === null && !dropped.has(r.id))) {
       const status = row.providerPostId ? await provider.getPublicationStatus(row.providerPostId) : undefined;
       if (status?.status === 'scheduled') return;
       if (status?.status === 'failed') {
-        // The provider dropped a post it had accepted: the team looks at it, and the sweep stops asking.
+        // The provider dropped a post it had accepted: the team looks at it, and the post resolves (review of PR #52, item b).
         const error = status.error ?? 'the provider reports the post failed after accepting it';
         await db.withBusiness('publishing', businessId, async (tx) => {
           await tx.update(p).set({ lastError: error }).where(eq(p.id, row.id));
-          await tx.insert(schema.consoleItem).values({ businessId, kind: 'publication_failed', referenceId: row.id, details: { postId, network: row.network, error } });
+          await openFailedItem(tx, businessId, row.id, { postId, network: row.network, error });
         });
-        return;
+        dropped.add(row.id);
+        continue;
       }
       const at = status?.publishedAt ? new Date(status.publishedAt) : now();
       await db.withBusiness('publishing', businessId, (tx) => tx.update(p).set({ publishedAt: at }).where(eq(p.id, row.id)));
     }
-    const published = rows.filter((r) => r.status === 'published').map((r) => r.network);
-    const failed = rows.filter((r) => r.status === 'failed').map((r) => r.network);
+    const published = rows.filter((r) => r.status === 'published' && !dropped.has(r.id)).map((r) => r.network);
+    const failed = rows.filter((r) => r.status === 'failed' || dropped.has(r.id)).map((r) => r.network);
     if (published.length + failed.length === 0) return;
     const name = failed.length === 0 ? 'ALL_PUBLISHED' : published.length === 0 ? 'ALL_FAILED' : 'PARTIALLY_PUBLISHED';
     const result = await event(businessId, 'post', postId, name);
@@ -204,7 +221,7 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
   }
 
   /** Records a failed attempt; when even that fails, the publication stays `in_progress` for the tick's sweep. */
-  async function failSafely(businessId: string, publicationId: string, error: string, options: { internal: boolean; clearProviderId?: boolean }): Promise<PublishOutcome> {
+  async function failSafely(businessId: string, publicationId: string, error: string, options: { internal: boolean; exhausted?: boolean }): Promise<PublishOutcome> {
     try {
       return await fail(businessId, publicationId, error, options);
     } catch (recordError) {
@@ -242,7 +259,8 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
         outcome = { outcome: 'already_published', providerPostId: pub.providerPostId };
       } else if (known?.status === 'failed') {
         stage = 'internal';
-        outcome = await failSafely(businessId, publicationId, known.error ?? 'the provider reports the post failed', { internal: false, clearProviderId: true });
+        // The same idempotency key would return this failed post again, so a retry cannot help (review of PR #52, item a).
+        outcome = await failSafely(businessId, publicationId, known.error ?? 'the provider reports the post failed', { internal: false, exhausted: true });
       } else {
         const { providerPostId } = await provider.publish(request);
         stage = 'internal';

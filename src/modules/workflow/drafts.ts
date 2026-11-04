@@ -401,10 +401,16 @@ export function createDrafts(deps: DraftsDeps): Drafts {
         .where(and(eq(schema.post.weeklyUpdateId, weekId), inArray(schema.post.status, ['planned', 'drafting'])))
         .orderBy(asc(schema.post.position)),
     );
-    for (const post of todo) {
-      if ((await draftPost(business, post)) === 'asked') return;
+    try {
+      for (const post of todo) {
+        if ((await draftPost(business, post)) === 'asked') return;
+      }
+      await finish(business);
+    } catch (error) {
+      // A run that throws must not leave its closed-window mark for the next run (review of PR #52, item c).
+      windowClosed.delete(businessId);
+      throw error;
     }
-    await finish(business);
   }
 
   async function answerPhotoChoice(burst: DraftsBurst, question: OpenQuestion) {
