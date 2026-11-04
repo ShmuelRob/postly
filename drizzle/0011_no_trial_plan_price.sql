@@ -3,6 +3,8 @@
 -- a subscription row, so renaming the enum value moves no data.
 ALTER TYPE "public"."subscription_status" RENAME VALUE 'trialing' TO 'pending';--> statement-breakpoint
 ALTER TABLE "subscription" ALTER COLUMN "status" SET DEFAULT 'pending';--> statement-breakpoint
+-- A payment link that fails to send after activation opens a console item.
+ALTER TYPE "public"."console_item_kind" ADD VALUE 'payment_link_failed';--> statement-breakpoint
 ALTER TABLE "subscription" DROP COLUMN "trial_ends_at";--> statement-breakpoint
 -- The monthly price, append-only: the rows are the history of changes and the newest row is the price.
 CREATE TABLE "plan_price" (

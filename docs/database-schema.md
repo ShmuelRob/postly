@@ -124,7 +124,7 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `message_kind` | `text`, `voice`, `image`, `button_reply`, `buttons`, `template` |
 | `preference_scope` | `caption`, `design`, `schedule`, `general` |
 | `model_task` | Model task names from [contracts.md](contracts.md) |
-| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff` |
+| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff`, `payment_link_failed` |
 | `console_item_status` | `open`, `resolved` |
 
 ## Tables
@@ -335,4 +335,4 @@ Work routed to a person: failed validation, failed publishing, unknown numbers, 
 
 `system_control`: a single row (`id` is always 1) with `publishing_paused`, `paused_reason`, `paused_at`, and `paused_by`. This is the global pause.
 
-`plan_price`: the monthly price of each plan, append-only, so the rows are the history of changes (T1, 2026-11-04). Columns: `id` (identity), `plan` (text), `amount_agorot` (integer, greater than 0), `currency` (text, `ILS`), `changed_by` (text), `reason` (text, nullable), `created_at`. The current price of a plan is its row with the highest `id`. The migration seeds `basic` at 30000 agorot (ILS 300) by `seed`. The console inserts a new row to change the price; no role may update or delete a row. Billing reads the current price when it creates a payment link. Migration `0010_no_trial_plan_price` also renames the `subscription_status` value `trialing` to `pending` and drops `subscription.trial_ends_at` (no row was ever stored in a deployed database).
+`plan_price`: the monthly price of each plan, append-only, so the rows are the history of changes (T1, 2026-11-04). Columns: `id` (identity), `plan` (text), `amount_agorot` (integer, greater than 0), `currency` (text, `ILS`), `changed_by` (text), `reason` (text, nullable), `created_at`. The current price of a plan is its row with the highest `id`. The migration seeds `basic` at 30000 agorot (ILS 300) by `seed`. The console inserts a new row to change the price; no role may update or delete a row. Billing reads the current price when it creates a payment link. Migration `0011_no_trial_plan_price` also renames the `subscription_status` value `trialing` to `pending` and drops `subscription.trial_ends_at` (no row was ever stored in a deployed database).

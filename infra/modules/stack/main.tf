@@ -93,7 +93,7 @@ locals {
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
-  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
+  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"]
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
   app_env = {
     POSTLY_ENV       = var.env_name
@@ -234,6 +234,26 @@ module "worker" {
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
+# The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
+# and web must stay public. Internal-only ingress and no allUsers invoker; reached with
+# an identity token from inside the VPC (docs/security.md); not from a laptop. It runs as the web account for now (D9).
+module "console" {
+  source               = "../cloud_run"
+  project_id           = var.project_id
+  region               = var.region
+  name                 = "${local.prefix}-console"
+  kind                 = "service"
+  image                = local.image
+  command              = "console"
+  service_account      = module.accounts.emails.web
+  subnetwork_id        = module.network.subnetwork_id
+  env                  = local.app_env
+  secret_env           = local.app_secret_env
+  public               = false
+  cpu_always_allocated = false
+  depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+}
+
 module "migrate" {
   source          = "../cloud_run"
   project_id      = var.project_id
@@ -262,6 +282,7 @@ module "monitoring" {
 
 output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
+output "console_service" { value = module.console.name }
 output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }

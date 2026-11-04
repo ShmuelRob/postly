@@ -9,9 +9,15 @@ export interface ConsoleRouteOptions {
   console: ConsoleService;
   /** The cancellation (WP-43); the route exists only when it is wired. */
   cancelBusiness?(businessId: string): Promise<unknown>;
+  /**
+   * How requests are gated until team sign-in exists (docs/security.md, "Console exposure").
+   * `loopback` (default, local runs): only loopback addresses. `private-ingress` (deployed): the
+   * console runs as its own Cloud Run service with internal-only ingress and no public invoker, so the
+   * gate is the network and IAM, not the request's address. Neither is a sign-in.
+   */
+  access?: 'loopback' | 'private-ingress';
 }
 
-// Team sign-in is not defined yet (technical-design.md, "Console (Phase 1)"): only loopback requests.
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 const Id = z.object({ id: z.uuid() });
@@ -30,8 +36,9 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
   const c = options.console;
   app.register(
     async (scope) => {
+      const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
-        if (!LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
       });
 
       const run = async (reply: FastifyReply, action: () => Promise<unknown>) => {

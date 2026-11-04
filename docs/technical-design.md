@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google for now, behind a replaceable model layer | May change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -224,7 +224,7 @@ How each case is handled (WP-35, 2026-11-04; each has an end-to-end test):
 T1, 2026-11-04. There is no trial: the owner pays at once, at ILS 300 a month (PRD, Payment).
 
 - **Price.** One setting, the `plan_price` table (database-schema.md): append-only, so every change is kept with who made it; the current price is the newest row. The team changes it from the console. Billing reads it each time it creates a link and passes it to `createPaymentLink`.
-- **Payment link in onboarding.** When onboarding activates the business (`ONBOARDING_COMPLETED`), the owner gets the activation message and then billing's `sendPaymentLink`: the provider link is created with the current price, the `subscription` row is stored `pending`, and the link goes to the approver in WhatsApp (the owner just wrote, so the window is open). A send that fails is logged and opens no state change; the team can resend from the console later (follow-up). Without a payment provider wired, no link is sent.
+- **Payment link in onboarding.** When onboarding activates the business (`ONBOARDING_COMPLETED`), the owner gets the activation message and then billing's `sendPaymentLink`: the provider link is created with the current price, the `subscription` row is stored `pending`, and the link goes to the approver in WhatsApp (the owner just wrote, so the window is open). A send that fails is logged and opens a `payment_link_failed` console item (details: the error); the business stays active and the team resends the link. Without a payment provider wired, no link is sent.
 - **Status.** The provider's callback moves the row (`pending` to `active` on payment; state-machines.md, Subscription). The owner is told on every change.
 - **`past_due` (proposed, not built).** 7 days of grace from the moment the row became `past_due`, with template reminders on days 1, 3 and 6; then the publishing guard holds the business's publications until payment. Nothing is cancelled or deleted. Waiting for the human (review queue).
 - Local runs and tests use the payment simulator; the vendor (PayPlus or Grow) is still open.
@@ -258,7 +258,7 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, `by`, optional `reason`) inserts a `plan_price` row. A new price applies to payment links sent afterwards |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
 
-Authentication is not defined yet, so the routes answer only requests from the loopback address; anything else gets 403. Team sign-in must be decided before the console is deployed.
+Authentication is not defined yet. The console runs as its own process (`main.js console`) and its own Cloud Run service with internal-only ingress and no public invoker; the public web service never serves it. Locally the routes answer only the loopback address (anything else gets 403); deployed, the gate is the ingress and IAM. Neither is a sign-in, which must exist before any wider access ([security.md](security.md#console-exposure)).
 
 ## Security
 
@@ -267,6 +267,7 @@ Authentication is not defined yet, so the routes answer only requests from the l
 - Webhooks are verified before processing.
 - Media URLs stay stable until publishing, and retention follows a defined policy.
 - Payment card details are never stored.
+- The console exposure and the ranked security debts are in [security.md](security.md).
 
 ## Environments
 

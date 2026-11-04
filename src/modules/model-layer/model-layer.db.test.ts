@@ -36,6 +36,15 @@ beforeEach(async () => {
 });
 
 describe('seed rows', () => {
+  it('runs every task on a Gemini Flash model through Google (0010)', async () => {
+    const rows = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelTaskConfig));
+    expect(rows).toHaveLength(MODEL_TASK_NAMES.length);
+    for (const row of rows) {
+      expect([row.task, row.provider, row.model]).toEqual([row.task, 'google', 'gemini-2.5-flash']);
+      expect(row.fallbackModel).toBeNull();
+    }
+  });
+
   it('has a config row and its active prompt version for every task', async () => {
     const rows = await db.withBusiness('model', businessId, async (tx) => ({
       configs: await tx.select().from(schema.modelTaskConfig),
