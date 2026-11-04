@@ -36,6 +36,11 @@ export interface BillingOptions {
   messaging: Messaging;
   provider: PaymentProvider & PaymentWebhooks;
   plan?: string;
+  /**
+   * The provider reported the subscription `cancelled`: the business is cancelled (WP-43). The owner
+   * then gets the cancellation template from it, not billing's text.
+   */
+  onCancelled?(businessId: string): Promise<void>;
 }
 
 export interface Billing {
@@ -43,6 +48,11 @@ export interface Billing {
   sendPaymentLink(businessId: string): Promise<{ url: string }>;
   /** Verifies the provider's callback, then applies the provider's current status; throws InvalidWebhookSignatureError when it does not verify. */
   handleWebhook(request: WebhookRequest): Promise<WebhookOutcome>;
+  /**
+   * Cancellation (WP-43): a subscription with a provider id that is not `cancelled` is cancelled at the
+   * payment provider, then stored `cancelled`. Idempotent; no subscription row is a no-op.
+   */
+  cancel(businessId: string): Promise<void>;
 }
 
 const EVENTS_TO: Record<SubscriptionState, SubscriptionEvent[]> = {
@@ -134,10 +144,26 @@ export function createBilling(options: BillingOptions): Billing {
       return { url: link.url };
     },
 
+    async cancel(businessId) {
+      await db.withBusiness('billing', businessId, async (tx) => {
+        const [row] = await tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId)).for('update');
+        if (!row || row.status === 'cancelled') return;
+        if (row.providerSubscriptionId) await provider.cancelSubscription(row.providerSubscriptionId);
+        await tx
+          .update(schema.subscription)
+          .set({ status: transition(subscriptionMachine, row.status, 'CANCELLED'), updatedAt: new Date() })
+          .where(eq(schema.subscription.id, row.id));
+      });
+    },
+
     async handleWebhook(request) {
       const event = await provider.verifyWebhook(request);
       const outcome = await apply(event);
       if (outcome.kind !== 'applied' || outcome.to === 'trialing') return outcome;
+      if (outcome.to === 'cancelled' && options.onCancelled) {
+        await options.onCancelled(event.businessId);
+        return { ...outcome, notified: true };
+      }
       return { ...outcome, notified: await notify(event.businessId, BILLING_COPY[outcome.to]) };
     },
   };

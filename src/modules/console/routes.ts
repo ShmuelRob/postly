@@ -7,6 +7,8 @@ export const CONSOLE_PATH = '/console';
 
 export interface ConsoleRouteOptions {
   console: ConsoleService;
+  /** The cancellation (WP-43); the route exists only when it is wired. */
+  cancelBusiness?(businessId: string): Promise<unknown>;
 }
 
 // Team sign-in is not defined yet (technical-design.md, "Console (Phase 1)"): only loopback requests.
@@ -54,6 +56,10 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.post('/api/items/:id/route', (q, reply) => run(reply, () => c.routeItem(id(q.params))));
       scope.post('/api/businesses/:id/handoff', (q, reply) => run(reply, () => c.startHandoff(id(q.params))));
       scope.post('/api/businesses/:id/handoff/clear', (q, reply) => run(reply, () => c.clearHandoff(id(q.params))));
+      if (options.cancelBusiness) {
+        const cancelBusiness = options.cancelBusiness;
+        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params))));
+      }
       scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params))));
       scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params))));
       scope.post('/api/publications/:id/retry', (q, reply) => run(reply, () => c.retryPublication(id(q.params))));

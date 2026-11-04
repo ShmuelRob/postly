@@ -32,3 +32,5 @@ export * as draftsCopy from './drafts-copy.js';
 export { createApprovals, type Approvals, type ApprovalsDeps, type StoredTap } from './approvals.js';
 export { createScheduleFlow, isScheduleConfirmation, SCHEDULE_QUESTION, type ScheduleFlow, type ScheduleFlowDeps } from './schedule.js';
 export * as scheduleCopy from './schedule-copy.js';
+export { createCancellation, RETENTION_MS, type Cancellation, type CancellationDeps, type CancellationResult } from './cancellation.js';
+export * as cancellationCopy from './cancellation-copy.js';

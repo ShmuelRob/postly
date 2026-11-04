@@ -11,12 +11,20 @@ export const PUBLISHING_TICK_CRON = '* * * * *';
 /** The daily channel health check (technical-design.md, Failure handling): 04:00 UTC, 06:00 or 07:00 in Israel. */
 export const CHANNEL_HEALTH_JOB = 'channel-health-check';
 export const CHANNEL_HEALTH_CRON = '0 4 * * *';
+/** The daily data deletion (WP-43): cancelled businesses past `data_delete_after`. */
+export const DATA_DELETION_JOB = 'data-deletion';
+export const DATA_DELETION_CRON = '0 3 * * *';
+/** The monthly report (WP-43): 06:00 UTC on the first of each month. */
+export const MONTHLY_REPORT_JOB = 'monthly-report';
+export const MONTHLY_REPORT_CRON = '0 6 1 * *';
 
 export interface WorkerProcessOptions {
   queue: JobQueue;
   weekly: Pick<WeeklyUpdates, 'tick'>;
   publishing: Pick<Publishing, 'tick'>;
   channelHealth: { tick(now: Date): Promise<void> };
+  dataDeletion?: { tick(now: Date): Promise<unknown> };
+  monthlyReport?: { tick(now: Date): Promise<unknown> };
   now?: () => Date;
 }
 
@@ -31,5 +39,8 @@ export async function startWorkerProcess(options: WorkerProcessOptions): Promise
   await options.queue.schedule(WEEKLY_TICK_JOB, WEEKLY_TICK_CRON, () => options.weekly.tick(now()));
   await options.queue.schedule(PUBLISHING_TICK_JOB, PUBLISHING_TICK_CRON, async () => void (await options.publishing.tick(now())));
   await options.queue.schedule(CHANNEL_HEALTH_JOB, CHANNEL_HEALTH_CRON, () => options.channelHealth.tick(now()));
+  const { dataDeletion, monthlyReport } = options;
+  if (dataDeletion) await options.queue.schedule(DATA_DELETION_JOB, DATA_DELETION_CRON, async () => void (await dataDeletion.tick(now())));
+  if (monthlyReport) await options.queue.schedule(MONTHLY_REPORT_JOB, MONTHLY_REPORT_CRON, async () => void (await monthlyReport.tick(now())));
   return options.queue;
 }

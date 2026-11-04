@@ -3,9 +3,10 @@ import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createDatabase, createPgBossQueue, provisionDatabase } from './db/index.js';
 import { createDesignRenderer } from './modules/design/index.js';
+import type { DeletionStorage } from './modules/business-data/index.js';
 import type { MediaStorage } from './modules/messaging/index.js';
 import { buildServer } from './server.js';
-import { MessagingSimulator, ModelSimulator, PublishingSimulator } from './simulators/index.js';
+import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
@@ -13,7 +14,7 @@ import { startWorkerProcess } from './worker.js';
 // land (WP-41) the composition uses the simulators, so a local or staging run reaches no vendor.
 
 /** In-process media for simulator runs; the Cloud Storage adapter comes with WP-41. */
-function memoryMedia(publicBaseUrl: string): MediaStorage & { get(url: string): Uint8Array | undefined; read(path: string): Promise<{ data: Uint8Array } | undefined> } {
+function memoryMedia(publicBaseUrl: string): MediaStorage & DeletionStorage & { get(url: string): Uint8Array | undefined; read(path: string): Promise<{ data: Uint8Array } | undefined> } {
   const files = new Map<string, Uint8Array>();
   const base = `${publicBaseUrl}/media/`;
   return {
@@ -21,6 +22,13 @@ function memoryMedia(publicBaseUrl: string): MediaStorage & { get(url: string): 
       files.set(path, bytes);
     },
     urlFor: (path) => base + path,
+    // Data deletion after cancellation (WP-43).
+    async removePrefix(prefix) {
+      for (const path of [...files.keys()]) if (path.startsWith(prefix)) files.delete(path);
+    },
+    async remove(paths) {
+      for (const path of paths) files.delete(path);
+    },
     get: (url) => (url.startsWith(base) ? files.get(url.slice(base.length)) : undefined),
     // Drafting (WP-32) reads rendered files back by storage path to record their SHA-256.
     read: async (path) => {
@@ -55,7 +63,7 @@ async function main(command: string | undefined) {
   });
   const app = createApp({
     db,
-    providers: { messaging: new MessagingSimulator({ webhookSecret: config.webhookSecret }), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() } },
+    providers: { messaging: new MessagingSimulator({ webhookSecret: config.webhookSecret }), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() }, payment: new PaymentSimulator() },
     design,
     media,
     businessNumber: config.businessNumber,
@@ -64,11 +72,11 @@ async function main(command: string | undefined) {
 
   const stops: Array<() => Promise<void> | void> = [];
   if (command === 'web') {
-    const server = buildServer({ messaging: app.messaging, publicBaseUrl: config.publicBaseUrl });
+    const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl });
     stops.push(app.start(), () => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
-    const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth });
+    const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });
     // Cloud Run services need a port to probe; the worker serves only its health check.
     const health = Fastify({ logger: false });
     health.get('/healthz', async () => ({ ok: true }));
