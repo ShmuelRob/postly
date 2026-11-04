@@ -29,3 +29,4 @@ export { localWeek, type LocalWeek } from './week.js';
 export * as weeklyCopy from './weekly-copy.js';
 export { createDrafts, networksFromChange, parsePhotoChoice, type Drafts, type DraftsBurst, type DraftsDeps, type PhotoChoice } from './drafts.js';
 export * as draftsCopy from './drafts-copy.js';
+export { createApprovals, type Approvals, type ApprovalsDeps, type StoredTap } from './approvals.js';

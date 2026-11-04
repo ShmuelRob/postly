@@ -13,7 +13,7 @@ import { createModelLayer, ModelTaskFailedError } from '../../src/modules/model-
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 import { e2eTest, type AppFactory, type Providers } from './harness/index.js';
 
-const OWNER = '+972501234567';
+const OWNER = '+972501230071';
 const BUSINESS_PHONE = '+972521111111';
 const HOLDING_REPLY = 'קיבלתי, אני בודק ואחזור אליך בהקדם';
 

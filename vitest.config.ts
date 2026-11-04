@@ -34,6 +34,9 @@ export default defineConfig({
           include: ['src/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
+          // The H5 worlds run one at a time (a database lock, test/h5/subject.ts), so an H5 case
+          // may wait for another file's case under a full run.
+          testTimeout: 20_000,
         },
       },
       {

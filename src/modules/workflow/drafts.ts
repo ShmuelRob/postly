@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
 import { BusinessProfile } from '../../contracts/business-profile.js';
 import { NETWORKS, type Network } from '../../contracts/common.js';
+import type { z } from 'zod';
+import type { Language as LanguageSchema } from '../../contracts/common.js';
+
+type Language = z.infer<typeof LanguageSchema>;
 import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { RenderedMedia } from '../../contracts/post-version.js';
@@ -41,7 +45,7 @@ export interface DraftsDeps {
     ): Promise<ModelTaskOutput<T>>;
   };
   /** Renders with the design module for one business (`forBusiness(...).render`). */
-  render(business: { businessId: string; businessName: string; languages: string[] }, request: RenderRequest): Promise<RenderResult>;
+  render(business: { businessId: string; businessName: string; languages: Language[] }, request: RenderRequest): Promise<RenderResult>;
   /** URL of a business media asset. */
   mediaUrl(businessId: string, mediaAssetId: string): Promise<string>;
   /** URL and bytes of a stored file, such as a rendered one. */
@@ -49,6 +53,11 @@ export interface DraftsDeps {
   readFile(storagePath: string): Promise<Uint8Array | undefined>;
   /** The photo used when a post has none and the library is empty. */
   samplePhotoUrl: string;
+  /**
+   * Invalidates the post's valid approvals and cancels its pending publications (the approval
+   * service, WP-33). Called before any new version and before a change leaves `approved` or `scheduled`.
+   */
+  invalidate(businessId: string, postId: string): Promise<void>;
 }
 
 export interface Drafts {
@@ -59,6 +68,10 @@ export interface Drafts {
    * when the burst is not for drafts (another step), so the next flow may take it.
    */
   handle(burst: DraftsBurst): Promise<boolean>;
+  /** Sends `text`, then every open draft again with its buttons (after a refused Approve tap). */
+  resendOpen(businessId: string, to: string, text: string): Promise<void>;
+  /** The post's planned topic, for the approval confirmation. */
+  topicOf(businessId: string, postId: string): Promise<string | undefined>;
 }
 
 export type PhotoChoice = 'carousel' | 'one' | 'per_photo';
@@ -304,8 +317,12 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       return fail(businessId, post, `render failed: ${error instanceof Error ? error.message : String(error)}`, true);
     }
 
-    // The version, immutable from here: its hash ties a button tap to exactly this content.
+    // Any new version invalidates earlier approvals, before it exists (state-machines.md, Approval guard).
+    await deps.invalidate(businessId, post.id);
+    // The version, immutable from here: its hash ties a button tap to exactly this content. The post
+    // row is locked so two redrafts of one post cannot take the same version number.
     const version = await db.withBusiness('content', businessId, async (tx) => {
+      await tx.select({ id: schema.post.id }).from(schema.post).where(eq(schema.post.id, post.id)).for('update');
       const [last] = await tx.select({ n: max(schema.postVersion.versionNumber) }).from(schema.postVersion).where(eq(schema.postVersion.postId, post.id));
       const [row] = await tx
         .insert(schema.postVersion)
@@ -367,6 +384,10 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     if (burst.messages.some((m) => m.content.kind === 'image' || m.content.kind === 'voice')) {
       return void (await deps.messaging.sendText(businessId, { to: burst.from, text: weeklyCopy.stillWorking }));
     }
+    // A button tap is not an answer: ask again without using up an attempt (review of PR #43, item 4).
+    if (burst.messages.some((m) => m.content.kind === 'button_reply')) {
+      return void (await deps.messaging.sendText(businessId, { to: burst.from, text: copy.photoChoiceReask }));
+    }
     const choice = parsePhotoChoice(burst.text);
     if (!choice) {
       if (question.attempts >= MAX_QUESTION_ATTEMPTS) return handOff(businessId, burst.from, 'photo choice not understood', copy.handedOff);
@@ -402,8 +423,14 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     await draftWeek(businessId, post.weeklyUpdateId);
   }
 
-  async function resendDrafts(businessId: string, to: string) {
-    await deps.messaging.sendText(businessId, { to, text: copy.notAnApproval });
+  /** Posts a change may target: open drafts and approved or scheduled posts (their approval is invalidated). */
+  const changeable = (businessId: string) =>
+    db.withBusiness('workflow', businessId, (tx) =>
+      tx.select().from(schema.post).where(inArray(schema.post.status, ['awaiting_approval', 'approved', 'scheduled'])),
+    );
+
+  async function resendDrafts(businessId: string, to: string, text: string = copy.notAnApproval) {
+    await deps.messaging.sendText(businessId, { to, text });
     for (const post of await openDrafts(businessId)) {
       const version = await currentVersion(businessId, post);
       if (version) await sendDraft(businessId, to, post, version);
@@ -420,27 +447,31 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const instructions = interpreted.changes.map((c) => c.instruction);
     const rule = interpreted.rule ?? { scope: SCOPE_BY_TARGET[interpreted.changes[0]!.target], text: instructions.join('; ') };
     const source = [...burst.messages].reverse().find((m) => m.content.kind === 'text' || m.content.kind === 'voice');
-    // PRD, Context that updates automatically: every change is saved at once as a rule.
-    await db.withBusiness('business_data', businessId, (tx) =>
-      tx.insert(schema.preferenceRule).values({ businessId, scope: rule.scope, rule: rule.text, sourceMessageId: source?.id ?? null, sourcePostVersionId: version.id }),
-    );
     const current = Object.keys(captions) as Network[];
     const networks = interpreted.changes.some((c) => c.target === 'channels')
       ? networksFromChange(interpreted.changes.filter((c) => c.target === 'channels').map((c) => c.instruction).concat(text), current)
       : current;
+    // A change to an approved or scheduled post invalidates its approval first, so a failure after
+    // this leaves a post that cannot publish (technical-design.md, Approval flow).
+    if (post.status === 'approved' || post.status === 'scheduled') await deps.invalidate(businessId, post.id);
     if (!(await conversation(businessId, 'CHANGE_REQUESTED', null)).ok) return;
     if (!(await postEvent(businessId, post.id, 'CHANGE_REQUESTED')).ok) return;
+    // PRD, Context that updates automatically: every change is saved as a rule, once the change is
+    // applied, so a refused change leaves no rule behind (review of PR #43, item 5).
+    await db.withBusiness('business_data', businessId, (tx) =>
+      tx.insert(schema.preferenceRule).values({ businessId, scope: rule.scope, rule: rule.text, sourceMessageId: source?.id ?? null, sourcePostVersionId: version.id }),
+    );
     const drafting = await loadPost(businessId, post.id);
     await draftPost(business, drafting!, { changes: instructions, networks });
     await finish(business);
   }
 
-  async function transcribed(burst: DraftsBurst, language: string) {
+  async function transcribed(burst: DraftsBurst, language: Language) {
     const parts = burst.text.trim() ? [burst.text.trim()] : [];
     for (const m of burst.messages) {
       if (m.content.kind !== 'voice') continue;
       for (const voiceAssetId of m.mediaAssetIds) {
-        const t = await deps.model.run(burst.businessId, 'transcription', { voiceAssetId, languageHint: language as 'he' });
+        const t = await deps.model.run(burst.businessId, 'transcription', { voiceAssetId, languageHint: language });
         if (t.text.trim()) parts.push(t.text.trim());
       }
     }
@@ -452,10 +483,11 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const tap = burst.messages.find((m) => m.content.kind === 'button_reply');
     if (tap) {
       const payload = tap.content.payload as { action: string; postId: string };
-      // An Approve tap belongs to the approval service (WP-33).
+      // An Approve tap belongs to the approval service (WP-33). A Change tap applies to the current
+      // version whatever hash it carries (technical-design.md, Drafts flow).
       if (payload.action !== 'change') return;
       const post = await loadPost(businessId, payload.postId);
-      if (post?.status !== 'awaiting_approval') return resendDrafts(businessId, burst.from);
+      if (!post || !['awaiting_approval', 'approved', 'scheduled'].includes(post.status)) return resendDrafts(businessId, burst.from);
       await setQuestion(businessId, { key: 'change_request', askedFields: [], attempts: 1, photoAssetIds: [], postId: post.id });
       return void (await deps.messaging.sendText(businessId, { to: burst.from, text: copy.askWhatToChange }));
     }
@@ -465,7 +497,8 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const { intent } = await deps.model.run(businessId, 'intent_detection', { text, step: 'reviewing_drafts', draftsOpen: true });
     if (intent !== 'change_request' && intent !== 'weekly_update') return resendDrafts(businessId, burst.from);
     const open = await openDrafts(businessId);
-    const target = question?.key === 'change_request' ? open.find((p) => p.id === question.postId) : open.length === 1 ? open[0] : undefined;
+    const target =
+      question?.key === 'change_request' ? (await changeable(businessId)).find((p) => p.id === question.postId) : open.length === 1 ? open[0] : undefined;
     if (!target) return void (await deps.messaging.sendText(businessId, { to: burst.from, text: copy.whichDraft }));
     await change(burst, business, target, text);
   }
@@ -485,6 +518,8 @@ export function createDrafts(deps: DraftsDeps): Drafts {
         if (loaded) await handOff(businessId, loaded.business.approverPhone, 'drafting failed', copy.draftsNeedReview);
       }
     },
+    resendOpen: (businessId, to, text) => resendDrafts(businessId, to, text),
+    topicOf: async (businessId, postId) => ((await loadPost(businessId, postId))?.plan as PlannedPost | undefined)?.topic,
     async handle(burst) {
       const loaded = await loadBusiness(burst.businessId);
       if (!loaded || loaded.business.status !== 'active') return false;
