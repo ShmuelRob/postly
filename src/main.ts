@@ -5,11 +5,13 @@ import { createDatabase, createPgBossQueue, provisionDatabase } from './db/index
 import { createDesignRenderer } from './modules/design/index.js';
 import type { DeletionStorage } from './modules/business-data/index.js';
 import type { MediaStorage } from './modules/messaging/index.js';
+import { buildConsoleServer } from './console-server.js';
+import { createConsole } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 
-// The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
+// The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
 // land (WP-41) the composition uses the simulators, so a local or stage run reaches no vendor.
 
@@ -46,7 +48,7 @@ async function main(command: string | undefined) {
     console.log(JSON.stringify({ level: 'info', msg: 'migrations applied and logins provisioned' }));
     return;
   }
-  if (command !== 'web' && command !== 'worker') throw new Error('usage: node dist/src/main.js web|worker|migrate');
+  if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
   const config = loadConfig(process.env);
   const db = createDatabase(config.databaseUrls);
@@ -74,6 +76,12 @@ async function main(command: string | undefined) {
   if (command === 'web') {
     const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl });
     stops.push(app.start(), () => server.close());
+    await server.listen({ host: '0.0.0.0', port: config.port });
+  } else if (command === 'console') {
+    // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
+    const access = config.env === 'local' || config.env === 'test' ? 'loopback' : 'private-ingress';
+    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access });
+    stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
     const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });

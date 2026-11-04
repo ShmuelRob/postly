@@ -114,6 +114,8 @@ WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 h
 | `analyzeImage` | `task`, `model`, `prompt`, `imageUrl`, JSON schema of the output | Same as `generateStructured` |
 | `transcribeAudio` | `model`, `audioUrl`, `languageHint` | `text`, `language`, `costUsd` |
 
+The Google adapter (`src/modules/model-layer/adapters/vertex.ts`) calls Vertex AI `generateContent` with the service account's Application Default Credentials, never an API key. It asks for JSON output against the request's JSON schema, sends photos and voice notes as inline bytes fetched from their URL, validates every request with the Zod schema above (a bad request throws before any call), and computes `costUsd` from the response's token counts and a per-model price table in the adapter. A model missing from that table is refused. Its tests run the shared contract suite against a fake transport.
+
 The provider returns raw output. Only the model layer validates it against the task schema. `task` names the model task the request serves (one of the tasks above); a real adapter may ignore it, and the simulator uses it to pick its scripted output and checks that the JSON schema is that task's output schema.
 
 ### `PaymentProvider`
