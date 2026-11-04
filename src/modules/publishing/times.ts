@@ -1,5 +1,5 @@
-import { HebrewCalendar, Location } from '@hebcal/core';
 import type { BusinessProfile } from '../../contracts/business-profile.js';
+import { lookupCity, restPeriods } from './jewish-calendar.js';
 
 // Time proposals (technical-design.md, Scheduling and publishing flow; Configuration defaults). Pure
 // code: one time per post, each on a different day, by the profile's days and hours, never inside
@@ -27,31 +27,14 @@ export interface Window {
 
 /**
  * Shabbat and Israeli yom tov between `start` and `end`: from 30 minutes before candle lighting to
- * 30 minutes after havdalah, at `city` when `@hebcal/core` knows the name, otherwise Jerusalem.
+ * 30 minutes after havdalah (`jewish-calendar.ts`), at `city` when we know its English or Hebrew name,
+ * otherwise Jerusalem.
  */
 export function noPublishingWindows(start: Date, end: Date, city: string | undefined): Window[] {
-  const location = (city && Location.lookup(city)) || Location.lookup('Jerusalem')!;
-  const events = HebrewCalendar.calendar({
-    start: new Date(start.getTime() - 3 * 86_400_000),
-    end: new Date(end.getTime() + 3 * 86_400_000),
-    location,
-    candlelighting: true,
-    il: true,
-  });
-  const windows: Window[] = [];
-  let open: Date | undefined;
-  for (const e of events) {
-    const at = (e as { eventTime?: Date }).eventTime;
-    if (!at) continue;
-    const desc = e.getDesc();
-    // Candle lighting on the second evening of a two-day rest (yom tov next to Shabbat) is inside the window already.
-    if (desc === 'Candle lighting' && !open) open = new Date(at.getTime() - WINDOW_MARGIN_MS);
-    else if (desc === 'Havdalah' && open) {
-      windows.push({ from: open, to: new Date(at.getTime() + WINDOW_MARGIN_MS) });
-      open = undefined;
-    }
-  }
-  return windows.filter((w) => w.to > start && w.from < end);
+  const day = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return restPeriods(day(start), day(end), lookupCity(city))
+    .map((p) => ({ from: new Date(p.candleLighting.getTime() - WINDOW_MARGIN_MS), to: new Date(p.havdalah.getTime() + WINDOW_MARGIN_MS) }))
+    .filter((w) => w.to > start && w.from < end);
 }
 
 /** The local calendar date of `at` in `timezone`, as UTC midnight of that date. */
