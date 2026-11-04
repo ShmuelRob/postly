@@ -202,10 +202,10 @@ resource "google_artifact_registry_repository_iam_member" "push" {
   member     = "serviceAccount:${module.accounts.emails.deploy}"
 }
 
-# Connection budget (docs/deployment.md, Sizing): 15 logins x 3 (createDatabase) + pg-boss 10 per
+# Connection budget (docs/deployment.md, Sizing): each login x 3 (createDatabase) + pg-boss 10 per
 # process, plus the migrate job (11) and connections Cloud SQL reserves for itself (10).
 locals {
-  connections_per_process = 15 * 3 + 10
+  connections_per_process = length(local.logins) * 3 + 10
   connections_needed      = (var.web_max_instances + var.worker_max_instances) * local.connections_per_process + 11 + 10
 }
 

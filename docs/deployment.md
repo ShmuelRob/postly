@@ -62,7 +62,7 @@ Terraform does everything that needs no human decision:
 | Cloud SQL backups kept | 3 | 14 | 14 |
 | Web | 1 vCPU, 2 GiB, exactly 1 instance | the same | the same |
 | Worker | 2 vCPU, 4 GiB (Chromium rendering), at most 1 instance | the same, at most 1 | the same, at most 2 |
-| Media: old object versions kept | 60 days | 60 days | 60 days |
+| Media: old object versions kept | 7 days | 7 days | 7 days |
 | Media: to Coldline after | 180 days | 180 days | 180 days |
 | Log retention (`_Default` bucket) | 7 days | GCP default (30) | GCP default (30) |
 | Branch | `dev` | `stage` | `main` |
@@ -78,7 +78,7 @@ Terraform does everything that needs no human decision:
 
 **Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
 
-**Media lifecycle and retention.** Every lifecycle age is longer than the 30-day data retention after cancellation (technical-design.md), so the bucket never deletes or moves a file before the data-deletion job decides to: old versions are kept 60 days and objects move to Coldline after 180 days (also past Coldline's 90-day minimum storage charge). Only `tmp/` scratch files from rendering are deleted after 1 day. A Terraform `check` in `infra/modules/storage` flags ages at or below `media_retention_days` (30). The ages stay provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
+**Media lifecycle and retention.** The Coldline age (180 days) is longer than the 30-day data retention after cancellation (technical-design.md), so the bucket never moves a live file before the data-deletion job decides on it, and it is past Coldline's 90-day minimum storage charge. The old-version age works the other way: the bucket is versioned, and `days_since_noncurrent_time` removes only versions already overwritten or deleted, so it is kept short (7 days) and media the data-deletion job removes on day 30 is gone for good by about day 37. Only `tmp/` scratch files from rendering are deleted after 1 day. A Terraform `check` in `infra/modules/storage` flags a Coldline age at or below its `retention_days` (30). The ages stay provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
 
 ### IAM (least privilege)
 

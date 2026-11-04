@@ -44,7 +44,7 @@ module "postly" {
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1
-  media_noncurrent_days     = 60
+  media_noncurrent_days     = 7
   media_coldline_after_days = 180
 }
 
