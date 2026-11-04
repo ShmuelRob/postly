@@ -10,7 +10,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, expect, inject } from 'vitest';
 import { createPlayground, type Playground } from '../../playground/server/playground.js';
 import { startPlaygroundUi, type PlaygroundUi } from '../../playground/ui-server.js';
-import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
+import { draftsCopy, onboardingCopy as copy, scheduleCopy } from '../../src/modules/workflow/index.js';
 import { e2eTest } from './harness/index.js';
 import type { E2eRecord } from './harness/record.js';
 
@@ -120,6 +120,79 @@ e2eTest('the owner plays onboarding in the playground, from the first message to
   record.publishing.push(...(await playground.feedRecord()));
   expect((await playground.feedRecord()).every((p) => p.caption.startsWith('פוסט לדוגמה'))).toBe(true);
 }, 240_000);
+
+e2eTest('the owner approves the week in the playground, confirms the times, and the posts reach the mock feed (WP-34)', async ({ task, e2e }) => {
+  void e2e;
+  const record = task.meta.e2e!;
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(ui.url);
+  const chat = page.getByTestId('chat');
+  const state = page.getByTestId('state');
+  const feed = page.getByTestId('feed');
+  const replies = () => chat.getByTestId('bubble-to_owner').allInnerTexts();
+  const lastReply = async () => (await replies()).at(-1) ?? '';
+  const write = async (text: string) => {
+    await page.getByPlaceholder('הקלידו הודעה').fill(text);
+    await page.keyboard.press('Enter');
+  };
+  const timeout = { timeout: 60_000 };
+  // Continues the business the onboarding test activated.
+  await expect.poll(() => state.getByTestId('business-status').innerText(), timeout).toBe('active');
+  const demo = new Set((await playground.feedRecord()).map((p) => p.idempotencyKey));
+  const demoPosts = demo.size;
+
+  // 1. The weekly update: the drafts come back with אישור and שינוי.
+  await write('השבוע יש לנו עוגות שמרים חדשות, ובשישי מבצע על חלות לשבת');
+  await expect.poll(() => state.getByTestId('conversation-step').innerText(), timeout).toBe('reviewing_drafts');
+  const approveButtons = chat.getByRole('button', { name: draftsCopy.APPROVE_TITLE, exact: true });
+  const drafts = await approveButtons.count();
+  expect(drafts).toBeGreaterThan(0);
+  await shot(page, record, 'drafts', 'The drafts of the week with their buttons');
+
+  // Nothing reaches the networks before the owner approves and confirms.
+  await state.getByTestId('publish-due').waitFor({ state: 'detached' }).catch(() => {});
+  expect((await playground.feedRecord()).length).toBe(demoPosts);
+
+  // 2. The owner taps אישור under every draft; after the last one Postly proposes the times.
+  for (let i = 0; i < drafts; i++) {
+    await approveButtons.nth(i).click();
+    await expect.poll(async () => (await replies()).filter((r) => r.includes('אושר')).length, timeout).toBeGreaterThan(i);
+  }
+  await expect.poll(lastReply, timeout).toContain('אלה הזמנים שאני מציע');
+  await expect.poll(() => state.getByTestId('conversation-step').innerText(), timeout).toBe('confirming_schedule');
+  expect((await playground.feedRecord()).length).toBe(demoPosts);
+  await shot(page, record, 'proposal', 'All drafts approved: the proposed publishing times');
+
+  // 3. The owner confirms the times: the posts are scheduled, still nothing is live.
+  await write('כן');
+  await expect.poll(lastReply, timeout).toContain('מתוזמן');
+  await expect.poll(() => state.getByTestId('conversation-step').innerText(), timeout).toBe('idle');
+  expect((await playground.feedRecord()).length).toBe(demoPosts);
+
+  // 4. Time passes to the first scheduled time: the publishing job publishes, the feed shows it.
+  while (await state.getByTestId('publish-due').isVisible().catch(() => false)) {
+    await state.getByTestId('publish-due').click();
+    await page.waitForTimeout(1_500);
+  }
+  await expect.poll(async () => (await playground.feedRecord()).length, timeout).toBeGreaterThan(demoPosts);
+  const published = (await playground.feedRecord()).filter((p) => !demo.has(p.idempotencyKey));
+  // One post per draft on each network, and nothing else.
+  expect({ instagram: published.filter((p) => p.network === 'instagram').length, facebook: published.filter((p) => p.network === 'facebook').length }).toEqual({
+    instagram: drafts,
+    facebook: drafts,
+  });
+  for (const p of published) expect(p.caption.startsWith('פוסט לדוגמה')).toBe(false);
+  await feed.getByRole('button', { name: 'Instagram' }).click();
+  for (const p of published.filter((x) => x.network === 'instagram')) {
+    await expect.poll(async () => (await feed.getByTestId('feed-post').allInnerTexts()).join(' '), timeout).toContain(p.caption);
+  }
+  await expect.poll(async () => (await replies()).some((r) => r.includes(scheduleCopy.PUBLISHED_TEMPLATE)), timeout).toBe(true);
+  await shot(page, record, 'published', 'After the scheduled time: the approved posts in the mock feed, and the confirmation template');
+  await page.close();
+
+  record.transcript.push(...playground.transcript());
+  record.publishing.push(...published);
+}, 300_000);
 
 async function shot(page: Page, record: E2eRecord, name: string, title: string) {
   const path = `${SHOTS}/playground-${name}.png`;

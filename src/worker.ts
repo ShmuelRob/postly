@@ -1,13 +1,18 @@
 import type { JobQueue } from './db/index.js';
+import type { Publishing } from './modules/publishing/index.js';
 import type { WeeklyUpdates } from './modules/workflow/index.js';
 
 /** The hourly weekly-update scheduler job (technical-design.md, Weekly update flow). */
 export const WEEKLY_TICK_JOB = 'weekly-update-tick';
 export const WEEKLY_TICK_CRON = '0 * * * *';
+/** The publishing job's tick (technical-design.md, Scheduling and publishing flow). */
+export const PUBLISHING_TICK_JOB = 'publishing-tick';
+export const PUBLISHING_TICK_CRON = '* * * * *';
 
 export interface WorkerProcessOptions {
   queue: JobQueue;
   weekly: Pick<WeeklyUpdates, 'tick'>;
+  publishing: Pick<Publishing, 'tick'>;
   now?: () => Date;
 }
 
@@ -20,5 +25,6 @@ export interface WorkerProcessOptions {
 export async function startWorkerProcess(options: WorkerProcessOptions): Promise<JobQueue> {
   const now = options.now ?? (() => new Date());
   await options.queue.schedule(WEEKLY_TICK_JOB, WEEKLY_TICK_CRON, () => options.weekly.tick(now()));
+  await options.queue.schedule(PUBLISHING_TICK_JOB, PUBLISHING_TICK_CRON, async () => void (await options.publishing.tick(now())));
   return options.queue;
 }

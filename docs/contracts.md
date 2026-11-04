@@ -45,7 +45,7 @@ This document defines the Zod schemas for model tasks, the business profile, and
 
 ### `OpenQuestion`
 
-What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile), and an optional `postId` (the post a drafts question is about: `photo_choice` or `change_request`; added 2026-11-03 by WP-32, queued for the human). The schema is in `src/contracts/open-question.ts`.
+What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile), and an optional `postId` (the post a drafts question is about: `photo_choice` or `change_request`; added 2026-11-03 by WP-32, queued for the human), and optional `proposals` (the `schedule_confirmation` question: each proposed post's `postId` and time `at`; added 2026-11-04 by WP-34, queued for the human). The schema is in `src/contracts/open-question.ts`.
 
 ## Model tasks
 
@@ -100,6 +100,7 @@ WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 h
 | --- | --- | --- |
 | `createConnectionLink` | `businessId`, `networks` | `url`, `expiresAt` |
 | `getConnectionStatus` | `businessId`, `network` | `status` (`pending`, `connected`, `disconnected`), `providerAccountId` |
+| `testSchedule` | `providerAccountId`, `network` | `ok`, and `error` when not ok. Asks the provider whether a post can be scheduled on the account (the channel test, WP-34). It validates only: nothing is created, scheduled or published |
 | `publish` | `idempotencyKey` (the publication id), `providerAccountId`, `network`, `caption`, `mediaUrls`, `format`, `scheduledFor` | `providerPostId` |
 | `getPublicationStatus` | `providerPostId` | `status` (`scheduled`, `published`, `failed`), optional `error`, optional `publishedAt` |
 | `getMetrics` | `providerAccountId`, `from`, `to` | Per post: `providerPostId`, `reach`, `likes`, `comments`, `shares`; any metric may be missing |
@@ -144,4 +145,4 @@ Status: added 2026-11-03 by the H5 test author, queued for the human. The narrow
 
 Approval refusals: `not_a_button` (free text, voice, or image, whatever it says, and a Change button, which is a button but never an approval; WP-33), `not_approver` (sender is not `business.approver_phone`), `unknown_post` (no such post for this business, including another business's post), `stale_version` (the button's hash is not the current version's hash), `wrong_state` (the post is not `awaiting_approval`), `handoff` (the conversation is in [handoff](state-machines.md#human-handoff), so no event is applied), `duplicate` (the same inbound message, by provider message id, was already handled; `approval.message_id` is unique). A refusal changes nothing. `handleApprovalReply` takes only an `InboundMessage`, so no model output can reach it as an approval.
 
-Publish outcomes: `published` and `already_published` (the provider status check found the post live, so `publish` was not called again) carry `providerPostId`; `retry_pending` and `failed` carry the error; `deferred` (`global_pause`, `business_pause`, `handoff`) and `refused` (`not_approved`, `not_current_version`, `cross_business`, `wrong_state`) change nothing and reach no provider.
+Publish outcomes: `published` and `already_published` (the provider status check found the post live, so `publish` was not called again) carry `providerPostId`; `retry_pending` and `failed` carry the error; `deferred` (`global_pause`, `business_pause`, `handoff`) and `refused` (`not_approved`, `not_current_version`, `cross_business`, `wrong_state`; checked in the order of the [publishing guard](state-machines.md#publishing-guard)) change nothing and reach no provider.

@@ -62,6 +62,13 @@ export function App() {
       <Feed feed={state?.feed} />
       <StatePanel
         state={state}
+        onPublishDue={() =>
+          void fetch('/api/publish-due', { method: 'POST' })
+            .then(async (res) => {
+              if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+            })
+            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        }
         onConnect={() =>
           void fetch('/api/connect', { method: 'POST' })
             .then(async (res) => {
@@ -177,7 +184,7 @@ function Feed({ feed }: { feed: PlaygroundState['feed'] | undefined }) {
   );
 }
 
-function StatePanel({ state, onConnect }: { state: PlaygroundState | null; onConnect: () => void }) {
+function StatePanel({ state, onConnect, onPublishDue }: { state: PlaygroundState | null; onConnect: () => void; onPublishDue: () => void }) {
   if (!state) {
     return (
       <aside className="state" data-testid="state">
@@ -220,11 +227,19 @@ function StatePanel({ state, onConnect }: { state: PlaygroundState | null; onCon
       <h3>פוסטים ({state.posts.length})</h3>
       <ul>
         {state.posts.map((p) => (
-          <li key={p.id}>
+          <li key={p.id} data-testid="post-status">
             <span className="code">{p.status}</span> · {p.format}
           </li>
         ))}
       </ul>
+      {state.posts.some((p) => p.status === 'scheduled') && (
+        <button type="button" className="connect" data-testid="publish-due" onClick={onPublishDue}>
+          קפיצה בזמן ופרסום המתוזמנים
+        </button>
+      )}
+      <p className="clock">
+        שעון: <span dir="ltr">{new Date(state.clock).toLocaleString('he-IL')}</span>
+      </p>
       <h3>תור הבדיקה ({state.reviewQueue.filter((i) => i.status === 'open').length})</h3>
       <ul>
         {state.reviewQueue.map((i) => (

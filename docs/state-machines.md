@@ -46,7 +46,7 @@ Stored in `conversation_state.step` while the business is `onboarding`. The step
 How onboarding starts and ends (decided in WP-30, 2026-11-03, queued for the human):
 
 - **Start.** A business is created in `onboarding` together with its `conversation_state` row (step `intro`) and a draft profile holding `approverPhone`, by a team or sign-up action; an unknown number never starts onboarding by itself. The owner's first inbound message then gets the intro, and `INTRO_SENT` moves to `profile_questions`, whose first question goes out in the same reply.
-- **Channel test (interim).** Until publishing exists (WP-34), the test of a `connected` channel is a provider status check: `getConnectionStatus` reports the account `connected` with a `providerAccountId`. No post is scheduled or published, because nothing goes live without an approved post version. This interim definition is queued for the human, and WP-34 restores the PRD's check that a post can be scheduled. The owner tells the agent when the link flow is done (any message while in `channel_connection`), and the agent then asks the provider.
+- **Channel test.** The test of a `connected` channel is the PRD's check that a post can be scheduled on it: the publishing provider's `testSchedule` for the channel's account reports `ok` (contracts.md, `PublishingProvider`). The provider only validates; no post is created, scheduled or published, because nothing goes live without an approved post version. A failed test applies `TEST_FAILED` and the owner gets the connection link again. This replaced the interim status check of WP-30 in WP-34 (2026-11-04, queued for the human). The owner tells the agent when the link flow is done (any message while in `channel_connection`), and the agent then asks the provider.
 - **Recovery.** A burst that finds the onboarding in `channel_test` runs the test again; one that finds it `completed` while the business is still `onboarding` retries the activation. If activation cannot pass its guard, the owner is told a person will help and the conversation is handed off (a `handoff` console item).
 - **End.** On `completed` the business moves to `active` (`ONBOARDING_COMPLETED`), `business.profile` becomes the full `BusinessProfile` with its defaults applied, and `conversation_state.step` is set to the conversation machine's start state `idle` in the same transaction.
 
@@ -70,6 +70,8 @@ Stored in `conversation_state.step` once the business is `active` or `paused`. I
 | `reviewing_drafts` | `ALL_DRAFTS_RESOLVED` | `confirming_schedule` | Every post in the update is `approved` or `cancelled` |
 | `confirming_schedule` | `SCHEDULE_CHANGE_REQUESTED` | `confirming_schedule` | New times are proposed |
 | `confirming_schedule` | `SCHEDULE_CONFIRMED` | `idle` | Publications are created for every approved post |
+
+Schedule confirmation (WP-34): in `confirming_schedule` only, a short confirming text (כן, מאשר, אישור and the like) confirms the proposed times. This is not a post approval: every post in it is already approved by a button tap, and the text only accepts the times. Any other text is a schedule change, which a person handles in Phase 1 (technical-design.md, Scheduling and publishing flow).
 | `confirming_schedule` | `CHANGE_REQUESTED` | `processing_update` | |
 
 A new weekly update while drafts are open is treated as a change request on the open drafts. A second update while the conversation is `processing_update` or `awaiting_answer` applies no event and gets a reply that the previous update is still being prepared; one while `idle` after the week was received or planned counts for next week (technical-design.md, Weekly update flow; WP-32). Free text such as "sounds good" while in `reviewing_drafts` is not an event: the agent resends the drafts with buttons and the state stays the same.
@@ -135,6 +137,8 @@ Any new `post_version` invalidates earlier approvals (`approval.invalidated_at` 
 
 The publishing job publishes a publication only when its `approved_version_hash` equals the hash of an approval that is not invalidated, that approval belongs to the post's current version, neither the global pause nor a business pause is active, and the business's conversation is not in [handoff](#human-handoff) (added 2026-11-03 for H5, queued for the human). A pause or handoff defers the publication without changing its state.
 
+The job checks, in this order, under a lock on the publication row (WP-34): the publication is `scheduled` or `retry_pending` (`wrong_state`); the approval it names is visible in the publication's business (`cross_business`); the approval is not invalidated and its hash equals the publication's `approved_version_hash` (`not_approved`); the approval belongs to the publication's post and to the post's current version (`not_current_version`); then the global pause, a business pause, and handoff (deferred). Refusals come before deferrals, so a pause never hides a publication that must never go live. The pause flags are read in the same transaction that applies `STARTED`, right before the provider call.
+
 ## Publication
 
 Stored in `publication.status`. One row per post per channel.
@@ -150,7 +154,7 @@ Stored in `publication.status`. One row per post per channel.
 | `scheduled` | `CANCELLED` | `cancelled` | |
 | `retry_pending` | `CANCELLED` | `cancelled` | |
 
-`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice.
+`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice: when the publication already holds a `provider_post_id`, the job asks `getPublicationStatus` first, and a post the provider reports `scheduled` or `published` is `SUCCEEDED` without a new `publish` (`already_published`). When the earlier attempt left no provider id (the response was lost), the retry calls `publish` with the same idempotency key, the publication id, so the provider returns the existing post instead of creating a second one.
 
 ## Channel connection
 
@@ -159,8 +163,8 @@ Stored in `channel_connection.status`.
 | From | Event | To | Guard |
 | --- | --- | --- | --- |
 | `pending` | `CONNECTED` | `connected` | Provider reports the account is linked |
-| `connected` | `TEST_PASSED` | `verified` | Interim until WP-34: the provider reports the channel connected with an account id. WP-34 restores: a test schedule succeeded on this channel |
-| `connected` | `TEST_FAILED` | `pending` | A new connection link is sent |
+| `connected` | `TEST_PASSED` | `verified` | A test schedule succeeded on this channel: the provider's `testSchedule` reports `ok` (WP-34; nothing is published) |
+| `connected` | `TEST_FAILED` | `pending` | The test schedule failed; a new connection link is sent |
 | `verified` | `HEALTH_CHECK_FAILED` | `disconnected` | Owner is notified with a template |
 | `disconnected` | `RECONNECT_REQUESTED` | `pending` | A new connection link is sent |
 | any state except `revoked` | `REVOKED` | `revoked` | Business cancelled or owner removed the channel |

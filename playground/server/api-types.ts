@@ -32,6 +32,8 @@ export interface PlaygroundState {
   /** Onboarding sent the connection link, so the human can connect on the publishing simulator. */
   connectionLinkSent: boolean;
   posts: { id: string; status: string; format: string }[];
+  /** The playground clock (real time unless publishing moved it forward). */
+  clock: string;
   reviewQueue: { id: string; kind: string; status: string; details: unknown }[];
   messages: ChatMessage[];
   feed: Record<Network, FeedPost[]>;

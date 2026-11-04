@@ -45,6 +45,7 @@ function fakes() {
     },
     getPublicationStatus: notUsed('getPublicationStatus'),
     getMetrics: notUsed('getMetrics'),
+    testSchedule: notUsed('testSchedule'),
   };
   const renderer: TemplateRenderer = {
     render: async (request) => {

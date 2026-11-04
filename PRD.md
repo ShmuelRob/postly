@@ -92,7 +92,7 @@ This is the last onboarding step, right before the first post.
 1. Choose channels: the business activates Instagram, Facebook, or both; one channel is enough.
 2. Prepare the account: if the Instagram account is personal, the agent guides the owner step by step, with screenshots, to convert it to a business account. If the business chose Facebook and has no Page, the agent guides the owner to create one.
 3. Connect channels: the owner receives a link and approves the connection to Postly, without sharing a password and without access to other customers' channels.
-4. Test the connection: the agent verifies a post can be scheduled to each chosen channel, and only then does the business become active. Interim (2026-11-03, until publishing is built in WP-34): the test is a provider status check that each chosen channel is connected to an account; no post is scheduled. WP-34 restores the scheduling check.
+4. Test the connection: the agent verifies a post can be scheduled to each chosen channel, and only then does the business become active. The check asks the publishing provider to validate a scheduled post on the account; nothing is published.
 
 ## Weekly update and content preparation
 

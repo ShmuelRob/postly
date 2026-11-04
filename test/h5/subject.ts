@@ -14,7 +14,7 @@ import { placeholderPng } from '../e2e/harness/png.js';
 import type { Draft, H5WorldFactory } from './world.js';
 
 /**
- * WP-33 binds the real world here (WP-34 replaces the publishing job). Setup goes through the real
+ * WP-33 and WP-34 bind the real world here, with the real approval service and publishing job. Setup goes through the real
  * app: onboarding creates the business, the publishing module verifies channels, drafts writes,
  * fact-checks, versions and sends each draft, a change goes in as the owner's Change tap and text,
  * scheduling creates the publications. Only what a setup needs and no flow provides is written
@@ -140,9 +140,7 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
 
   return {
     approval: app.approvals,
-    publishingJob: {
-      runPublication: () => Promise.reject(new Error('the publishing job is WP-34')),
-    },
+    publishingJob: app.publishing,
     app: {
       deliverInbound: deliver,
       close: () => app.messaging.close(),
@@ -186,6 +184,21 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
     async createDraft(businessId, caption) {
       nextCaption = caption;
       const facts = factsFor(caption);
+      // An active business's chosen channels are the ones it verified (onboarding verifies every
+      // chosen channel), so the draft targets exactly the connected networks.
+      await db.withSystem('console', async (tx) => {
+        const verified = await tx
+          .select({ network: schema.channelConnection.network })
+          .from(schema.channelConnection)
+          .where(and(eq(schema.channelConnection.businessId, businessId), eq(schema.channelConnection.status, 'verified')));
+        if (verified.length === 0) return;
+        const [row] = await tx.select({ profile: schema.business.profile }).from(schema.business).where(eq(schema.business.id, businessId));
+        const chosen = BusinessProfile.parse(row!.profile).channels;
+        const channels = chosen.filter((n) => verified.some((v) => v.network === n));
+        if (channels.length === 0) return;
+        const profile = BusinessProfile.parse({ ...(row!.profile as object), channels });
+        await tx.update(schema.business).set({ profile }).where(eq(schema.business.id, businessId));
+      });
       const postId = await db.withBusiness('workflow', businessId, async (tx) => {
         let weekId = weeks.get(businessId);
         if (!weekId) {

@@ -6,7 +6,7 @@
  */
 export const H5_PENDING = {
   approval: false,
-  publishing: true,
+  publishing: false,
 } as const;
 
 export type H5Package = keyof typeof H5_PENDING;
