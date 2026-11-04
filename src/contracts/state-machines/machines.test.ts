@@ -153,14 +153,13 @@ const cases: Array<{
   },
   {
     machine: subscriptionMachine,
-    initial: 'trialing',
+    initial: 'pending',
     terminal: ['cancelled'],
     rows: [
-      ['trialing', 'PAYMENT_SUCCEEDED', 'active'],
-      ['trialing', 'TRIAL_ENDED', 'past_due'],
+      ['pending', 'PAYMENT_SUCCEEDED', 'active'],
       ['active', 'PAYMENT_FAILED', 'past_due'],
       ['past_due', 'PAYMENT_SUCCEEDED', 'active'],
-      ...expand(['trialing', 'active', 'past_due'], 'CANCELLED', 'cancelled'),
+      ...expand(['pending', 'active', 'past_due'], 'CANCELLED', 'cancelled'),
     ],
   },
 ];

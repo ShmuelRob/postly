@@ -11,6 +11,8 @@ import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { BILLING_COPY, createBilling, PAYMENT_WEBHOOK_PATH } from '../../src/modules/billing/index.js';
 import { createMessaging, WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
+import { createConsole, registerConsoleRoutes } from '../../src/modules/console/index.js';
+import { createWorkflow } from '../../src/modules/workflow/index.js';
 import { buildServer } from '../../src/server.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 import { e2eTest, type AppFactory, type Providers } from './harness/index.js';
@@ -35,7 +37,7 @@ async function newBusiness(): Promise<string> {
 // One simulator for the file: its outbound message ids are unique only within one instance.
 const sim = new MessagingSimulator({ businessNumber: BUSINESS_PHONE });
 
-function setup(businessId: string) {
+function setup(businessId: string, plan?: string) {
   const payment = new PaymentSimulator();
   const providers = {
     messaging: sim,
@@ -48,12 +50,18 @@ function setup(businessId: string) {
   let sendLink = async () => {};
   let deliverPaymentWebhook = async (_id: string, _tamper?: boolean) => {};
   let deliverHook = async (_hook: ReturnType<PaymentSimulator['webhook']>) => {};
+  let consoleApi = async (_method: 'GET' | 'POST', _url: string, _payload?: object) => ({ status: 0, body: undefined as any });
 
   const app: AppFactory = ({ messaging: provider }) => {
     // The workflow is not part of this flow: the owner's messages only open the 24-hour window.
     const messaging = createMessaging({ db, provider, businessNumber: BUSINESS_PHONE, handler: { async handleInbound() {} } });
-    const billing = createBilling({ db, messaging, provider: payment });
+    const billing = createBilling({ db, messaging, provider: payment, ...(plan ? { plan } : {}) });
     const server = buildServer({ messaging, billing, publicBaseUrl: 'https://postly.example.test' });
+    registerConsoleRoutes(server, { console: createConsole(db, createWorkflow(db, { rejected: () => {} })) });
+    consoleApi = async (method, url, payload) => {
+      const res = await server.inject({ method, url: `/console/api${url}`, ...(payload ? { payload } : {}) });
+      return { status: res.statusCode, body: res.json() };
+    };
     sendLink = async () => {
       await billing.sendPaymentLink(businessId);
     };
@@ -84,6 +92,7 @@ function setup(businessId: string) {
     sendLink: () => sendLink(),
     deliverPaymentWebhook: (id: string, tamper?: boolean) => deliverPaymentWebhook(id, tamper),
     deliverHook: (hook: ReturnType<PaymentSimulator['webhook']>) => deliverHook(hook),
+    consoleApi: (method: 'GET' | 'POST', url: string, payload?: object) => consoleApi(method, url, payload),
   };
 }
 
@@ -103,10 +112,10 @@ e2eTest('the owner gets a payment link, pays, and the subscription moves through
   await ctx.sendLink();
 
   const [link] = ctx.payment.links;
-  expect(link?.request).toEqual({ businessId, plan: 'basic' });
-  expect(run.owner.received().map((m) => m.text)).toEqual([BILLING_COPY.paymentLink(link!.link.url)]);
+  expect(link?.request).toEqual({ businessId, plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } });
+  expect(run.owner.received().map((m) => m.text)).toEqual([BILLING_COPY.paymentLink(link!.link.url, 30000)]);
   expect(await stored(businessId)).toMatchObject({
-    status: 'trialing',
+    status: 'pending',
     provider: 'simulator',
     providerCustomerId: link!.link.providerCustomerId,
     providerSubscriptionId: null,
@@ -131,7 +140,7 @@ e2eTest('the owner gets a payment link, pays, and the subscription moves through
   expect(ctx.statuses).toEqual([200, 200, 200, 401, 200]);
   expect(await stored(businessId)).toMatchObject({ status: 'active', currentPeriodEnd: new Date('2026-12-03T10:00:00.000Z') });
   expect(run.owner.received().map((m) => m.text)).toEqual([
-    BILLING_COPY.paymentLink(link!.link.url),
+    BILLING_COPY.paymentLink(link!.link.url, 30000),
     BILLING_COPY.active,
     BILLING_COPY.past_due,
     BILLING_COPY.active,
@@ -179,4 +188,30 @@ e2eTest('a stale callback and parallel deliveries apply the current status once'
   expect(ctx.statuses).toEqual([200, 200, 200, 200]);
   expect((await stored(businessId))?.status).toBe('past_due');
   expect(run.owner.received().map((m) => m.text).slice(1)).toEqual([BILLING_COPY.active, BILLING_COPY.past_due]);
+}, 30_000);
+
+e2eTest('the team changes the monthly price in the console and the next payment link charges it', async ({ e2e }) => {
+  // The price table is shared by the whole run, so this test changes its own plan, not `basic`.
+  const plan = `e2e-${randomUUID()}`;
+  const businessId = await newBusiness();
+  const ctx = setup(businessId, plan);
+  const run = await e2e.start({ providers: ctx.providers, app: ctx.app, ownerPhone: OWNER, businessPhone: BUSINESS_PHONE });
+
+  await run.owner.sendsText('כמה עולה המנוי?');
+  // A plan with no price of its own gets none: billing refuses to send a link without a price.
+  await expect(ctx.sendLink()).rejects.toThrow(/no price/);
+
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 30000, by: 'shmuel' })).status).toBe(200);
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 35000, by: 'shmuel', reason: 'cost check' })).status).toBe(200);
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 0, by: 'shmuel' })).status).toBe(400);
+
+  const price = await ctx.consoleApi('GET', `/price?plan=${plan}`);
+  expect(price.body.current).toMatchObject({ plan, amountAgorot: 35000, currency: 'ILS', changedBy: 'shmuel', reason: 'cost check' });
+  expect(price.body.history.map((h: { amountAgorot: number }) => h.amountAgorot)).toEqual([35000, 30000]);
+
+  await ctx.sendLink();
+  const [link] = ctx.payment.links;
+  expect(link?.request).toEqual({ businessId, plan, price: { amountAgorot: 35000, currency: 'ILS' } });
+  expect(run.owner.received().map((m) => m.text)).toEqual([BILLING_COPY.paymentLink(link!.link.url, 35000)]);
+  expect(run.owner.received().at(-1)?.text).toContain('350 ₪ לחודש');
 }, 30_000);

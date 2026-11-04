@@ -83,7 +83,14 @@
       "idx": 11,
       "version": "7",
       "when": 1793750408000,
-      "tag": "0011_console_columns_role_attributes",
+      "tag": "0011_no_trial_plan_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793750408001,
+      "tag": "0012_console_columns_role_attributes",
       "breakpoints": true
     }
   ]

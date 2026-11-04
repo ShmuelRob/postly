@@ -177,12 +177,13 @@ Stored in `subscription.status`. The payment provider is a placeholder in Phase 
 
 | From | Event | To | Guard |
 | --- | --- | --- | --- |
-| `trialing` | `PAYMENT_SUCCEEDED` | `active` | |
-| `trialing` | `TRIAL_ENDED` | `past_due` | No successful payment |
+| `pending` | `PAYMENT_SUCCEEDED` | `active` | The owner paid on the provider's page |
 | `active` | `PAYMENT_FAILED` | `past_due` | |
 | `past_due` | `PAYMENT_SUCCEEDED` | `active` | |
-| `trialing` | `CANCELLED` | `cancelled` | |
+| `pending` | `CANCELLED` | `cancelled` | |
 | `active` | `CANCELLED` | `cancelled` | |
 | `past_due` | `CANCELLED` | `cancelled` | |
 
-`cancelled` is terminal. What a `past_due` subscription blocks is an open question, together with the trial length.
+`cancelled` is terminal. There is no trial (decided 2026-11-04, replacing `trialing` and `TRIAL_ENDED`): the row is created `pending` when onboarding sends the payment link, and `pending` means the link was sent and nothing is paid yet. A `pending` subscription never becomes `past_due`; it stays `pending` until the owner pays or the business is cancelled.
+
+**`past_due` (proposed, waiting for the human; not implemented yet).** The grace period is not a state: it is measured from the moment the row became `past_due`. For 7 days nothing is blocked and the owner gets a reminder (a template, since the window may be closed) on days 1, 3 and 6. After the 7 days the publishing job holds the business's publications (they stay `scheduled`, nothing is cancelled or deleted) until `PAYMENT_SUCCEEDED`; drafts, approvals and the conversation keep working. `past_due` never cancels the subscription or deletes data by itself; cancelling stays a team or provider action.
