@@ -1,5 +1,5 @@
 # Production: limited access, separate from agent environments (technical-design.md). Not applied by any
-# agent: the human runs the first apply (docs/deployment.md, gate H8).
+# agent: the human runs the apply (docs/deployment.md, gate H8).
 
 terraform {
   required_version = ">= 1.9"
@@ -8,18 +8,27 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 6.20, < 8.0"
     }
+    github = {
+      source  = "integrations/github"
+      version = ">= 6.4, < 7.0"
+    }
   }
 
-  # Remote state: the human creates the bucket and uncomments this (docs/deployment.md).
-  # backend "gcs" {
-  #   bucket = "REPLACE_WITH_STATE_BUCKET"
-  #   prefix = "postly/prod"
-  # }
+  # Partial config: the bucket comes from infra/bootstrap, passed at init:
+  #   terraform init -backend-config="bucket=<project_id>-tfstate"
+  backend "gcs" {
+    prefix = "postly/prod"
+  }
 }
 
 provider "google" {
   project = var.project_id
   region  = var.region
+}
+
+# The token comes from the GITHUB_TOKEN environment variable, never from tfvars.
+provider "github" {
+  owner = split("/", var.github_repository)[0]
 }
 
 module "postly" {
@@ -37,6 +46,19 @@ module "postly" {
   worker_max_instances      = 2
   media_noncurrent_days     = 30
   media_coldline_after_days = 180
+}
+
+module "github" {
+  source      = "../../modules/github_environment"
+  repository  = var.github_repository
+  environment = "prod"
+  reviewers   = var.deploy_reviewers
+  variables = {
+    GCP_PROJECT_ID                 = var.project_id
+    GCP_REGION                     = var.region
+    GCP_WORKLOAD_IDENTITY_PROVIDER = module.postly.workload_identity_provider
+    GCP_DEPLOY_SERVICE_ACCOUNT     = module.postly.deploy_service_account
+  }
 }
 
 output "postly" { value = module.postly }

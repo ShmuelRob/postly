@@ -7,6 +7,7 @@ variable "github_repository" {
 }
 
 resource "google_iam_workload_identity_pool" "github" {
+  depends_on                = [google_project_service.this]
   project                   = var.project_id
   workload_identity_pool_id = "${local.prefix}-github"
   display_name              = "GitHub Actions (${var.env_name})"

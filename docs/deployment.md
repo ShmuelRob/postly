@@ -43,7 +43,17 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 
 ### Terraform
 
-`infra/modules/stack` is one environment; `infra/environments/dev`, `infra/environments/stage` and `infra/environments/prod` call it with their sizes. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings, never values), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`. `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow. The remote state backend (`gcs`) is commented out in each environment for the human to fill in. Real values go in a git-ignored `terraform.tfvars` (copy `terraform.tfvars.example`).
+`infra/modules/stack` is one environment; `infra/environments/dev`, `infra/environments/stage` and `infra/environments/prod` call it with their sizes, and each also calls `infra/modules/github_environment` for its GitHub environment. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`. `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow.
+
+Terraform does everything that needs no human decision:
+
+- **APIs.** `stack/apis.tf` enables every API the stack uses (`google_project_service`, never disabled on destroy).
+- **Generated secrets.** `stack/secret_values.tf` generates a random password for every `db-password-*` and for `messaging-webhook-secret`, sets the Cloud SQL `postgres` user's password from another one, and writes `db-admin-url` from it and the instance's private IP. Vendor secrets get no version until WP-41.
+- **GitHub environments.** `modules/github_environment` creates the environment (`dev`, `stage` or `prod`) with a deployment branch policy that allows only `main`, required reviewers on `stage` and `prod` (`deploy_reviewers`, default the repository owner), and the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT`. The `github` provider reads its token from the `GITHUB_TOKEN` environment variable, never from tfvars.
+- **State.** `infra/bootstrap` (local state) creates a private, versioned bucket `<project_id>-tfstate`; each environment's `backend "gcs"` block is filled in except for the bucket, passed at `terraform init`.
+- **Defaults.** `public_base_url` defaults to the web service's `run.app` URL, `region` to `me-west1`, `github_repository` to `ShmuelRob/postly`. `terraform.tfvars` (git-ignored, from `terraform.tfvars.example`) needs only `project_id`, `business_number` and `alert_email`.
+
+**Secrets in the state.** The generated values are in the Terraform state. That is acceptable only because the state bucket is private (uniform access, public access prevention), versioned, and readable only by the project's owners and editors; never grant anyone else access to it, and never use local state for an environment.
 
 | | dev | stage | prod |
 | --- | --- | --- | --- |
@@ -70,7 +80,7 @@ The media lifecycle ages are provisional until the human sets the media retentio
 
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) can act as the deploy account.
 
-**The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `stage` and `prod`, and a deployment branch policy that allows only `main` on all three, so no unreviewed branch can be deployed. `dev` has no required reviewer on purpose: anyone who can run the workflow gets admin access to dev's database, which holds only test data. Set both when creating the environments (step 6 below), and keep the reviewer list short.
+**The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `stage` and `prod`, and a deployment branch policy that allows only `main` on all three, so no unreviewed branch can be deployed. `dev` has no required reviewer on purpose: anyone who can run the workflow gets admin access to dev's database, which holds only test data. Terraform sets both (`modules/github_environment`); keep the reviewer list short.
 
 ### Single web instance (review queue item 14)
 
@@ -88,17 +98,15 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 
 ## What the human does
 
-All of this costs money or creates cloud resources, so agents never do it.
+All of this costs money or creates cloud resources, so agents never do it. Per environment (one GCP project each, or start with dev):
 
-1. **GCP project and billing.** Create a project per environment (or start with dev), link billing, and enable the APIs: `run`, `sqladmin`, `compute`, `servicenetworking`, `secretmanager`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `monitoring`, `logging`, `cloudresourcemanager`.
-2. **State bucket.** Create a versioned GCS bucket for Terraform state, then uncomment the `backend "gcs"` block in `infra/environments/<env>/main.tf` with its name.
-3. **Variables.** Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in the project, the test WhatsApp number (dev and stage) or the real one (prod), the repository, and the alert email. `public_base_url` can be a placeholder for the first apply, then the web service's `run.app` URL or a custom domain.
-4. **First apply.** `terraform init`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected. Alternatively push a first image by hand before applying.
-5. **Secrets.** Add a version to every secret in the `secret_ids` output: a strong random password for each `db-password-*`; for `db-admin-url`, set the Cloud SQL `postgres` user's password (`gcloud sql users set-password postgres --instance ...`) and store `postgres://postgres:<password>@<private ip>:5432/postly?sslmode=require`. Vendor secrets stay empty until WP-41, except `messaging-webhook-secret`: give it a strong random value, since web and worker refuse to start in dev, stage or prod without it.
-6. **GitHub.** Create the environments `dev`, `stage` and `prod`, each with a deployment branch policy that allows only `main`, and required reviewers on `stage` and `prod` (see IAM above for why this is the real gate), and set on each the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the `workload_identity_provider` output) and `GCP_DEPLOY_SERVICE_ACCOUNT` (the `deploy_service_account` output).
-7. **Vendor accounts** (WP-41, later): WhatsApp (Twilio or 360dialog), publishing (Zernio or Ayrshare), Google AI, and the payment provider; test accounts and test keys on dev and stage.
-8. **Console sign-in.** The console answers only loopback requests (review queue item 16), so it is unreachable on Cloud Run until the team's sign-in is decided (for example IAP).
-9. **First deploy.** Run the Deploy workflow for `stage` and approve it. WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+1. **GCP project and billing.** Create the project and link billing.
+2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Environments and Variables write on the repository).
+3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
+4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
+5. **First deploy.** Run the Deploy workflow for the environment (stage and prod wait for a reviewer).
+
+Later: **vendor accounts** (WP-41: WhatsApp, publishing, Google AI, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 
 ## Migrations and rollback
 

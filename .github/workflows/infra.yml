@@ -51,12 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, stage, prod]
+        root: [environments/dev, environments/stage, environments/prod, bootstrap]
     steps:
       - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.13.x
       - run: terraform fmt -check -recursive infra
-      - run: terraform -chdir=infra/environments/${{ matrix.environment }} init -backend=false -input=false
-      - run: terraform -chdir=infra/environments/${{ matrix.environment }} validate
+      - run: terraform -chdir=infra/${{ matrix.root }} init -backend=false -input=false
+      - run: terraform -chdir=infra/${{ matrix.root }} validate

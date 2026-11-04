@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 6.20, < 8.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6, < 4.0"
+    }
   }
 }
 
@@ -28,8 +32,9 @@ variable "image_tag" {
   default     = "bootstrap"
 }
 variable "public_base_url" {
-  description = "The public HTTPS base URL of the web service (provider webhooks, media links)."
+  description = "The public HTTPS base URL of the web service (provider webhooks, media links). Null uses the web service's run.app URL."
   type        = string
+  default     = null
 }
 variable "business_number" {
   description = "Postly's WhatsApp business number for this environment (a test number on dev and stage)."
@@ -68,8 +73,15 @@ variable "alert_email" {
   default = null
 }
 
+data "google_project" "this" {
+  project_id = var.project_id
+  depends_on = [google_project_service.this]
+}
+
 locals {
   prefix = "postly-${var.env_name}"
+  # Cloud Run's deterministic URL: https://<service>-<project number>.<region>.run.app.
+  public_base_url = coalesce(var.public_base_url, "https://${local.prefix}-web-${data.google_project.this.number}.${var.region}.run.app")
   # Every database login of database-schema.md (Least privilege) plus the pg-boss login; the
   # migration job sets their passwords from these secrets. Kept in step with ALL_LOGINS in src/db/index.ts.
   logins = [
@@ -85,7 +97,7 @@ locals {
     POSTLY_ENV       = var.env_name
     POSTLY_PROVIDERS = "simulators"
     DATABASE_URL     = "postgres://${module.sql.private_ip}:5432/postly?sslmode=require"
-    PUBLIC_BASE_URL  = var.public_base_url
+    PUBLIC_BASE_URL  = local.public_base_url
     BUSINESS_NUMBER  = var.business_number
     MEDIA_BUCKET     = module.storage.name
   }
@@ -97,6 +109,7 @@ locals {
 }
 
 module "network" {
+  depends_on = [google_project_service.this]
   source     = "../network"
   project_id = var.project_id
   region     = var.region
@@ -104,6 +117,7 @@ module "network" {
 }
 
 module "registry" {
+  depends_on = [google_project_service.this]
   source     = "../artifact_registry"
   project_id = var.project_id
   region     = var.region
@@ -111,12 +125,14 @@ module "registry" {
 }
 
 module "accounts" {
+  depends_on = [google_project_service.this]
   source     = "../service_accounts"
   project_id = var.project_id
   prefix     = local.prefix
 }
 
 module "secrets" {
+  depends_on = [google_project_service.this]
   source     = "../secrets"
   project_id = var.project_id
   prefix     = local.prefix
@@ -142,6 +158,7 @@ module "sql" {
 }
 
 module "storage" {
+  depends_on          = [google_project_service.this]
   source              = "../storage"
   project_id          = var.project_id
   region              = var.region
@@ -193,7 +210,7 @@ module "web" {
   min_instances   = 1
   max_instances   = var.web_max_instances
   memory          = "2Gi"
-  depends_on      = [module.secrets]
+  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "worker" {
@@ -212,7 +229,7 @@ module "worker" {
   min_instances   = 1
   max_instances   = var.worker_max_instances
   memory          = "2Gi"
-  depends_on      = [module.secrets]
+  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "migrate" {
@@ -227,14 +244,15 @@ module "migrate" {
   subnetwork_id   = module.network.subnetwork_id
   env             = local.app_env
   secret_env      = merge(local.app_secret_env, { MIGRATE_ADMIN_URL = module.secrets.ids["db-admin-url"] })
-  depends_on      = [module.secrets]
+  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "monitoring" {
+  depends_on   = [google_project_service.this]
   source       = "../monitoring"
   project_id   = var.project_id
   env_name     = var.env_name
-  web_host     = trimsuffix(trimprefix(var.public_base_url, "https://"), "/")
+  web_host     = trimsuffix(trimprefix(local.public_base_url, "https://"), "/")
   web_service  = module.web.name
   sql_instance = module.sql.instance_name
   alert_email  = var.alert_email
@@ -246,10 +264,14 @@ output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }
 output "secret_ids" { value = module.secrets.ids }
+output "public_base_url" { value = local.public_base_url }
+output "project_id" { value = var.project_id }
+output "region" { value = var.region }
 
 # Shorter log retention for cheap environments (dev); prod and stage keep the GCP default.
 resource "google_logging_project_bucket_config" "default" {
   count          = var.log_retention_days == null ? 0 : 1
+  depends_on     = [google_project_service.this]
   project        = var.project_id
   location       = "global"
   bucket_id      = "_Default"
