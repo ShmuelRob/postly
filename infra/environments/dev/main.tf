@@ -1,4 +1,5 @@
-# Staging: test accounts and test keys only (technical-design.md, Environments). Not applied by any
+# Dev: always-on and cheap, simulators or test accounts only; deployable without a reviewer, from
+# main only (docs/deployment.md, Environments). Not applied by any
 # agent: the human runs the first apply (docs/deployment.md, gate H8).
 
 terraform {
@@ -13,7 +14,7 @@ terraform {
   # Remote state: the human creates the bucket and uncomments this (docs/deployment.md).
   # backend "gcs" {
   #   bucket = "REPLACE_WITH_STATE_BUCKET"
-  #   prefix = "postly/staging"
+  #   prefix = "postly/dev"
   # }
 }
 
@@ -26,17 +27,19 @@ module "postly" {
   source                    = "../../modules/stack"
   project_id                = var.project_id
   region                    = var.region
-  env_name                  = "staging"
+  env_name                  = "dev"
   public_base_url           = var.public_base_url
   business_number           = var.business_number
   github_repository         = var.github_repository
   alert_email               = var.alert_email
-  sql_tier                  = "db-g1-small"
+  sql_tier                  = "db-f1-micro"
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1
-  media_noncurrent_days     = 7
-  media_coldline_after_days = 90
+  media_noncurrent_days     = 3
+  media_coldline_after_days = 30
+  sql_retained_backups      = 3
+  log_retention_days        = 7
 }
 
 output "postly" { value = module.postly }

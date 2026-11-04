@@ -11,7 +11,7 @@ import { startWorkerProcess } from './worker.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
-// land (WP-41) the composition uses the simulators, so a local or staging run reaches no vendor.
+// land (WP-41) the composition uses the simulators, so a local or stage run reaches no vendor.
 
 /** In-process media for simulator runs; the Cloud Storage adapter comes with WP-41. */
 function memoryMedia(publicBaseUrl: string): MediaStorage & DeletionStorage & { get(url: string): Uint8Array | undefined; read(path: string): Promise<{ data: Uint8Array } | undefined> } {

@@ -1,7 +1,8 @@
 name: Deploy
 
-# Manual only. Each run waits for a required reviewer on the GitHub environment it targets
-# (staging or prod), then authenticates with Workload Identity Federation (no key file), pushes the
+# Manual only. A run targets the GitHub environment of the same name (dev, stage or prod); stage
+# and prod wait for a required reviewer, dev does not, and all three deploy only from main. It then
+# authenticates with Workload Identity Federation (no key file), pushes the
 # image, runs the migration job, and rolls out web and worker. It never runs Terraform: the human
 # applies infra (docs/deployment.md, gate H8). Until the human fills the repository variables
 # below and sets up the environments, this workflow cannot authenticate and does nothing.
@@ -12,7 +13,7 @@ on:
       environment:
         description: Target environment
         type: choice
-        options: [staging, prod]
+        options: [dev, stage, prod]
         required: true
 
 permissions:

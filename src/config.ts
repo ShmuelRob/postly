@@ -8,12 +8,12 @@ import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 const Env = z.object({
   /**
    * Required, with no default: a deployed service missing it must not fall back to the public
-   * simulator webhook secret. `local` and `test` may use that secret; `staging` and `prod` may not.
+   * simulator webhook secret. `local` and `test` may use that secret; the deployed `dev`, `stage` and `prod` may not.
    */
-  POSTLY_ENV: z.enum(['local', 'test', 'staging', 'prod'], { error: 'POSTLY_ENV must be local, test, staging or prod' }),
+  POSTLY_ENV: z.enum(['local', 'test', 'dev', 'stage', 'prod'], { error: 'POSTLY_ENV must be local, test, dev, stage or prod' }),
   /** Verifies inbound messaging webhooks; from Secret Manager on Cloud Run. */
   MESSAGING_WEBHOOK_SECRET: z.string().optional(),
-  /** Only `simulators` until the vendor adapters land (WP-41); staging and prod wait for that. */
+  /** Only `simulators` until the vendor adapters land (WP-41); dev, stage and prod wait for that. */
   POSTLY_PROVIDERS: z.literal('simulators', { error: 'POSTLY_PROVIDERS must be "simulators" until WP-41 adds the vendor adapters' }),
   /** The server and database, with no user or password: each login gets its own. */
   DATABASE_URL: z.url().refine((u) => new URL(u).username === '', 'DATABASE_URL must have no user; each role login is built from it'),
@@ -23,7 +23,7 @@ const Env = z.object({
 });
 
 export interface Config {
-  env: 'local' | 'test' | 'staging' | 'prod';
+  env: 'local' | 'test' | 'dev' | 'stage' | 'prod';
   webhookSecret: string;
   databaseUrls: DatabaseUrls;
   jobsUrl: string;
@@ -38,7 +38,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   const parsed = Env.safeParse(env);
   if (!parsed.success) throw new Error(`invalid configuration: ${z.prettifyError(parsed.error)}`);
   const secret = parsed.data.MESSAGING_WEBHOOK_SECRET;
-  const deployed = parsed.data.POSTLY_ENV === 'staging' || parsed.data.POSTLY_ENV === 'prod';
+  const deployed = !['local', 'test'].includes(parsed.data.POSTLY_ENV);
   if (deployed && !secret) throw new Error(`MESSAGING_WEBHOOK_SECRET is required in ${parsed.data.POSTLY_ENV}`);
   if (deployed && secret === SIMULATOR_WEBHOOK_SECRET) {
     throw new Error('MESSAGING_WEBHOOK_SECRET is the public simulator default; set a real secret in Secret Manager');

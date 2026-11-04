@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [staging, prod]
+        environment: [dev, stage, prod]
     steps:
       - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
