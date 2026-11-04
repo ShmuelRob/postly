@@ -59,20 +59,28 @@ Terraform does everything that needs no human decision:
 
 | | dev | stage | prod |
 | --- | --- | --- | --- |
-| Cloud SQL | `db-g1-small`, zonal, no deletion protection (`db-f1-micro` allows about 25 connections, too few for 15 logins with a pool each per process plus pg-boss) | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
+| Cloud SQL | `db-custom-2-7680` (2 vCPU, 7.5 GB, `max_connections` 400), zonal, no deletion protection | the same, no deletion protection | the same, deletion protection |
+| Cloud SQL replicas and HA | none (zonal, no read replicas) | none | none |
 | Cloud SQL backups kept | 3 | 14 | 14 |
-| Worker instances | at most 1 | at most 1 | at most 2 |
-| Media: old object versions kept | 3 days | 7 days | 30 days |
-| Media: to Coldline after | 30 days | 90 days | 180 days |
+| Web | 1 vCPU, 2 GiB, exactly 1 instance | the same | the same |
+| Worker | 2 vCPU, 4 GiB (Chromium rendering), at most 1 instance | the same, at most 1 | the same, at most 2 |
+| Media: old object versions kept | 7 days | 7 days | 7 days |
+| Media: to Coldline after | 180 days | 180 days | 180 days |
 | Log retention (`_Default` bucket) | 7 days | GCP default (30) | GCP default (30) |
 | Branch | `dev` | `stage` | `main` |
 | Deploy | automatic on push | on push, after a required reviewer | on push, after a required reviewer |
 
+**Sizing (review queue items 21, 23).** Every environment is medium-low, not the smallest, in `me-west1` (Tel Aviv), with no replicas and no HA; dev is sized like stage and prod so a release behaves the same in each. The numbers stay inside GCP's limits, checked on 2026-11-04:
+
+- *Cloud Run:* 1 vCPU allows up to 4 GiB, 2 vCPU up to 8 GiB; above 4 GiB needs at least 2 vCPU. Web (1 vCPU, 2 GiB) and worker (2 vCPU, 4 GiB) are within both.
+- *Cloud SQL (Enterprise edition, custom tier):* 1 vCPU or an even count, 0.9 to 6.5 GB of memory per vCPU in multiples of 256 MB, at least 3.75 GB. `db-custom-2-7680` is 3.75 GB per vCPU. Shared-core tiers (`db-f1-micro`, `db-g1-small`) have no SLA and too few connections. Postgres' default `max_connections` for 7.5 GB is 400; the module sets it explicitly so the check below holds.
+- *Connection budget:* each process opens at most 3 connections per login (15 logins, `createDatabase`) plus pg-boss' pool of 10, so 55 per process; the migrate job adds 11 and Cloud SQL reserves a few for its own use (budgeted as 10). Terraform refuses a plan where `(web max + worker max) × 55 + 11 + 10` exceeds `max_connections`: prod needs `3 × 55 + 21 = 186` of 400.
+
 **Branches and promotion.** Each environment has its own branch: `dev` deploys to dev, `stage` to stage, `main` to prod. Feature pull requests target `dev`. Promotion is a pull request `dev` → `stage`, then `stage` → `main`, merged with a merge commit (not squashed) so the branches keep one history. All three branches are protected: changes only through a pull request with `check` passing. A push to a branch (that is, a merged pull request) deploys it to its environment.
 
-**Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the smallest sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
+**Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
 
-The media lifecycle ages are provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
+**Media lifecycle and retention.** The Coldline age (180 days) is longer than the 30-day data retention after cancellation (technical-design.md), so the bucket never moves a live file before the data-deletion job decides on it, and it is past Coldline's 90-day minimum storage charge. The old-version age works the other way: the bucket is versioned, and `days_since_noncurrent_time` removes only versions already overwritten or deleted, so it is kept short (7 days) and media the data-deletion job removes on day 30 is gone for good by about day 37. Only `tmp/` scratch files from rendering are deleted after 1 day. A Terraform `check` in `infra/modules/storage` flags a Coldline age at or below its `retention_days` (30). The ages stay provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
 
 ### IAM (least privilege)
 
@@ -87,6 +95,8 @@ Every secret and bucket binding is on the resource, not on the project. Only Git
 
 **The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `stage` and `prod`, a deployment branch policy that allows only each environment's own branch, and branch protection that lets code reach those branches only through a reviewed pull request with `check` passing. `dev` has no required reviewer on purpose: anything merged to `dev` gets admin access to dev's database, which holds only test data. Terraform sets both (`modules/github_environment`); keep the reviewer list short.
 
+**Who merges and who approves deploys (accepted for now, review queue item 31).** Every agent runs `gh` as the human's account, which is the only required reviewer and a repository admin, so GitHub alone cannot stop an agent from approving a stage or prod deploy or merging a promotion pull request. The gate for agents is procedural: only the reviewer session merges pull requests, including the promotion pull requests (`dev` → `stage`, `stage` → `main`); every other agent opens pull requests and never merges. No agent ever approves a stage or prod deployment in the GitHub environment; only the human does. A later hardening option is a separate GitHub identity for agents with neither admin nor deployment-approval rights.
+
 ### Single web instance (review queue item 14)
 
 The inbound burst buffer lives in the web process's memory. The sweep (`App.start()`) covers a restart and a failed handler, but across two web instances a slow burst can still be handed over twice. Until bursts are durable (a pg-boss job or a database claim keyed by business and sender), the web service runs exactly one instance: `web_max_instances` must be 1, and Terraform refuses another value. The claim was not built in WP-44 because it changes the messaging module and needs a migration, while WP-32 is working on the core files; it stays open as item 14.
@@ -95,7 +105,7 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 
 - `.github/workflows/ci.yml`: `npm run check` on every PR and on every push to `dev`, `stage` and `main`.
 - `.github/workflows/infra.yml`: on every PR and on every push to `dev`, `stage` and `main`, builds the image (never pushed), checks it runs as non-root with no test or playground code, starts the local stack on the simulators with `docker compose` and checks `/healthz` and the singleton weekly schedule, and runs `terraform fmt -check` and `terraform validate` for the three environments and `infra/bootstrap`. It never authenticates to Google Cloud.
-- `.github/workflows/deploy.yml` (CD): runs on every push to `dev`, `stage` or `main` and deploys to the matching environment (dev, stage, prod); stage and prod wait for the environment's required reviewer, which is the approval gate. `workflow_dispatch` redeploys an existing image tag (a rollback), run from the environment's own branch. Every action is pinned by commit SHA. It authenticates through Workload Identity Federation (no key file), builds the image once per run and pushes it tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. Without the environment variables below it stops at its first step.
+- `.github/workflows/deploy.yml` (CD): runs on every push to `dev`, `stage` or `main` and deploys to the matching environment (dev, stage, prod); stage and prod wait for the environment's required reviewer, which is the approval gate. `workflow_dispatch` redeploys an existing image tag (a rollback), run from the environment's own branch. Every action is pinned by commit SHA, here and in `infra.yml`. It authenticates through Workload Identity Federation (no key file), builds the image once per run and pushes it tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. The job is skipped (not failed) until Terraform has set the repository variable `POSTLY_DEPLOY_<ENV>` (`DEV`, `STAGE`, `PROD`) for that environment; a job-level `if` cannot read the environment's own variables such as `GCP_PROJECT_ID`, so this flag stands in for the `vars.GCP_PROJECT_ID != ''` check. If the environment variables are still missing, it stops at its first step.
 
 ## Local run
 
@@ -109,7 +119,20 @@ All of this costs money or creates cloud resources, so agents never do it. Per e
 2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Environments and Variables write on the repository).
 3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
-5. **First deploy.** The apply creates the `dev` and `stage` branches; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
+5. **First deploy.** The dev apply creates the `dev` branch and the stage apply the `stage` branch; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
+
+**Dev first.** Applying only bootstrap and `infra/environments/dev` works on its own: the dev root creates the `dev` branch from `main`, its protection, the `dev` GitHub environment with its variables and `POSTLY_DEPLOY_DEV`, and nothing of stage or prod. The `main` branch protection, the `stage` branch and their environments are created only by the prod and stage roots, so until those run, pushes to `stage` or `main` skip the deploy job cleanly (no `POSTLY_DEPLOY_STAGE` or `POSTLY_DEPLOY_PROD`). The roots share no GitHub resource (each manages its own branch, environment and flag, and only reads the repository), so a later stage or prod apply does not fight dev. Each root's state sits under its own prefix (`postly/dev`, `postly/stage`, `postly/prod`) in `<project>-tfstate`; with one project per environment, run bootstrap once in each project.
+
+```bash
+export GITHUB_TOKEN=<token>
+gcloud auth application-default login
+terraform -chdir=infra/bootstrap init
+terraform -chdir=infra/bootstrap apply -var project_id=<dev-project>
+cp infra/environments/dev/terraform.tfvars.example infra/environments/dev/terraform.tfvars   # fill in the three values
+terraform -chdir=infra/environments/dev init -backend-config="bucket=<dev-project>-tfstate"
+terraform -chdir=infra/environments/dev plan -out=dev.tfplan
+terraform -chdir=infra/environments/dev apply dev.tfplan
+```
 
 Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 
