@@ -95,7 +95,7 @@ export interface App {
   cancellation: Cancellation;
   /** The daily data deletion job (WP-43). */
   dataDeletion: DataDeletion;
-  /** The monthly report job (WP-43): the previous UTC month's figures to every active business. */
+  /** The monthly report job (WP-43): the previous month's figures, in each business's time zone, to every active business. */
   monthlyReport: { tick(now: Date, options?: { businessId?: string }): Promise<{ sent: string[] }> };
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
@@ -268,16 +268,16 @@ export function createApp(options: AppOptions): App {
   const report = createMonthlyReport({ db, provider: providers.publishing });
   const monthlyReport: App['monthlyReport'] = {
     async tick(at, tickOptions = {}) {
-      const { from, to } = previousMonth(at);
       const active = await db.withSystem('scheduler', (tx) =>
         tx
-          .select({ id: schema.business.id })
+          .select({ id: schema.business.id, timezone: schema.business.timezone })
           .from(schema.business)
           .where(and(eq(schema.business.status, 'active'), tickOptions.businessId ? eq(schema.business.id, tickOptions.businessId) : undefined)),
       );
       const sent: string[] = [];
-      for (const { id } of active) {
+      for (const { id, timezone } of active) {
         try {
+          const { from, to } = previousMonth(at, timezone);
           const figures = await report.figures(id, from, to);
           const to_ = figures && (await owner(id));
           if (!figures || !to_) continue;
@@ -286,7 +286,7 @@ export function createApp(options: AppOptions): App {
             language: to_.language,
             templateName: cancellationCopy.MONTHLY_REPORT_TEMPLATE,
             variables: {
-              month: cancellationCopy.monthName(from),
+              month: cancellationCopy.monthName(from, timezone),
               posts: String(figures.posts),
               reach: cancellationCopy.metric(figures.reach),
               engagement: cancellationCopy.metric(figures.engagement),

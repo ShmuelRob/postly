@@ -145,13 +145,17 @@ export function createBilling(options: BillingOptions): Billing {
     },
 
     async cancel(businessId) {
+      // The provider call holds no row lock (review of PR #54): cancelling at the provider is idempotent,
+      // so a parallel callback or a second cancel can run meanwhile, and the stored status is set after it.
+      const [row] = await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId)));
+      if (!row || row.status === 'cancelled') return;
+      if (row.providerSubscriptionId) await provider.cancelSubscription(row.providerSubscriptionId);
       await db.withBusiness('billing', businessId, async (tx) => {
-        const [row] = await tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId)).for('update');
-        if (!row || row.status === 'cancelled') return;
-        if (row.providerSubscriptionId) await provider.cancelSubscription(row.providerSubscriptionId);
+        const [locked] = await tx.select().from(schema.subscription).where(eq(schema.subscription.id, row.id)).for('update');
+        if (!locked || locked.status === 'cancelled') return;
         await tx
           .update(schema.subscription)
-          .set({ status: transition(subscriptionMachine, row.status, 'CANCELLED'), updatedAt: new Date() })
+          .set({ status: transition(subscriptionMachine, locked.status, 'CANCELLED'), updatedAt: new Date() })
           .where(eq(schema.subscription.id, row.id));
       });
     },

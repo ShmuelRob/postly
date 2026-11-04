@@ -20,6 +20,7 @@ import type { App } from '../../src/app.js';
 import { e2eTest, type E2eHarness, type E2eRun } from './harness/index.js';
 
 const OWNER = '+972501233431';
+const OTHER_OWNER = '+972501233432';
 const BUSINESS_PHONE = '+972501234560';
 const CAPTION = 'צבעונים חדשים הגיעו, 25 ₪ לזר';
 // Tuesday 2026-11-03 10:00 in Israel. The first proposed time is Wednesday 10:00 (08:00Z).
@@ -164,10 +165,15 @@ e2eTest('the payment provider reports the subscription cancelled: the business i
 
 e2eTest('the data deletion schedule: kept for 30 days after cancellation, then every row and file of the business is deleted', { timeout: 90_000 }, async ({ e2e }) => {
   await withBusiness(e2e, async (ctx) => {
-    const { app, db, files, businessId, setNow } = ctx;
+    const { app, db, files, businessId, setNow, world } = ctx;
     const draft = await scheduledPost(ctx);
     expect([...files.keys()].some((p) => p.startsWith(`${businessId}/`))).toBe(true);
     await app.cancellation.cancel(businessId, 'console');
+    // A second business, cancelled ten days later, is not due when the first one is.
+    const otherId = await world.createBusiness(OTHER_OWNER);
+    setNow(new Date(Date.parse(START) + 10 * DAY).toISOString());
+    await app.cancellation.cancel(otherId, 'console');
+    const both = [businessId, otherId];
 
     /** Rows of the business in every business-owned table (the console role sees them all). */
     const counts = () =>
@@ -186,19 +192,23 @@ e2eTest('the data deletion schedule: kept for 30 days after cancellation, then e
     // Day 29: nothing is deleted.
     const day29 = new Date(Date.parse(START) + 29 * DAY);
     setNow(day29.toISOString());
-    expect(await app.dataDeletion.tick(day29, { businessId })).toEqual([]);
+    expect(await app.dataDeletion.tick(day29, { businessIds: both })).toEqual([]);
     expect(await counts()).toEqual(before);
 
     // Day 30, the next daily run: the business and everything it owns are gone, files included.
     const day30 = new Date(Date.parse(START) + 30 * DAY + 60 * 60_000);
     setNow(day30.toISOString());
-    expect(await app.dataDeletion.tick(day30, { businessId })).toEqual([businessId]);
+    expect(await app.dataDeletion.tick(day30, { businessIds: both })).toEqual([businessId]);
     expect(Object.values(await counts()).every((n) => n === 0)).toBe(true);
+    // The business not due yet keeps its row and its dates.
+    expect(await business(db, otherId)).toMatchObject({ status: 'cancelled', dataDeleteAfter: new Date(Date.parse(START) + 40 * DAY) });
     expect([...files.keys()].filter((p) => p.startsWith(`${businessId}/`))).toEqual([]);
     expect(await db.postStatus(draft.postId).catch(() => 'gone')).not.toBe('cancelled');
 
     // A later run finds nothing.
-    expect(await app.dataDeletion.tick(new Date(day30.getTime() + DAY), { businessId })).toEqual([]);
+    expect(await app.dataDeletion.tick(new Date(day30.getTime() + DAY), { businessIds: both })).toEqual([]);
+    // Its own day comes ten days later.
+    expect(await app.dataDeletion.tick(new Date(Date.parse(START) + 40 * DAY + 60 * 60_000), { businessIds: both })).toEqual([otherId]);
   });
 });
 
@@ -244,5 +254,37 @@ e2eTest('the monthly report sends nothing when the provider supplies no metric',
     setNow('2026-12-01T06:00:00.000Z');
     expect(await app.monthlyReport.tick(new Date('2026-12-01T06:00:00.000Z'), { businessId })).toEqual({ sent: [] });
     expect(templates(run).length).toBe(before);
+  });
+});
+
+e2eTest('a cancellation that stopped half way finishes when run again, and the owner is told exactly once (review of PR #54)', { timeout: 90_000 }, async ({ e2e }) => {
+  await withBusiness(e2e, async ({ run, app, db, payment: paymentSim, businessId }) => {
+    const cancel = paymentSim.cancelSubscription.bind(paymentSim);
+    let calls = 0;
+    let lockFree: boolean | undefined;
+    paymentSim.cancelSubscription = async (id) => {
+      calls += 1;
+      if (calls === 1) throw new Error('payment provider down');
+      // The provider is called with no subscription row lock held: another transaction takes it at once.
+      lockFree = await db.db
+        .withBusiness('billing', businessId, (tx) => tx.execute(sql`select id from subscription for update nowait`))
+        .then(() => true, () => false);
+      return cancel(id);
+    };
+
+    await expect(app.cancellation.cancel(businessId, 'console')).rejects.toThrow('payment provider down');
+    // The steps before the failure held: cancelled and disconnected; the owner is not told yet.
+    expect((await business(db, businessId))?.status).toBe('cancelled');
+    expect((await channels(db, businessId)).map((c) => c.status)).toEqual(['revoked', 'revoked']);
+    expect(templates(run)).toEqual([]);
+    expect((await subscription(db, businessId))?.status).toBe('active');
+
+    // The team runs it again: the subscription is cancelled and the owner gets the template once.
+    expect(await app.cancellation.cancel(businessId, 'console')).toMatchObject({ outcome: 'cancelled' });
+    expect(lockFree).toBe(true);
+    expect((await subscription(db, businessId))?.status).toBe('cancelled');
+    expect(templates(run).map((t) => t.template?.name)).toEqual([cancellationCopy.CANCELLED_TEMPLATE]);
+    await app.cancellation.cancel(businessId, 'console');
+    expect(templates(run)).toHaveLength(1);
   });
 });

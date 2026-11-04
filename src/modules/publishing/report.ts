@@ -2,6 +2,7 @@ import { and, eq, gte, isNotNull, lt } from 'drizzle-orm';
 import type { PublishingProvider } from '../../contracts/providers/publishing.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { zonedTime } from './times.js';
 
 // The monthly report (WP-43; technical-design.md, Cancellation, data deletion and the monthly report).
 // Only the metrics of Postly's own publications that went live in the month count.
@@ -23,11 +24,13 @@ export interface MonthlyReport {
   figures(businessId: string, from: Date, to: Date): Promise<MonthlyFigures | null>;
 }
 
-/** The previous calendar month in UTC, for a run at `now`. */
-export function previousMonth(now: Date): { from: Date; to: Date } {
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth() - 1, 1));
-  return { from, to };
+/** The previous calendar month in `timezone` (the business's), for a run at `now`: local midnights of the 1sts. */
+export function previousMonth(now: Date, timezone: string): { from: Date; to: Date } {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit' }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')!.value);
+  const month = Number(parts.find((p) => p.type === 'month')!.value) - 1;
+  const midnight = (y: number, m: number) => zonedTime(new Date(Date.UTC(y, m, 1)), '00:00', timezone);
+  return { from: midnight(year, month - 1), to: midnight(year, month) };
 }
 
 export function createMonthlyReport(deps: { db: Database; provider: PublishingProvider }): MonthlyReport {

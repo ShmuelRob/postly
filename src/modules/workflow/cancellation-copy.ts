@@ -20,9 +20,9 @@ export function deletionDate(at: Date, timeZone: string): string {
   return `${part('day')}.${part('month')}.${part('year')}`;
 }
 
-/** The report's month in Hebrew, for example "אוקטובר 2026". The month is a UTC calendar month. */
-export function monthName(from: Date): string {
-  return new Intl.DateTimeFormat('he-IL', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(from);
+/** The report's month in Hebrew, for example "אוקטובר 2026", in the business's time zone. */
+export function monthName(from: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('he-IL', { timeZone, month: 'long', year: 'numeric' }).format(from);
 }
 
 /** A number for the owner, with thousands separators. */

@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { PublishDeferral, PublishingJob, PublishOutcome, PublishRefusal } from '../../contracts/approval.js';
-import type { Network } from '../../contracts/common.js';
+import { NETWORKS, type Network } from '../../contracts/common.js';
 import type { PublishingProvider } from '../../contracts/providers/publishing.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -180,12 +180,14 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
    * for a later tick, so the owner is never told before the post is live.
    */
   async function finish(businessId: string, postId: string) {
-    const rows = await db.withBusiness('publishing', businessId, (tx) =>
-      tx
-        .select({ id: p.id, status: p.status, network: p.network, providerPostId: p.providerPostId, publishedAt: p.publishedAt, lastError: p.lastError })
-        .from(p)
-        .where(eq(p.postId, postId)),
-    );
+    const rows = (
+      await db.withBusiness('publishing', businessId, (tx) =>
+        tx
+          .select({ id: p.id, status: p.status, network: p.network, providerPostId: p.providerPostId, publishedAt: p.publishedAt, lastError: p.lastError })
+          .from(p)
+          .where(eq(p.postId, postId)),
+      )
+    ).sort((a, b) => NETWORKS.indexOf(a.network) - NETWORKS.indexOf(b.network)); // The owner reads the networks in a fixed order.
     if (rows.some((r) => !['published', 'failed', 'cancelled'].includes(r.status))) return;
     // A `published` publication the provider later reported failed (last_error, never live) counts as failed.
     const dropped = new Set(rows.filter((r) => r.status === 'published' && r.publishedAt === null && r.lastError !== null).map((r) => r.id));

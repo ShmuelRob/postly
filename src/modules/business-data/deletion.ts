@@ -1,4 +1,4 @@
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, inArray, lte } from 'drizzle-orm';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 
@@ -13,8 +13,8 @@ export interface DeletionStorage {
 }
 
 export interface DataDeletion {
-  /** Deletes every business due at `now`; `businessId` limits it to one (tests, playground). Returns the deleted ids. */
-  tick(now: Date, options?: { businessId?: string }): Promise<string[]>;
+  /** Deletes every business due at `now`; `businessIds` limits it (tests share a database). Returns the deleted ids. */
+  tick(now: Date, options?: { businessIds?: string[] }): Promise<string[]>;
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -55,7 +55,7 @@ export function createDataDeletion(deps: { db: Database; storage?: DeletionStora
         tx
           .select({ id: b.id })
           .from(b)
-          .where(and(eq(b.status, 'cancelled'), lte(b.dataDeleteAfter, now), options.businessId ? eq(b.id, options.businessId) : undefined)),
+          .where(and(eq(b.status, 'cancelled'), lte(b.dataDeleteAfter, now), options.businessIds ? inArray(b.id, options.businessIds) : undefined)),
       );
       const deleted: string[] = [];
       for (const { id } of due) {

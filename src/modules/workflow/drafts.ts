@@ -113,8 +113,12 @@ export const DRAFTS_WAITING = 'drafts_waiting';
 
 export function createDrafts(deps: DraftsDeps): Drafts {
   const { db, workflow } = deps;
-  /** Businesses whose drafts of the current run could not be sent because the window had closed. */
-  const windowClosed = new Set<string>();
+  /**
+   * One drafting run (a week, or a change): whether a draft could not be sent because the window had
+   * closed. Scoped to the run, so nothing carries over to a later run, whichever path threw (review of
+   * PR #52, item c, and of PR #54).
+   */
+  type Run = { windowClosed: boolean };
 
   const loadBusiness = (businessId: string) =>
     db.withBusiness('workflow', businessId, async (tx) => {
@@ -261,6 +265,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
   async function draftPost(
     business: typeof schema.business.$inferSelect,
     post: PostRow,
+    run: Run,
     redraft?: { changes: string[]; networks: Network[] },
   ): Promise<Outcome> {
     const businessId = business.id;
@@ -356,7 +361,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     } catch (error) {
       // The window closed: the draft is ready and goes out after the owner's next message.
       if (!(error instanceof WindowClosedError) || !deps.messaging.sendTemplate) throw error;
-      windowClosed.add(businessId);
+      run.windowClosed = true;
     }
     const ready = await postEvent(businessId, post.id, 'DRAFT_READY', async (tx) => {
       const [row] = await tx.select({ current: schema.post.currentVersionId }).from(schema.post).where(eq(schema.post.id, post.id));
@@ -366,9 +371,9 @@ export function createDrafts(deps: DraftsDeps): Drafts {
   }
 
   /** After drafting: `DRAFTS_SENT` when at least one draft is open, else a person takes over. */
-  async function finish(business: typeof schema.business.$inferSelect) {
+  async function finish(business: typeof schema.business.$inferSelect, run: Run) {
     const open = await openDrafts(business.id);
-    const waiting = windowClosed.delete(business.id);
+    const waiting = run.windowClosed;
     if (open.length > 0 && waiting) {
       const question: OpenQuestion = { key: DRAFTS_WAITING, askedFields: [], attempts: 1, photoAssetIds: [] };
       if (!(await conversation(business.id, 'DRAFTS_SENT', question)).ok) return;
@@ -401,16 +406,11 @@ export function createDrafts(deps: DraftsDeps): Drafts {
         .where(and(eq(schema.post.weeklyUpdateId, weekId), inArray(schema.post.status, ['planned', 'drafting'])))
         .orderBy(asc(schema.post.position)),
     );
-    try {
-      for (const post of todo) {
-        if ((await draftPost(business, post)) === 'asked') return;
-      }
-      await finish(business);
-    } catch (error) {
-      // A run that throws must not leave its closed-window mark for the next run (review of PR #52, item c).
-      windowClosed.delete(businessId);
-      throw error;
+    const run: Run = { windowClosed: false };
+    for (const post of todo) {
+      if ((await draftPost(business, post, run)) === 'asked') return;
     }
+    await finish(business, run);
   }
 
   async function answerPhotoChoice(burst: DraftsBurst, question: OpenQuestion) {
@@ -506,8 +506,9 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       tx.insert(schema.preferenceRule).values({ businessId, scope: rule.scope, rule: rule.text, sourceMessageId: source?.id ?? null, sourcePostVersionId: version.id }),
     );
     const drafting = await loadPost(businessId, post.id);
-    await draftPost(business, drafting!, { changes: instructions, networks });
-    await finish(business);
+    const run: Run = { windowClosed: false };
+    await draftPost(business, drafting!, run, { changes: instructions, networks });
+    await finish(business, run);
   }
 
   async function transcribed(burst: DraftsBurst, language: Language) {

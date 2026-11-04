@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { BusinessProfile } from '../../contracts/business-profile.js';
 import type { Network } from '../../contracts/common.js';
 import type { SendTemplateRequest } from '../../contracts/providers/messaging.js';
@@ -81,9 +81,18 @@ export function createCancellation(deps: CancellationDeps): Cancellation {
       // 4. The subscription.
       await deps.cancelSubscription?.(businessId);
 
-      // 5. The owner, by template (the window may be closed); only on the first cancellation.
+      // 5. The owner, by template (the window may be closed), once: a run that stopped before this step
+      // sends it when run again (review of PR #54).
       const deleteAfter = business.dataDeleteAfter!;
-      if (before.status !== 'cancelled') {
+      const m = schema.message;
+      const [told] = await db.withBusiness('workflow', businessId, (tx) =>
+        tx
+          .select({ id: m.id })
+          .from(m)
+          .where(and(eq(m.direction, 'outbound'), eq(m.kind, 'template'), sql`${m.payload}->>'templateName' = ${copy.CANCELLED_TEMPLATE}`))
+          .limit(1),
+      );
+      if (!told) {
         const profile = BusinessProfile.safeParse(business.profile);
         await deps.messaging.sendTemplate(businessId, {
           to: business.approverPhone,
