@@ -46,3 +46,7 @@ export const notAnApproval = 'כדי לאשר טיוטה צריך ללחוץ ע�
 export const draftsNeedReview = 'הצוות שלנו עובר על הטיוטות של השבוע ויחזור אליך בקרוב.';
 
 export const handedOff = 'תודה! מישהו מהצוות שלנו ימשיך איתך מכאן.';
+
+/** Approval replies (technical-design.md, Approval flow). Provisional (H6). */
+export const approved = (topic: string) => `✅ הפוסט "${topic}" אושר.`;
+export const notCurrentDraft = 'הכפתור הזה שייך לטיוטה שכבר לא בתוקף. הנה הטיוטות הפתוחות:';

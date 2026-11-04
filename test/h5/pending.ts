@@ -5,7 +5,7 @@
  * docs/implementation-plan.md while its switch is still on. Nothing else here may change.
  */
 export const H5_PENDING = {
-  approval: true,
+  approval: false,
   publishing: true,
 } as const;
 

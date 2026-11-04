@@ -78,6 +78,12 @@ export interface Messaging {
   handleWebhook(request: WebhookRequest): Promise<ReceiveOutcome[]>;
   /** Stores one verified inbound message: drops duplicates, routes unknown numbers to the console. */
   receive(message: InboundMessage): Promise<ReceiveOutcome>;
+  /**
+   * Stores one verified inbound message of a known business without handing it to the handler
+   * (marked processed), or finds the stored row of the same provider message. Returns the row id.
+   * The approval service records a message the app did not receive through `receive` this way.
+   */
+  record(businessId: string, message: InboundMessage): Promise<string>;
   /** Throws WindowClosedError outside the 24-hour window. */
   sendText(businessId: string, request: SendTextRequest): Promise<SendResult>;
   /** Throws WindowClosedError outside the 24-hour window. */
@@ -327,6 +333,24 @@ export function createMessaging(options: MessagingOptions): Messaging {
       return outcomes;
     },
     receive,
+    async record(businessId, input) {
+      const message = InboundMessage.parse(input);
+      return db.withBusiness('messaging', businessId, async (tx) => {
+        const m = schema.message;
+        const [row] = await tx
+          .insert(m)
+          .values({ ...messageRow(message), businessId, processedAt: now() })
+          .onConflictDoNothing({ target: [m.provider, m.providerMessageId] })
+          .returning({ id: m.id });
+        if (row) return row.id;
+        const [existing] = await tx
+          .select({ id: m.id })
+          .from(m)
+          .where(and(eq(m.provider, message.provider), eq(m.providerMessageId, message.providerMessageId)));
+        if (!existing) throw new Error('inbound message belongs to another business');
+        return existing.id;
+      });
+    },
     async sendText(businessId, request) {
       await requireOpenWindow(businessId, request.to);
       const payload = request.mediaUrl ? { mediaUrl: request.mediaUrl } : null;

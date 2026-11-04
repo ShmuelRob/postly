@@ -106,7 +106,7 @@ Stored in `post.status`. This is the machine that protects the approval rule.
 | `awaiting_approval` | `APPROVED` | `approved` | See approval guard |
 | `awaiting_approval` | `CHANGE_REQUESTED` | `drafting` | |
 | `approved` | `CHANGE_REQUESTED` | `drafting` | Existing approval is invalidated |
-| `approved` | `SCHEDULED` | `scheduled` | Owner confirmed the times; one publication per connected channel exists |
+| `approved` | `SCHEDULED` | `scheduled` | Owner confirmed the times; one publication per network of the approved version exists, each on a verified connection |
 | `scheduled` | `CHANGE_REQUESTED` | `drafting` | Approval is invalidated; pending publications are cancelled |
 | `scheduled` | `PUBLISHING_STARTED` | `publishing` | First publication started |
 | `publishing` | `ALL_PUBLISHED` | `published` | Every publication is `published` |
@@ -129,7 +129,7 @@ When the owner sent several photos for a planned single post, the draft asks the
 3. The button payload carries the content hash of a `post_version`, and that hash equals the hash of `post.current_version_id`.
 4. The post is in `awaiting_approval`.
 
-Any new `post_version` invalidates earlier approvals (`approval.invalidated_at` is set). A request to publish on only one channel is a change request.
+Any new `post_version` invalidates earlier approvals (`approval.invalidated_at` is set). A request to publish on only one channel is a change request. The approval service also refuses a tap while the conversation is in [handoff](#human-handoff), and a message it already handled (WP-33; refusal reasons and their order are in [technical-design.md](technical-design.md#approval-flow)). The guard is checked inside one transaction that locks the post row, so two taps cannot both approve. Invalidation happens before the new version is written and before `CHANGE_REQUESTED` leaves `approved` or `scheduled`.
 
 ### Publishing guard
 

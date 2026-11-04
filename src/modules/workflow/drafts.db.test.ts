@@ -64,7 +64,8 @@ describe('what the owner is shown', { timeout: 30_000 }, () => {
       mediaUrl: async (_b, a) => `https://media.test/${a}`,
       urlFor: (p) => `https://media.test/${p}`,
       readFile: async (p) => new TextEncoder().encode(p),
-      samplePhotoUrl: 'https://media.test/sample.png',
+      invalidate: async () => {},
+    samplePhotoUrl: 'https://media.test/sample.png',
     }).draftWeek(id, weekId);
 
     expect(sent.map((m) => [m.kind, m.text.split('\n')[0], m.mediaUrl, m.buttons])).toEqual([
@@ -92,7 +93,8 @@ describe('drafting errors', { timeout: 30_000 }, () => {
       mediaUrl: async (_b, a) => `https://media.test/${a}`,
       urlFor: (p) => `https://media.test/${p}`,
       readFile: async () => new Uint8Array([1, 2, 3]),
-      samplePhotoUrl: 'https://media.test/sample.png',
+      invalidate: async () => {},
+    samplePhotoUrl: 'https://media.test/sample.png',
     };
     await createDrafts(deps).draftWeek(id, weekId);
 
