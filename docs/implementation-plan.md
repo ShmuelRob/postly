@@ -127,7 +127,7 @@ Added from the human's review of the queue on 2026-11-04 (items 15 and 29, and t
 
 ### Phase 5b: security debts
 
-From the ranked debts in [security.md](security.md#technical-debts-ranked) (T3, #62). Already covered elsewhere: D5 and D6 by T11 (console column grants, `ALTER ROLE`), D11 by T2 (the durable burst claim), D13 by WP-41, D14 by WP-47; the dev mocks are WP-51.
+From the ranked debts in [security.md](security.md#technical-debts-ranked) (T3, #62). Already covered elsewhere: D5 and D6 by T11 (console column grants, `ALTER ROLE`), D11 by T2 (the durable burst claim), D13 by WP-41, D14 by WP-47; the dev mocks are WP-51. The rows are ordered by effort (quick fixes first), not by the security.md rank.
 
 | ID | Package | Lane | Depends on | Done when | Status |
 | --- | --- | --- | --- | --- | --- |
