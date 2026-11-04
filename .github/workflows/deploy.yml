@@ -68,9 +68,10 @@ jobs:
         run: |
           gcloud run jobs update "$PREFIX-migrate" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run jobs execute "$PREFIX-migrate" --region "$REGION" --wait
-      - name: Roll out the worker, then the web
+      - name: Roll out the worker, the console, then the web
         run: |
           gcloud run deploy "$PREFIX-worker" --region "$REGION" --image "$IMAGE" --quiet
+          gcloud run deploy "$PREFIX-console" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-web" --region "$REGION" --image "$IMAGE" --quiet
       - name: Smoke check
         run: |
