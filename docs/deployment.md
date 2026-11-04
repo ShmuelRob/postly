@@ -109,7 +109,9 @@ All of this costs money or creates cloud resources, so agents never do it. Per e
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
 5. **First deploy.** The apply creates the `dev` and `stage` branches; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
 
-Later: **vendor accounts** (WP-41: WhatsApp, publishing, Google AI, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+
+Gemini needs no vendor account or key: Terraform enables `aiplatform.googleapis.com` and grants `roles/aiplatform.user` to the web and worker service accounts, which call Vertex AI with their own credentials (Application Default Credentials).
 
 ## Migrations and rollback
 

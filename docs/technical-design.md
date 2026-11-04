@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google for now, behind a replaceable model layer | May change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
