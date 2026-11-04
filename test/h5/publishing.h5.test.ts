@@ -3,7 +3,7 @@
  * "Publication"). Written from the docs before WP-34. WP-34 may not edit these; a case it believes
  * is wrong is reported. State is read and forced with the test-owned SQL in `db.ts`.
  */
-import { afterEach, describe, expect } from 'vitest';
+import { afterEach, describe, expect, it as passingIt } from 'vitest';
 import type { Network } from '../../src/contracts/common.js';
 import {
   APPROVER,
@@ -143,7 +143,8 @@ describe('H5 publishing: pauses and handoff defer', () => {
 });
 
 describe('H5 publishing: cross-business references', () => {
-  it("a publication pointing at another business's approval never publishes", async () => {
+  // Passes before WP-34: the database refuses the forged row (WP-24). Human-approved 2026-11-04 (PR #48).
+  passingIt("a publication pointing at another business's approval never publishes", async () => {
     const s = await open();
     const a = await approvedPost(s);
     const b = await businessWithDraft(s, OTHER_APPROVER);

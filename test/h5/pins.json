@@ -4,7 +4,7 @@
   "test/h5/db.ts": "cf8ab8c77918b92e16da808a92329acbc179e5bc808ec30189cb53de053b7ba4",
   "test/h5/fixtures.ts": "81cab0aa363666085b049898136bf00e3af487ed00725ab00061136562cad9de",
   "test/h5/meta.test.ts": "d51c941f14aee64abf297aa3b66aab3bd90b6cdd57233204c3743054e66fae9b",
-  "test/h5/publishing.h5.test.ts": "13f5cd0d3459e0d4e7a35db9f8355ca9cdcecb110e65e5853ee18aaecef3a49e",
+  "test/h5/publishing.h5.test.ts": "8b39414ba3c2abe916c58a40014cc99de992128d4658d1363e61b222a3519e1a",
   "test/h5/world.ts": "fb79534d3d89cb36131d34bde0d2937b9730a2059fab245fefcd3776714d9195",
   "src/contracts/approval.ts": "fdfaed72fcc6a05c0868ad03c621b1199223e73536db2a0e27863ae96bb348d6"
 }
