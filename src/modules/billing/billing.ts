@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { WindowClosedError, type WebhookRequest } from '../../contracts/providers/messaging.js';
-import type { PaymentEvent, PaymentProvider, PaymentWebhooks } from '../../contracts/providers/payment.js';
+import type { PaymentEvent, PaymentProvider, PaymentWebhooks, PlanPrice } from '../../contracts/providers/payment.js';
 import { subscriptionMachine, type SubscriptionState } from '../../contracts/state-machines/index.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -13,9 +13,13 @@ type SubscriptionEvent = (typeof subscriptionMachine.events)[number];
 export const DEFAULT_PLAN = 'basic';
 
 /** Owner-facing copy. Provisional (H6): drafted from the PRD and queued for the human. */
+/** Agorot as shekels for the owner: 30000 is "300", 29950 is "299.50". */
+export const shekels = (amountAgorot: number) =>
+  amountAgorot % 100 === 0 ? String(amountAgorot / 100) : (amountAgorot / 100).toFixed(2);
+
 export const BILLING_COPY = {
-  paymentLink: (url: string) =>
-    `כדי להפעיל את המנוי ל-Postly, אפשר לשלם בקישור המאובטח:\n${url}\nהתשלום מתבצע באתר של ספק התשלום, ואנחנו לא שומרים את פרטי הכרטיס.`,
+  paymentLink: (url: string, amountAgorot: number) =>
+    `המנוי ל-Postly עולה ${shekels(amountAgorot)} ₪ לחודש. כדי להפעיל אותו, אפשר לשלם בקישור המאובטח:\n${url}\nהתשלום מתבצע באתר של ספק התשלום, ואנחנו לא שומרים את פרטי הכרטיס.`,
   active: 'התשלום התקבל והמנוי פעיל. תודה!',
   past_due: 'לא הצלחנו לגבות את התשלום על המנוי. כדי שהשירות ימשיך, כתבו לנו כאן ונעזור לעדכן את אמצעי התשלום.',
   cancelled: 'המנוי בוטל.',
@@ -57,9 +61,9 @@ export interface Billing {
 
 const EVENTS_TO: Record<SubscriptionState, SubscriptionEvent[]> = {
   active: ['PAYMENT_SUCCEEDED'],
-  past_due: ['TRIAL_ENDED', 'PAYMENT_FAILED'],
+  past_due: ['PAYMENT_FAILED'],
   cancelled: ['CANCELLED'],
-  trialing: [],
+  pending: [],
 };
 
 /** The subscription event that moves `from` to the reported status, or null when none does. */
@@ -124,9 +128,19 @@ export function createBilling(options: BillingOptions): Billing {
     });
   }
 
+  /** The plan's current price: its newest `plan_price` row (database-schema.md). */
+  async function currentPrice(businessId: string): Promise<PlanPrice> {
+    const [row] = await db.withBusiness('billing', businessId, (tx) =>
+      tx.select().from(schema.planPrice).where(eq(schema.planPrice.plan, plan)).orderBy(desc(schema.planPrice.id)).limit(1),
+    );
+    if (!row) throw new Error(`Plan ${plan} has no price`);
+    return { amountAgorot: row.amountAgorot, currency: 'ILS' };
+  }
+
   return {
     async sendPaymentLink(businessId) {
-      const link = await provider.createPaymentLink({ businessId, plan });
+      const price = await currentPrice(businessId);
+      const link = await provider.createPaymentLink({ businessId, plan, price });
       await db.withBusiness('billing', businessId, async (tx) => {
         const [existing] = await tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId));
         if (existing) {
@@ -140,7 +154,7 @@ export function createBilling(options: BillingOptions): Billing {
             .values({ businessId, plan, provider: provider.name, providerCustomerId: link.providerCustomerId });
         }
       });
-      await messaging.sendText(businessId, { to: await approverPhone(businessId), text: BILLING_COPY.paymentLink(link.url) });
+      await messaging.sendText(businessId, { to: await approverPhone(businessId), text: BILLING_COPY.paymentLink(link.url, price.amountAgorot) });
       return { url: link.url };
     },
 
@@ -163,7 +177,7 @@ export function createBilling(options: BillingOptions): Billing {
     async handleWebhook(request) {
       const event = await provider.verifyWebhook(request);
       const outcome = await apply(event);
-      if (outcome.kind !== 'applied' || outcome.to === 'trialing') return outcome;
+      if (outcome.kind !== 'applied' || outcome.to === 'pending') return outcome;
       if (outcome.to === 'cancelled' && options.onCancelled) {
         await options.onCancelled(event.businessId);
         return { ...outcome, notified: true };

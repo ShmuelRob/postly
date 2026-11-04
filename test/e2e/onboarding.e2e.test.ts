@@ -13,6 +13,7 @@ import type { BusinessProfileDraft } from '../../src/contracts/business-profile.
 import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
+import { BILLING_COPY, PAYMENT_WEBHOOK_PATH } from '../../src/modules/billing/index.js';
 import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
 import { buildServer } from '../../src/server.js';
@@ -63,6 +64,7 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   const publishingSim = new PublishingSimulator();
   const modelSim = new ModelSimulator();
   modelSim.setDefault('profile_extraction', (input) => ({ found: extractions[input.text] ?? {}, unclear: [] }));
+  const paymentSim = new PaymentSimulator();
 
   const voiceName = messagingSim.addMedia('audio/ogg', new Uint8Array([1, 2, 3]));
   const voiceDifferentiator = messagingSim.addMedia('audio/ogg', new Uint8Array([4, 5, 6]));
@@ -84,7 +86,7 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
     messaging: messagingSim,
     publishing: publishingSim,
     model: modelSim,
-    payment: new PaymentSimulator(),
+    payment: paymentSim,
     renderer: { render: async () => ({}) },
     design,
   } satisfies Providers;
@@ -95,17 +97,22 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   );
 
   let onboarding: ReturnType<typeof createApp>['onboarding'] | undefined;
+  let deliverPayment = async (_subscriptionId: string) => 0;
   const app: AppFactory = ({ messaging: messagingProvider, publishing, model, design: recordedDesign }) => {
     const postly = createApp({
       db,
-      providers: { messaging: messagingProvider, publishing, models: { google: model } },
+      providers: { messaging: messagingProvider, publishing, models: { google: model }, payment: paymentSim },
       design: recordedDesign!,
       media: storage,
       businessNumber: BUSINESS_PHONE,
       samplePhotoUrl: storage.urlFor('bundled/sample.jpg'),
     });
     onboarding = postly.onboarding;
-    const server = buildServer({ messaging: postly.messaging, publicBaseUrl: 'https://postly.example.test' });
+    const server = buildServer({ messaging: postly.messaging, billing: postly.billing!, publicBaseUrl: 'https://postly.example.test' });
+    deliverPayment = async (subscriptionId) => {
+      const hook = paymentSim.webhook(subscriptionId);
+      return (await server.inject({ method: 'POST', url: PAYMENT_WEBHOOK_PATH, headers: hook.headers, payload: hook.body })).statusCode;
+    };
     return {
       async deliverInbound(message) {
         const hook = messagingSim.webhook(message);
@@ -188,7 +195,20 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   publishingSim.connect(businessId, 'instagram');
   publishingSim.connect(businessId, 'facebook');
   await run.owner.sendsText('חיברתי');
-  expect(lastSaid()).toBe(copy.activated);
+
+  // 9. No trial (T1): activation is followed at once by the payment link, at the price setting (ILS 300).
+  const [payLink] = paymentSim.links;
+  expect(payLink?.request).toEqual({ businessId, plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } });
+  expect(said().slice(-2)).toEqual([copy.activated, BILLING_COPY.paymentLink(payLink!.link.url, 30000)]);
+  expect(lastSaid()).toContain('300 ₪ לחודש');
+  const subscriptionOf = async () => (await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.subscription)))[0];
+  expect(await subscriptionOf()).toMatchObject({ status: 'pending', plan: 'basic', providerCustomerId: payLink!.link.providerCustomerId });
+
+  // The owner pays on the provider's page; the provider's callback makes the subscription active.
+  const subscriptionId = paymentSim.completePayment(payLink!.link.providerCustomerId);
+  expect(await deliverPayment(subscriptionId)).toBe(200);
+  expect(await subscriptionOf()).toMatchObject({ status: 'active', providerSubscriptionId: subscriptionId });
+  expect(lastSaid()).toBe(BILLING_COPY.active);
 
   // The business is active with the full profile; nothing was published.
   const stored = await db.withBusiness('workflow', businessId, async (tx) => ({

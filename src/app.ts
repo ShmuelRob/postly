@@ -310,6 +310,7 @@ export function createApp(options: AppOptions): App {
     mediaUrl: (b, a) => messaging.mediaUrl(b, a),
     channels,
     samplePhotoUrl: options.samplePhotoUrl,
+    ...(billing ? { sendPaymentLink: (b: string) => billing.sendPaymentLink(b) } : {}),
     async renderSamples({ businessId, businessName, ...sample }) {
       const renderer = options.design.forBusiness({ businessName, languages: ['he'], storagePrefix: `${businessId}/samples` });
       const samples = await renderStyleSamples(renderer, { ...sample, overlayText: businessName });

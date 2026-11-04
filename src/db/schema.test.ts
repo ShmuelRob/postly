@@ -54,6 +54,7 @@ describe('tables', () => {
         'model_task_config',
         'prompt_template',
         'system_control',
+        'plan_price',
       ].sort(),
     );
   });
@@ -68,7 +69,7 @@ describe('tenant isolation', () => {
         .filter((t) => !businessOwned.includes(t))
         .map((t) => t.name)
         .sort(),
-    ).toEqual(['business', 'model_task_config', 'prompt_template', 'system_control']);
+    ).toEqual(['business', 'model_task_config', 'plan_price', 'prompt_template', 'system_control']);
   });
 
   it.each([...businessOwned.map((t) => t.name), 'business'])('%s has RLS and a tenant policy for every role', (name) => {

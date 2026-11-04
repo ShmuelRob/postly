@@ -38,12 +38,12 @@ export function describePaymentProviderContract(
     });
 
     it('creates a payment link', async () => {
-      const link = await ctx.provider.createPaymentLink({ businessId: ctx.businessId, plan: ctx.plan });
+      const link = await ctx.provider.createPaymentLink({ businessId: ctx.businessId, plan: ctx.plan, price: { amountAgorot: 30000, currency: 'ILS' } });
       expect(PaymentLink.safeParse(link).success).toBe(true);
     });
 
     it('rejects a request outside the contract shape', async () => {
-      await expect(ctx.provider.createPaymentLink({ businessId: 'not-a-uuid', plan: ctx.plan })).rejects.toThrow();
+      await expect(ctx.provider.createPaymentLink({ businessId: 'not-a-uuid', plan: ctx.plan, price: { amountAgorot: 30000, currency: 'ILS' } })).rejects.toThrow();
     });
 
     it('reports a live subscription in a subscription state', async () => {

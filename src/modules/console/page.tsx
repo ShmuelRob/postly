@@ -10,6 +10,8 @@ export interface ConsolePageData {
   drafts: Draft[];
   items: Array<typeof schema.consoleItem.$inferSelect>;
   system: Awaited<ReturnType<ConsoleService['system']>>;
+  /** The monthly price and its history (T1); absent when not loaded. */
+  price?: Awaited<ReturnType<ConsoleService['price']>>;
   conversations: Record<string, Array<typeof schema.message.$inferSelect>>;
 }
 
@@ -22,6 +24,35 @@ function Action({ path, label, tone = 'plain', body }: { path: string; label: st
     <button className={`btn ${tone}`} data-action={api(path)} data-body={body ? JSON.stringify(body) : undefined}>
       {label}
     </button>
+  );
+}
+
+const ils = (agorot: number) => `${agorot % 100 === 0 ? agorot / 100 : (agorot / 100).toFixed(2)} ILS`;
+
+function Price({ price }: { price: NonNullable<ConsolePageData['price']> }) {
+  return (
+    <section>
+      <h2>
+        Monthly price <span className="count">{price.current ? `${ils(price.current.amountAgorot)} (${price.current.plan})` : 'not set'}</span>
+      </h2>
+      <form id="price-form">
+        <input name="amount" type="number" min="1" step="0.01" placeholder="New price in ILS" required />
+        <input name="reason" placeholder="Reason" />
+        <button className="btn plain" type="submit">Change price</button>
+      </form>
+      <table>
+        <tbody>
+          {price.history.map((h) => (
+            <tr key={h.id}>
+              <td>{time(h.createdAt)}</td>
+              <td>{ils(h.amountAgorot)}</td>
+              <td>{h.changedBy}</td>
+              <td>{h.reason ?? ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -171,6 +202,7 @@ function ConsolePage({ data }: { data: ConsolePageData }) {
       <body>
         <h1>Postly console</h1>
         <SystemBar system={data.system} />
+        {data.price && <Price price={data.price} />}
         <Items items={data.items} names={names} />
         <section>
           <h2>Conversations</h2>
@@ -203,6 +235,14 @@ document.addEventListener('click', async (e) => {
   const out = await res.json().catch(() => ({}));
   document.getElementById('status').textContent = 'Refused: ' + (out.reason || res.status) + (out.detail ? ' (' + out.detail + ')' : '');
   b.disabled = false;
+});
+document.getElementById('price-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = { amountAgorot: Math.round(Number(f.get('amount')) * 100), by: 'console', ...(f.get('reason') ? { reason: f.get('reason') } : {}) };
+  const res = await fetch('/console/api/price', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.ok) return location.reload();
+  document.getElementById('status').textContent = 'Refused: ' + res.status;
 });`;
 
 const CSS = `

@@ -41,10 +41,10 @@ module "postly" {
   github_repository         = var.github_repository
   alert_email               = var.alert_email
   sql_tier                  = "db-custom-2-7680"
-  sql_high_availability     = true
+  sql_high_availability     = false
   deletion_protection       = true
   worker_max_instances      = 2
-  media_noncurrent_days     = 30
+  media_noncurrent_days     = 7
   media_coldline_after_days = 180
 }
 
