@@ -1,0 +1,2 @@
+# Placeholder only. Copy to terraform.tfvars (git-ignored) and fill in.
+project_id = "REPLACE_WITH_PROJECT_ID"
