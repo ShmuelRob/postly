@@ -132,7 +132,8 @@ In WhatsApp Business, a business-initiated message more than 24 hours after the 
 
 ## Payment, support, and disconnection
 
-- Payment: the planned price is ILS 299 a month, with a short trial. What is included and the trial length will be set after the cost check. The agent sends a payment link in WhatsApp, payment happens on the payment provider's page, and only identifiers and status are stored. The payment provider is not yet selected, so a placeholder implementation sits behind an internal layer.
+- Payment: there is no trial; the owner pays at once. The price is ILS 300 a month (decided 2026-11-04), kept in one setting the team can change from the console, with a history of every change; a new price applies to payment links sent after the change. When onboarding finishes (the channels pass their test and the business becomes active), the agent sends a payment link in WhatsApp; payment happens on the payment provider's page, and only identifiers and status are stored. The payment provider is not yet selected (PayPlus and Grow are candidates), so the payment simulator stands in behind an internal layer.
+- Unpaid and failed payments (proposed, waiting for the human): a subscription whose renewal fails becomes `past_due`. It gets a 7-day grace period with WhatsApp reminders (on days 1, 3 and 6); publishing continues during the grace period and then pauses until payment succeeds. `past_due` never deletes data, never cancels the subscription by itself, and blocks nothing else: the owner can still send updates and approve drafts. Payment recovers the subscription to `active` and publishing resumes.
 - Support: when the agent gets stuck, the founder responds during the pilot, in hours to be defined.
 - Cancellation and disconnection: channels are disconnected immediately, and data is deleted after a retention period, 30 days by default (provisional until the human sets it).
 - Global pause: a console button stops all publishing during security events and days of mourning.
@@ -239,13 +240,13 @@ flowchart TD
 - WhatsApp policy is the most severe risk: Meta prohibits AI providers when the technology is the primary functionality. Postly needs a written answer from the provider, an agent limited to its workflow, human handoff, and a fallback channel.
 - Visual consistency is a key risk; the answer is strict templates and a rule-based design engine.
 - Phase 1 has no direct connection to social network APIs; the unified API provider handles permissions, which creates a dependency on it.
-- An initial estimate for WhatsApp and publishing is about $6-10 per customer a month, before models, transcription, storage, and support. The ILS 299 price is not yet validated.
+- An initial estimate for WhatsApp and publishing is about $6-10 per customer a month, before models, transcription, storage, and support. The ILS 300 price is not yet validated against costs.
 - Channel connection is the step where owners may drop off; it needs short, clear guidance.
 
 ### Open questions
 
 - Payment provider: PayPlus and Grow are the candidates, with a placeholder implementation for now.
-- What ILS 299 includes, and the trial length.
+- What ILS 300 includes, and the proposed `past_due` behavior (7-day grace with reminders, then publishing pauses).
 - Pilot support hours, and the data deletion period after cancellation (30 days provisionally).
 - A written answer on WhatsApp policy, plus legal entity setup, Meta Business verification, a phone number, and templates.
 - Testing Zernio and Ayrshare: link-based connection, Hebrew, carousels, failure notifications, performance data, and terms of use.

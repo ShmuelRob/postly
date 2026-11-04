@@ -6,6 +6,7 @@ export {
   createBilling,
   DEFAULT_PLAN,
   eventFor,
+  shekels,
   type Billing,
   type BillingOptions,
   type WebhookOutcome,
