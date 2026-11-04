@@ -72,6 +72,11 @@ resource "github_branch" "this" {
   repository    = local.repository
   branch        = var.branch
   source_branch = "main"
+
+  # The branch is created once from main; later pushes move its head, which must not force a replace.
+  lifecycle {
+    ignore_changes = [source_sha, source_branch]
+  }
 }
 
 # Code reaches the branch only through a pull request with the CI `check` job passing.
@@ -99,4 +104,11 @@ resource "github_actions_environment_variable" "this" {
   environment   = github_repository_environment.this.environment
   variable_name = each.key
   value         = each.value
+}
+
+# Repository-level flag the deploy job's `if` reads; environment variables are not visible there.
+resource "github_actions_variable" "deploy_enabled" {
+  repository    = local.repository
+  variable_name = "POSTLY_DEPLOY_${upper(var.environment)}"
+  value         = "true"
 }

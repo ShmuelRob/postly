@@ -40,12 +40,12 @@ module "postly" {
   business_number           = var.business_number
   github_repository         = var.github_repository
   alert_email               = var.alert_email
-  sql_tier                  = "db-g1-small"
+  sql_tier                  = "db-custom-2-7680"
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1
   media_noncurrent_days     = 7
-  media_coldline_after_days = 90
+  media_coldline_after_days = 180
 }
 
 module "github" {

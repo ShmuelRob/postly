@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   foreignKey,
+  index,
   date,
   integer,
   jsonb,
@@ -91,6 +92,7 @@ export const consoleItemKind = pgEnum('console_item_kind', [
   'channel_disconnected',
   'unknown_number',
   'handoff',
+  'payment_link_failed',
 ]);
 export const consoleItemStatus = pgEnum('console_item_status', ['open', 'resolved']);
 
@@ -350,11 +352,10 @@ export const subscription = pgTable(
     id: id(),
     businessId: businessId().unique(),
     plan: text('plan').notNull(),
-    status: subscriptionStatus('status').notNull().default('trialing'),
+    status: subscriptionStatus('status').notNull().default('pending'),
     provider: text('provider').notNull(),
     providerCustomerId: text('provider_customer_id'),
     providerSubscriptionId: text('provider_subscription_id'),
-    trialEndsAt: tz('trial_ends_at'),
     currentPeriodEnd: tz('current_period_end'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -470,4 +471,19 @@ export const systemControl = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [check('system_control_single_row', sql`${t.id} = 1`)],
+);
+
+/** The monthly price of each plan, append-only: the rows are the history; the newest row is the price (T1). */
+export const planPrice = pgTable(
+  'plan_price',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    plan: text('plan').notNull(),
+    amountAgorot: integer('amount_agorot').notNull(),
+    currency: text('currency').notNull().default('ILS'),
+    changedBy: text('changed_by').notNull(),
+    reason: text('reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [check('plan_price_positive', sql`${t.amountAgorot} > 0`), check('plan_price_currency', sql`${t.currency} = 'ILS'`), index('plan_price_plan_idx').on(t.plan, t.id)],
 );

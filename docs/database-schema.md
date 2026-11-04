@@ -17,7 +17,7 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 - A table is **business-owned** when it has a `business_id` column. Every business-owned table, and `business` itself, has RLS enabled and forced (`FORCE ROW LEVEL SECURITY`) with a `tenant_isolation` policy for `public`: a row is visible and writable only when its business matches `current_setting('app.business_id')`. Only the system roles below bypass it.
 - The application sets `app.business_id` with `set_config(..., true)` at the start of each transaction. A query without a business context sees no rows and cannot write any.
 - Rows with a null `business_id` (messages from unknown numbers, example-set model runs, console items about unknown numbers) are visible only to system roles.
-- Tables without `business_id` are system tables (`model_task_config`, `prompt_template`, `system_control`).
+- Tables without `business_id` are system tables (`model_task_config`, `prompt_template`, `system_control`, `plan_price`).
 
 ### Least privilege
 
@@ -69,6 +69,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
 | `system_control` |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
+| `plan_price` |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
@@ -125,7 +126,7 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `message_kind` | `text`, `voice`, `image`, `button_reply`, `buttons`, `template` |
 | `preference_scope` | `caption`, `design`, `schedule`, `general` |
 | `model_task` | Model task names from [contracts.md](contracts.md) |
-| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff` |
+| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff`, `payment_link_failed` |
 | `console_item_status` | `open`, `resolved` |
 
 ## Tables
@@ -289,11 +290,10 @@ Immutable except for `invalidated_at`.
 | --- | --- | --- |
 | `business_id` | uuid | Unique |
 | `plan` | text | |
-| `status` | `subscription_status` | Default `trialing` |
+| `status` | `subscription_status` | Default `pending` (link sent, not paid) |
 | `provider` | text | `placeholder` in Phase 1 |
 | `provider_customer_id` | text | |
 | `provider_subscription_id` | text | |
-| `trial_ends_at` | timestamptz | |
 | `current_period_end` | timestamptz | |
 
 Payment card details are never stored.
@@ -359,3 +359,5 @@ The workflow audit trail (WP-46): one row for every event the workflow runtime a
 `prompt_template`: `task`, `version`, and `template`, unique on `task` and `version`. Versions are immutable.
 
 `system_control`: a single row (`id` is always 1) with `publishing_paused`, `paused_reason`, `paused_at`, and `paused_by`. This is the global pause.
+
+`plan_price`: the monthly price of each plan, append-only, so the rows are the history of changes (T1, 2026-11-04). Columns: `id` (identity), `plan` (text), `amount_agorot` (integer, greater than 0), `currency` (text, `ILS`), `changed_by` (text), `reason` (text, nullable), `created_at`. The current price of a plan is its row with the highest `id`. The migration seeds `basic` at 30000 agorot (ILS 300) by `seed`. The console inserts a new row to change the price; no role may update or delete a row. Billing reads the current price when it creates a payment link. Migration `0011_no_trial_plan_price` also renames the `subscription_status` value `trialing` to `pending` and drops `subscription.trial_ends_at` (no row was ever stored in a deployed database).

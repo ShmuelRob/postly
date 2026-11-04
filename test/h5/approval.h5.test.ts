@@ -4,7 +4,7 @@
  * believes is wrong is reported. State is read with the test-owned SQL in `db.ts`.
  */
 import { afterEach, describe, expect } from 'vitest';
-import type { ApprovalButtonPayload } from '../../src/contracts/providers/index.js';
+import { decodeButtonId, type ApprovalButtonPayload } from '../../src/contracts/providers/index.js';
 import {
   APPROVER,
   CAPTION,
@@ -297,5 +297,70 @@ describe('H5 approval: cross-business references', () => {
 
     expect(decision).toEqual({ outcome: 'refused', reason: 'unknown_post' });
     await unchanged(s, a.draft.postId);
+  });
+});
+
+/**
+ * T15 (human decision 2026-11-04): a button sent for a version that was later replaced never
+ * approves, even when the current version has the same content hash. A real revert of the caption
+ * does not reproduce the hash today (every redraft stores new rendered media ids, and the hash covers
+ * them), so a plain case pins that down and the stale-button cases force a later version with the
+ * same hash through test-owned SQL (`forgeSameHashVersion`). The tap replays the approve button
+ * exactly as it was sent, so the cases hold whatever the button id carries. Until the T15 fix lands
+ * the two stale-button cases run as `it.fails`; the fix PR turns them into `it`.
+ */
+describe("H5 approval: a replaced version's button never approves, even with the same hash", () => {
+  const pendingT15 = it.fails as typeof it;
+
+  /** The approve button of the last buttons message sent to the approver, replayed as the approver's tap. */
+  function lastApproveButton(s: Setup, draft: { buttons: { approve: string } }) {
+    const message = s.messaging
+      .sentTo(APPROVER)
+      .filter((m) => m.kind === 'buttons')
+      .at(-1);
+    if (message?.kind !== 'buttons') throw new Error('setup: no buttons were sent to the approver');
+    const button = message.request.buttons.find((b) => b.title === draft.buttons.approve);
+    if (!button) throw new Error('setup: the draft was sent without its approve button');
+    const payload = decodeButtonId(button.id);
+    if (!payload) throw new Error(`setup: the approve button id "${button.id}" does not decode`);
+    return () => s.messaging.inbound(APPROVER, { kind: 'button_reply', buttonId: button.id, payload });
+  }
+
+  it('a real caption revert yields a new hash, so the first button is refused as stale', async () => {
+    const s = await open();
+    const { businessId, draft } = await businessWithDraft(s);
+    const firstButton = lastApproveButton(s, draft);
+    await s.world.requestChange(businessId, draft.postId, CHANGED_CAPTION);
+    const reverted = await s.world.requestChange(businessId, draft.postId, CAPTION);
+    expect(reverted.versionHash).not.toBe(draft.versionHash);
+
+    expect(await s.world.approval.handleApprovalReply(businessId, firstButton())).toEqual({ outcome: 'refused', reason: 'stale_version' });
+    await unchanged(s, draft.postId);
+  }, 60_000);
+
+  pendingT15("the first version's button is refused when a later version has the same hash", async () => {
+    const s = await open();
+    const { businessId, draft } = await businessWithDraft(s);
+    const firstButton = lastApproveButton(s, draft);
+    await s.db.forgeSameHashVersion(draft.postId);
+
+    const decision = await s.world.approval.handleApprovalReply(businessId, firstButton());
+
+    expect(decision).toEqual({ outcome: 'refused', reason: 'stale_version' });
+    await unchanged(s, draft.postId);
+  });
+
+  pendingT15("an approved first version's button, replayed after a same-hash version replaced it, is refused", async () => {
+    const s = await open();
+    const { businessId, draft } = await businessWithDraft(s);
+    const firstButton = lastApproveButton(s, draft);
+    expect((await s.world.approval.handleApprovalReply(businessId, firstButton())).outcome).toBe('approved');
+    await s.db.forgeSameHashVersion(draft.postId);
+
+    const decision = await s.world.approval.handleApprovalReply(businessId, firstButton());
+
+    expect(decision).toEqual({ outcome: 'refused', reason: 'stale_version' });
+    expect(await s.db.postStatus(draft.postId)).toBe('awaiting_approval');
+    expect(await s.db.approvals(draft.postId)).toEqual([expect.objectContaining({ versionHash: draft.versionHash, invalidated: true })]);
   });
 });

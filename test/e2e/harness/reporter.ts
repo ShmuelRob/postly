@@ -4,14 +4,14 @@ import './record.js';
 import { execFileSync } from 'node:child_process';
 import { writeRunReport, type ReportTest } from './report.js';
 
-const E2E_PROJECT = 'e2e';
+const E2E_PROJECTS = new Set(['e2e', 'e2e-browser']);
 
 /** Writes the static HTML report for every run that includes e2e tests. Output root: $E2E_REPORT_DIR or reports/e2e (one folder per run, plus latest/ and a runs index). */
 export default class E2eReporter implements Reporter {
   onTestRunEnd(testModules: ReadonlyArray<TestModule>): void {
     const tests: ReportTest[] = [];
     for (const module of testModules) {
-      if (module.project.name !== E2E_PROJECT) continue;
+      if (!E2E_PROJECTS.has(module.project.name)) continue;
       const file = relative(process.cwd(), module.moduleId).replaceAll('\\', '/');
       const moduleErrors = module.errors().map((e) => e.stack ?? e.message);
       if (moduleErrors.length) tests.push({ name: '(test file failed to run)', file, state: 'failed', errors: moduleErrors });

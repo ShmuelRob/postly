@@ -83,7 +83,21 @@
       "idx": 11,
       "version": "7",
       "when": 1793750408000,
-      "tag": "0011_workflow_event",
+      "tag": "0011_no_trial_plan_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793750408001,
+      "tag": "0012_payment_link_failed_item",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793750408002,
+      "tag": "0013_workflow_event",
       "breakpoints": true
     }
   ]

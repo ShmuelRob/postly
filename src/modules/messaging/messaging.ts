@@ -393,7 +393,13 @@ export function createMessaging(options: MessagingOptions): Messaging {
       const groups = new Map<string, InboundBurst[]>();
       for (const row of rows) {
         if (waiting.has(row.id) || delivering.has(row.id) || !row.businessId) continue;
-        const content = InboundMessage.shape.content.parse(row.payload);
+        // A row this module cannot read must not stop the sweep for every other business.
+        const parsed = InboundMessage.shape.content.safeParse(row.payload);
+        if (!parsed.success) {
+          console.error(`inbound sweep skipped message ${row.id}: unreadable payload`, parsed.error);
+          continue;
+        }
+        const content = parsed.data;
         const received: ReceivedMessage = {
           id: row.id,
           providerMessageId: row.providerMessageId,
