@@ -319,7 +319,7 @@ async function stoppedAt(
 }
 
 /** The app without the design engine; `hold` delays the first text send to the owner. */
-function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promise<void>) {
+function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promise<void>, payment?: PaymentSimulator) {
   const ref: { postly?: ReturnType<typeof createApp> } = {};
   const app: AppFactory = ({ messaging, publishing, model }) => {
     const slowMessaging: typeof messaging = hold
@@ -337,7 +337,7 @@ function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promis
       : messaging;
     ref.postly = createApp({
       db,
-      providers: { messaging: slowMessaging, publishing, models: { google: model } },
+      providers: { messaging: slowMessaging, publishing, models: { google: model }, ...(payment ? { payment } : {}) },
       design: { forBusiness: () => ({ render: async () => ({}) }) },
       media: storage,
       businessNumber: BUSINESS_PHONE,
@@ -400,6 +400,29 @@ e2eTest('onboarding stopped after the test passed activates the business on the 
   }));
   expect(state.business?.status).toBe('active');
   expect(state.conversation?.step).toBe('idle');
+});
+
+e2eTest('a payment link that fails to send after activation opens a console item; the business stays active', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230036';
+  const payment = new PaymentSimulator();
+  payment.createPaymentLink = async () => {
+    throw new Error('provider down');
+  };
+  const { app, ref } = plainApp(memoryStorage(), undefined, payment);
+  const run = await e2e.start({ providers: providersWith(), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  const businessId = await stoppedAt(ref.postly!.onboarding, owner, 'completed', [
+    { network: 'instagram', status: 'verified' },
+    { network: 'facebook', status: 'verified' },
+  ]);
+
+  await run.owner.sendsText('היי');
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.activated]);
+  const items = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem));
+  run.recordConsoleItems(items.map((i) => ({ kind: i.kind, details: i.details })));
+  expect(items).toMatchObject([{ kind: 'payment_link_failed', status: 'open', details: { error: 'Error: provider down' } }]);
+  const business = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.business))[0]);
+  expect(business?.status).toBe('active');
 });
 
 e2eTest('onboarding that cannot activate tells the owner and hands off to a person', { timeout: 60_000 }, async ({ e2e }) => {

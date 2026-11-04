@@ -124,7 +124,7 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `message_kind` | `text`, `voice`, `image`, `button_reply`, `buttons`, `template` |
 | `preference_scope` | `caption`, `design`, `schedule`, `general` |
 | `model_task` | Model task names from [contracts.md](contracts.md) |
-| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff` |
+| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff`, `payment_link_failed` |
 | `console_item_status` | `open`, `resolved` |
 
 ## Tables
