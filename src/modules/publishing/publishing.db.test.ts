@@ -6,7 +6,8 @@ import * as schema from '../../db/schema.js';
 import { MessagingSimulator, PublishingSimulator } from '../../simulators/index.js';
 import { createH5World, type H5World } from '../../../test/h5/world.js';
 import { createWorkflow } from '../workflow/index.js';
-import { createChannels } from './index.js';
+import { subjectApp } from '../../../test/h5/subject.js';
+import { createChannels, createPublishingJob, type ApplyPublishingEvent } from './index.js';
 
 // WP-34 (technical-design.md, Scheduling and publishing flow): the channel test validates a schedule
 // and publishes nothing; the schedule conversation hands time changes and missing channels to a person.
@@ -95,3 +96,70 @@ describe('the schedule conversation (technical-design.md, Scheduling and publish
   });
 });
 
+describe('the publishing job ends every error in a defined state (WP-35, review of PR #50)', { timeout: 30_000 }, () => {
+  /** A scheduled post on Instagram and a job whose `apply` fails the named events once. */
+  async function scheduled(failOnce: string[]) {
+    const w = await open();
+    const businessId = await w.createBusiness(APPROVER);
+    await w.connectChannel(businessId, 'instagram');
+    const draft = await w.createDraft(businessId, 'צבעונים חדשים הגיעו, 25 ₪ לזר');
+    await w.app.deliverInbound(tap(draft.postId, draft.versionHash));
+    const [pub] = await w.schedule(businessId, draft.postId, '2026-11-04T08:00:00.000Z');
+    const app = subjectApp(w);
+    const failing = new Set(failOnce);
+    const apply: ApplyPublishingEvent = async (b, r) => {
+      if (failing.delete(r.event)) throw new Error(`${r.event} lost`);
+      return app.workflow.apply(b, r);
+    };
+    const calls: string[] = [];
+    const status = publishing.getPublicationStatus.bind(publishing);
+    publishing.getPublicationStatus = async (id) => (calls.push(`status:${id}`), status(id));
+    const publish = publishing.publish.bind(publishing);
+    publishing.publish = async (r) => (calls.push('publish'), publish(r));
+    const job = createPublishingJob({ db, provider: publishing, apply, mayAutoReply: async () => true, urlFor: (path) => `https://media.test/${path}`, notify: async () => {}, now: () => NOW });
+    const row = async () => (await read((tx) => tx.select().from(schema.publication).where(eq(schema.publication.id, pub!.publicationId))))[0]!;
+    return { businessId, job, calls, row, publicationId: pub!.publicationId };
+  }
+
+  it('stores the provider id as soon as publish returns, so a retry after a lost SUCCEEDED checks the provider and does not publish again', async () => {
+    const s = await scheduled(['SUCCEEDED']);
+    expect((await s.job.runPublication(s.publicationId)).outcome).toBe('retry_pending');
+    const after = await s.row();
+    expect(after).toMatchObject({ status: 'retry_pending', providerPostId: publishing.posts[0]!.providerPostId });
+    expect((await items(s.businessId)).filter((i) => i.kind === 'publication_failed')).toHaveLength(1);
+
+    const retry = await s.job.runPublication(s.publicationId);
+    expect(retry).toEqual({ outcome: 'already_published', providerPostId: after.providerPostId });
+    // The retry asks the provider before anything else and never publishes again.
+    expect(s.calls[1]).toBe(`status:${after.providerPostId}`);
+    expect(s.calls.filter((c) => c === 'publish')).toHaveLength(1);
+    expect(publishing.posts).toHaveLength(1);
+  });
+
+  it('clears the provider id after the provider reports the post failed, so the next attempt publishes again', async () => {
+    const s = await scheduled([]);
+    publishing.failNextPublish({ mode: 'fail_status', error: 'media rejected' });
+    await s.job.runPublication(s.publicationId);
+    await read((tx) => tx.update(schema.publication).set({ status: 'retry_pending' }).where(eq(schema.publication.id, s.publicationId)));
+    expect((await s.job.runPublication(s.publicationId)).outcome).toBe('retry_pending');
+    expect(await s.row()).toMatchObject({ status: 'retry_pending', providerPostId: null, lastError: 'media rejected' });
+  });
+
+  it('an error after STARTED and before the provider call ends in retry_pending with a console item, not in_progress', async () => {
+    const s = await scheduled(['PUBLISHING_STARTED']);
+    expect((await s.job.runPublication(s.publicationId)).outcome).toBe('retry_pending');
+    expect(await s.row()).toMatchObject({ status: 'retry_pending', attempts: 1, lastError: 'PUBLISHING_STARTED lost' });
+    expect(s.calls).toEqual([]);
+    expect((await items(s.businessId)).filter((i) => i.kind === 'publication_failed').map((i) => i.details)).toEqual([expect.objectContaining({ internal: true })]);
+  });
+
+  it('a run that could not even record its failure is swept by the tick after 10 minutes', async () => {
+    const s = await scheduled(['PUBLISHING_STARTED', 'ATTEMPT_FAILED']);
+    await expect(s.job.runPublication(s.publicationId)).rejects.toThrow();
+    expect((await s.row()).status).toBe('in_progress');
+    const at = new Date((await s.row()).updatedAt.getTime() + 11 * 60_000);
+    await s.job.tick(at, { businessId: s.businessId });
+    expect(await s.row()).toMatchObject({ status: 'retry_pending', lastError: 'attempt interrupted' });
+    expect((await items(s.businessId)).filter((i) => i.kind === 'publication_failed')).toHaveLength(1);
+  });
+});

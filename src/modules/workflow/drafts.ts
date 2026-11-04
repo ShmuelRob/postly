@@ -9,7 +9,7 @@ type Language = z.infer<typeof LanguageSchema>;
 import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { RenderedMedia } from '../../contracts/post-version.js';
-import { encodeButtonId, type SendButtonsRequest, type SendTextRequest } from '../../contracts/providers/messaging.js';
+import { encodeButtonId, WindowClosedError, type SendButtonsRequest, type SendTemplateRequest, type SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { RenderRequest, RenderResult } from '../../contracts/providers/renderer.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -35,6 +35,8 @@ export interface DraftsDeps {
   messaging: {
     sendText(businessId: string, request: SendTextRequest): Promise<unknown>;
     sendButtons(businessId: string, request: SendButtonsRequest): Promise<unknown>;
+    /** For the `drafts_ready` template when the 24-hour window has closed (technical-design.md, Failure handling). */
+    sendTemplate?(businessId: string, request: SendTemplateRequest): Promise<unknown>;
   };
   model: {
     run<T extends ModelTaskName>(
@@ -106,8 +108,13 @@ type Outcome = 'sent' | 'asked' | 'failed';
 
 const isModelFailure = (error: unknown) => error instanceof Error && error.name === 'ModelTaskFailedError';
 
+/** The open question while drafts wait for the owner because the 24-hour window had closed. */
+export const DRAFTS_WAITING = 'drafts_waiting';
+
 export function createDrafts(deps: DraftsDeps): Drafts {
   const { db, workflow } = deps;
+  /** Businesses whose drafts of the current run could not be sent because the window had closed. */
+  const windowClosed = new Set<string>();
 
   const loadBusiness = (businessId: string) =>
     db.withBusiness('workflow', businessId, async (tx) => {
@@ -344,7 +351,13 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       return row!;
     });
 
-    await sendDraft(businessId, business.approverPhone, post, version);
+    try {
+      await sendDraft(businessId, business.approverPhone, post, version);
+    } catch (error) {
+      // The window closed: the draft is ready and goes out after the owner's next message.
+      if (!(error instanceof WindowClosedError) || !deps.messaging.sendTemplate) throw error;
+      windowClosed.add(businessId);
+    }
     const ready = await postEvent(businessId, post.id, 'DRAFT_READY', async (tx) => {
       const [row] = await tx.select({ current: schema.post.currentVersionId }).from(schema.post).where(eq(schema.post.id, post.id));
       return row?.current === version.id ? null : 'the sent version is not the current version';
@@ -355,6 +368,19 @@ export function createDrafts(deps: DraftsDeps): Drafts {
   /** After drafting: `DRAFTS_SENT` when at least one draft is open, else a person takes over. */
   async function finish(business: typeof schema.business.$inferSelect) {
     const open = await openDrafts(business.id);
+    const waiting = windowClosed.delete(business.id);
+    if (open.length > 0 && waiting) {
+      const question: OpenQuestion = { key: DRAFTS_WAITING, askedFields: [], attempts: 1, photoAssetIds: [] };
+      if (!(await conversation(business.id, 'DRAFTS_SENT', question)).ok) return;
+      const profile = BusinessProfile.safeParse(business.profile);
+      await deps.messaging.sendTemplate!(business.id, {
+        to: business.approverPhone,
+        language: profile.success ? profile.data.languages[0]! : 'he',
+        templateName: copy.DRAFTS_READY_TEMPLATE,
+        variables: { businessName: business.name },
+      });
+      return;
+    }
     if (open.length > 0) return void (await conversation(business.id, 'DRAFTS_SENT'));
     await handOff(business.id, business.approverPhone, 'no draft could be sent', copy.draftsNeedReview);
   }
@@ -492,6 +518,11 @@ export function createDrafts(deps: DraftsDeps): Drafts {
 
   async function review(burst: DraftsBurst, business: typeof schema.business.$inferSelect, question: OpenQuestion | undefined) {
     const { businessId } = burst;
+    // The drafts waited for the window: whatever the owner wrote, they now get the drafts (Failure handling).
+    if (question?.key === DRAFTS_WAITING) {
+      await setQuestion(businessId, null);
+      return resendDrafts(businessId, burst.from, copy.draftsHere);
+    }
     const tap = burst.messages.find((m) => m.content.kind === 'button_reply');
     if (tap) {
       const payload = tap.content.payload as { action: string; postId: string };

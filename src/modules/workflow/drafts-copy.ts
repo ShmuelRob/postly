@@ -50,3 +50,11 @@ export const handedOff = 'תודה! מישהו מהצוות שלנו ימשיך 
 /** Approval replies (technical-design.md, Approval flow). Provisional (H6). */
 export const approved = (topic: string) => `✅ הפוסט "${topic}" אושר.`;
 export const notCurrentDraft = 'הכפתור הזה שייך לטיוטה שכבר לא בתוקף. הנה הטיוטות הפתוחות:';
+
+/**
+ * The drafts are ready but the 24-hour window has closed (technical-design.md, Failure handling): a
+ * WhatsApp template, then the drafts follow the owner's next message. Provisional (H6).
+ */
+export const DRAFTS_READY_TEMPLATE = 'drafts_ready';
+export const DRAFTS_READY_TEMPLATE_BODY = 'הטיוטות של {{businessName}} לשבוע הזה מוכנות. כתבו לי כל הודעה ואשלח אותן לאישור.';
+export const draftsHere = 'הנה הטיוטות של השבוע:';

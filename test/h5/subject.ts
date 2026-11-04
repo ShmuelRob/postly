@@ -1,5 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
-import { createApp } from '../../src/app.js';
+import { createApp, type App } from '../../src/app.js';
 import { BusinessProfile } from '../../src/contracts/business-profile.js';
 import type { Network } from '../../src/contracts/common.js';
 import type { Fact } from '../../src/contracts/model-tasks.js';
@@ -11,7 +11,16 @@ import { createChannels } from '../../src/modules/publishing/index.js';
 import { draftsCopy } from '../../src/modules/workflow/index.js';
 import { ModelSimulator } from '../../src/simulators/index.js';
 import { placeholderPng } from '../e2e/harness/png.js';
-import type { Draft, H5WorldFactory } from './world.js';
+import type { Draft, H5World, H5WorldFactory } from './world.js';
+
+const apps = new WeakMap<H5World, App>();
+
+/** The real app behind a world, for tests outside the pinned H5 files that need more than the world's surface (WP-35). */
+export function subjectApp(world: H5World): App {
+  const app = apps.get(world);
+  if (!app) throw new Error('not a subject world');
+  return app;
+}
 
 /**
  * WP-33 and WP-34 bind the real world here, with the real approval service and publishing job. Setup goes through the real
@@ -138,7 +147,7 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
     content,
   });
 
-  return {
+  const world: H5World = {
     approval: app.approvals,
     publishingJob: app.publishing,
     app: {
@@ -285,4 +294,6 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
       }
     },
   };
+  apps.set(world, app);
+  return world;
 };
