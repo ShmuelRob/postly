@@ -22,6 +22,7 @@ const MATRIX = `
 | model_task_config |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | prompt_template |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
 | system_control |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
+| plan_price |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;
