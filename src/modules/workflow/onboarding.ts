@@ -45,6 +45,12 @@ export interface OnboardingDeps {
   };
   /** The photo used for the style samples when the owner sent none. */
   samplePhotoUrl: string;
+  /**
+   * Billing's payment link (T1, no trial): sent right after activation. Absent when no payment
+   * provider is wired. A failure is logged; the business stays active.
+   */
+  sendPaymentLink?(businessId: string): Promise<unknown>;
+  logger?: { error(message: string, detail?: unknown): void };
 }
 
 export interface Onboarding {
@@ -239,7 +245,17 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
 
   /** completed: activate the business; also the resume point after a stop before activation. */
   async function finishActivation(burst: OnboardingBurst) {
-    if (await activate(burst)) return reply(burst, copy.activated);
+    if (await activate(burst)) {
+      await reply(burst, copy.activated);
+      if (deps.sendPaymentLink) {
+        try {
+          await deps.sendPaymentLink(burst.businessId);
+        } catch (error) {
+          (deps.logger ?? console).error('payment link not sent after activation', { businessId: burst.businessId, error: String(error) });
+        }
+      }
+      return;
+    }
     return handOff(burst, 'activation guard failed after the channel test');
   }
 
