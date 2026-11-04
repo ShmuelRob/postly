@@ -13,7 +13,11 @@ locals {
   }
   # Project-level roles of the runtime accounts: connect to Cloud SQL, write logs, metrics and traces.
   runtime_roles    = ["roles/cloudsql.client", "roles/logging.logWriter", "roles/monitoring.metricWriter", "roles/cloudtrace.agent"]
-  runtime_bindings = { for pair in setproduct(["web", "worker", "migrate"], local.runtime_roles) : "${pair[0]}-${pair[1]}" => { account = pair[0], role = pair[1] } }
+  # Only the processes that run model tasks call Gemini on Vertex AI; the migration job does not.
+  runtime_bindings = merge(
+    { for pair in setproduct(["web", "worker", "migrate"], local.runtime_roles) : "${pair[0]}-${pair[1]}" => { account = pair[0], role = pair[1] } },
+    { for account in ["web", "worker"] : "${account}-roles/aiplatform.user" => { account = account, role = "roles/aiplatform.user" } },
+  )
 }
 
 resource "google_service_account" "this" {

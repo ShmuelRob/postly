@@ -93,7 +93,7 @@ locals {
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
-  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
+  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"]
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
   app_env = {
     POSTLY_ENV       = var.env_name

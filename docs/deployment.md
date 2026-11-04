@@ -76,7 +76,7 @@ The media lifecycle ages are provisional until the human sets the media retentio
 
 | Account | Gets | Never gets |
 | --- | --- | --- |
-| `postly-<env>-web` | Cloud SQL client, log, metric and trace writer; the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
+| `postly-<env>-web` | Cloud SQL client, log, metric and trace writer, Vertex AI user (`roles/aiplatform.user`, project-level, for Gemini); the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
 | `postly-<env>-worker` | the same as web | the admin URL |
 | `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
 | `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
