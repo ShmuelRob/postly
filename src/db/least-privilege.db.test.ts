@@ -58,14 +58,14 @@ describe('logins', () => {
     expect(rows.map((r) => r.rolname).sort()).toEqual([...LOGINS].sort());
   });
 
-  it('only the system roles bypass RLS, and none is a superuser or can create roles', async () => {
+  it('only the system roles bypass RLS, and none is a superuser, inherits, or can create roles', async () => {
     const rows = await catalog`
-      select rolname, rolbypassrls, rolsuper, rolcreaterole, rolcreatedb, rolcanlogin
+      select rolname, rolbypassrls, rolsuper, rolcreaterole, rolcreatedb, rolcanlogin, rolinherit
       from pg_roles where rolname in ${catalog(LOGINS)}`;
     for (const r of rows) {
       const system = SYSTEM_PURPOSES.some((p) => loginFor(p) === r.rolname);
       expect({ name: r.rolname, bypass: r.rolbypassrls }).toEqual({ name: r.rolname, bypass: system });
-      expect([r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolcanlogin]).toEqual([false, false, false, true]);
+      expect([r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolcanlogin, r.rolinherit]).toEqual([false, false, false, true, false]);
     }
   });
 
@@ -120,7 +120,11 @@ describe.each(ROLES)('%s', (role) => {
       select c from unnest(${columns}::text[]) as c
       where has_column_privilege(${login}, ${'public.' + table}, c, 'UPDATE')`;
     const grant = grants.get(table)!.get(role)!;
-    const expectedColumns = grant.verbs.has('UPDATE') ? columns : grant.updateColumns;
+    const expectedColumns = grant.verbs.has('UPDATE')
+      ? columns
+      : grant.updateExcept.length > 0
+        ? columns.filter((c) => !grant.updateExcept.includes(c))
+        : grant.updateColumns;
     expect(updatable.map((r) => r.c).sort()).toEqual([...expectedColumns].sort());
   });
 
