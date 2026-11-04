@@ -252,6 +252,9 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
           await deps.sendPaymentLink(burst.businessId);
         } catch (error) {
           (deps.logger ?? console).error('payment link not sent after activation', { businessId: burst.businessId, error: String(error) });
+          await deps.db.withBusiness('workflow', burst.businessId, (tx) =>
+            tx.insert(schema.consoleItem).values({ businessId: burst.businessId, kind: 'payment_link_failed', details: { error: String(error) } }),
+          );
         }
       }
       return;
