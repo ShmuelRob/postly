@@ -8,11 +8,15 @@ export const WEEKLY_TICK_CRON = '0 * * * *';
 /** The publishing job's tick (technical-design.md, Scheduling and publishing flow). */
 export const PUBLISHING_TICK_JOB = 'publishing-tick';
 export const PUBLISHING_TICK_CRON = '* * * * *';
+/** The daily channel health check (technical-design.md, Failure handling): 04:00 UTC, 06:00 or 07:00 in Israel. */
+export const CHANNEL_HEALTH_JOB = 'channel-health-check';
+export const CHANNEL_HEALTH_CRON = '0 4 * * *';
 
 export interface WorkerProcessOptions {
   queue: JobQueue;
   weekly: Pick<WeeklyUpdates, 'tick'>;
   publishing: Pick<Publishing, 'tick'>;
+  channelHealth: { tick(now: Date): Promise<void> };
   now?: () => Date;
 }
 
@@ -26,5 +30,6 @@ export async function startWorkerProcess(options: WorkerProcessOptions): Promise
   const now = options.now ?? (() => new Date());
   await options.queue.schedule(WEEKLY_TICK_JOB, WEEKLY_TICK_CRON, () => options.weekly.tick(now()));
   await options.queue.schedule(PUBLISHING_TICK_JOB, PUBLISHING_TICK_CRON, async () => void (await options.publishing.tick(now())));
+  await options.queue.schedule(CHANNEL_HEALTH_JOB, CHANNEL_HEALTH_CRON, () => options.channelHealth.tick(now()));
   return options.queue;
 }

@@ -6,7 +6,7 @@ import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
 import { createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
 import { createModelLayer } from './modules/model-layer/index.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { BusinessProfile } from './contracts/business-profile.js';
 import * as schema from './db/schema.js';
 import {
@@ -73,6 +73,8 @@ export interface App {
   schedule: ScheduleFlow;
   /** The publishing job behind the publishing guard; its `tick` is the worker's every-minute job (WP-34). */
   publishing: Publishing;
+  /** The daily channel health check (WP-35); `businessId` limits it to one business (tests, playground). */
+  channelHealth: { tick(now: Date, options?: { businessId?: string }): Promise<void> };
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
    * never processed (review queue item 14), at startup and then every quiet window. It runs in the
@@ -181,7 +183,36 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
 
-  const channels = createChannels({ db, provider: providers.publishing, apply: (b, r) => workflow.apply(b, r) });
+  const channels = createChannels({ db, provider: providers.publishing, apply: (b, r) => workflow.apply(b, r), ...(options.now ? { now: options.now } : {}) });
+
+  /** Every active business's verified channels; a lost one gets the owner's template (technical-design.md, Failure handling). */
+  const channelHealth: App['channelHealth'] = {
+    async tick(_now, tickOptions = {}) {
+      const active = await db.withSystem('scheduler', (tx) =>
+        tx
+          .select({ id: schema.business.id })
+          .from(schema.business)
+          .where(and(eq(schema.business.status, 'active'), tickOptions.businessId ? eq(schema.business.id, tickOptions.businessId) : undefined)),
+      );
+      for (const { id } of active) {
+        try {
+          const lost = await channels.healthCheck(id);
+          if (lost.length === 0) continue;
+          const row = await db.withBusiness('workflow', id, async (tx) => (await tx.select().from(schema.business).where(eq(schema.business.id, id)))[0]);
+          if (!row) continue;
+          const profile = BusinessProfile.safeParse(row.profile);
+          await messaging.sendTemplate(id, {
+            to: row.approverPhone,
+            language: profile.success ? profile.data.languages[0]! : 'he',
+            templateName: scheduleCopy.CHANNEL_DISCONNECTED_TEMPLATE,
+            variables: { networks: scheduleCopy.networks(lost) },
+          });
+        } catch (error) {
+          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: String(error) }));
+        }
+      }
+    },
+  };
 
   onboarding = createOnboarding({
     db,
@@ -220,5 +251,5 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
 
-  return { messaging, workflow, onboarding, weekly, drafts, approvals, scheduling, schedule, publishing, start: () => messaging.startSweep() };
+  return { messaging, workflow, onboarding, weekly, drafts, approvals, scheduling, schedule, publishing, channelHealth, start: () => messaging.startSweep() };
 }

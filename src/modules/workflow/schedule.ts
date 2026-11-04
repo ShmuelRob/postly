@@ -116,6 +116,41 @@ export function createScheduleFlow(deps: ScheduleFlowDeps): ScheduleFlow {
     await deps.messaging.sendText(burst.businessId, { to: burst.from, text: copy.scheduled(items) });
   }
 
+  /**
+   * A confirmation after a proposed time has passed schedules nothing: new times for the posts still
+   * approved, and the question keeps waiting (technical-design.md, Failure handling: late approval).
+   */
+  async function reproposeIfLate(
+    burst: DraftsBurst,
+    business: typeof schema.business.$inferSelect,
+    question: OpenQuestion,
+    proposals: { postId: string; at: string }[],
+  ): Promise<boolean> {
+    const at = now();
+    const statuses = await db.withBusiness('workflow', burst.businessId, (tx) =>
+      tx.select({ id: schema.post.id, status: schema.post.status, plan: schema.post.plan }).from(schema.post).where(inArray(schema.post.id, proposals.map((p) => p.postId))),
+    );
+    const live = proposals.filter((p) => statuses.find((s) => s.id === p.postId)?.status === 'approved');
+    if (!live.some((p) => new Date(p.at).getTime() <= at.getTime())) return false;
+    const profile = BusinessProfile.parse(business.profile);
+    let times: Date[];
+    try {
+      times = deps.propose({ count: live.length, rules: profile.schedule, timezone: business.timezone, city: profile.location.city, now: at });
+    } catch (error) {
+      if ((error as Error).name !== 'NoTimeAvailableError') throw error;
+      await handOff(burst.businessId, burst.from, copy.noTimeFits, { reason: 'no publishing time fits the profile' });
+      return true;
+    }
+    const next = live.map((p, i) => ({ postId: p.postId, at: times[i]!.toISOString() }));
+    const updated: OpenQuestion = { ...question, attempts: question.attempts + 1, proposals: next };
+    await db.withBusiness('workflow', burst.businessId, (tx) =>
+      tx.update(schema.conversationState).set({ openQuestion: updated }).where(eq(schema.conversationState.businessId, burst.businessId)),
+    );
+    const topicOf = (id: string) => ((statuses.find((s) => s.id === id)?.plan as { topic?: string } | undefined)?.topic ?? '');
+    await deps.messaging.sendText(burst.businessId, { to: burst.from, text: copy.lateProposal(next.map((p) => ({ topic: topicOf(p.postId), at: copy.when(new Date(p.at), business.timezone) }))) });
+    return true;
+  }
+
   return {
     async afterApproval(businessId, postId) {
       const loaded = await load(businessId);
@@ -185,6 +220,7 @@ export function createScheduleFlow(deps: ScheduleFlowDeps): ScheduleFlow {
       const proposals = loaded.question?.key === SCHEDULE_QUESTION ? (loaded.question.proposals ?? []) : [];
       const textOnly = burst.messages.every((m) => m.content.kind === 'text');
       if (textOnly && proposals.length > 0 && isScheduleConfirmation(burst.text)) {
+        if (await reproposeIfLate(burst, loaded.business, loaded.question!, proposals)) return true;
         await confirm(burst, proposals, loaded.business.timezone);
         return true;
       }

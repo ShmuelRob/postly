@@ -10,7 +10,7 @@ export type ApplyChannelEvent = (
   request: {
     machine: 'channel_connection';
     id: string;
-    event: 'CONNECTED' | 'TEST_PASSED' | 'TEST_FAILED';
+    event: 'CONNECTED' | 'TEST_PASSED' | 'TEST_FAILED' | 'HEALTH_CHECK_FAILED';
     source: 'system';
     guard?: (tx: Tx, current: { from: string; to: string }) => Promise<string | null>;
   },
@@ -31,6 +31,13 @@ export interface Channels {
    * applies `TEST_FAILED`, so the channel is `pending` again and the owner gets the link again.
    */
   checkAndTest(businessId: string): Promise<ChannelStatus[]>;
+  /**
+   * The daily health check (technical-design.md, Failure handling): asks the provider about every
+   * `verified` channel. Still connected with the same account sets `last_health_check_at`; anything
+   * else applies `HEALTH_CHECK_FAILED` and opens a `channel_disconnected` console item. Returns the
+   * networks that were disconnected now, for the owner's template.
+   */
+  healthCheck(businessId: string): Promise<Network[]>;
 }
 
 export function createChannels(deps: { db: Database; provider: PublishingProvider; apply: ApplyChannelEvent; now?: () => Date }): Channels {
@@ -85,6 +92,36 @@ export function createChannels(deps: { db: Database; provider: PublishingProvide
         });
       }
       return (await rows(businessId)).map((r) => ({ network: r.network, status: r.status }));
+    },
+
+    async healthCheck(businessId) {
+      const lost: Network[] = [];
+      for (const row of await rows(businessId)) {
+        if (row.status !== 'verified') continue;
+        const status = await provider.getConnectionStatus({ businessId, network: row.network });
+        if (status.status === 'connected' && status.providerAccountId === row.providerAccountId) {
+          await db.withBusiness('publishing', businessId, (tx) => tx.update(t).set({ lastHealthCheckAt: now() }).where(eq(t.id, row.id)));
+          continue;
+        }
+        const result = await deps.apply(businessId, {
+          machine: 'channel_connection',
+          id: row.id,
+          event: 'HEALTH_CHECK_FAILED',
+          source: 'system',
+          guard: async (tx) => {
+            await tx.update(t).set({ lastHealthCheckAt: now() }).where(eq(t.id, row.id));
+            await tx.insert(schema.consoleItem).values({
+              businessId,
+              kind: 'channel_disconnected',
+              referenceId: row.id,
+              details: { network: row.network, providerStatus: status.status, reason: 'daily health check' },
+            });
+            return null;
+          },
+        });
+        if (result.ok) lost.push(row.network);
+      }
+      return lost;
     },
   };
 }

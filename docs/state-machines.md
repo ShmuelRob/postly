@@ -154,7 +154,7 @@ Stored in `publication.status`. One row per post per channel.
 | `scheduled` | `CANCELLED` | `cancelled` | |
 | `retry_pending` | `CANCELLED` | `cancelled` | |
 
-`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice: when the publication already holds a `provider_post_id`, the job asks `getPublicationStatus` first, and a post the provider reports `scheduled` or `published` is `SUCCEEDED` without a new `publish` (`already_published`). When the earlier attempt left no provider id (the response was lost), the retry calls `publish` with the same idempotency key, the publication id, so the provider returns the existing post instead of creating a second one.
+`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice: when the publication already holds a `provider_post_id`, the job asks `getPublicationStatus` first, and a post the provider reports `scheduled` or `published` is `SUCCEEDED` without a new `publish` (`already_published`). When the earlier attempt left no provider id (the response was lost), the retry calls `publish` with the same idempotency key, the publication id, so the provider returns the existing post instead of creating a second one. The job stores `provider_post_id` as soon as `publish` returns, before `SUCCEEDED`, and clears it after the provider reports the post `failed` (WP-35). `published` means the provider holds the post; `published_at` is set, and the owner is told, only when the provider reports it live. A publication left `in_progress` for 10 minutes (a crashed run) is moved by the tick with `ATTEMPT_FAILED` or `ATTEMPTS_EXHAUSTED` and a console item.
 
 ## Channel connection
 
@@ -165,7 +165,7 @@ Stored in `channel_connection.status`.
 | `pending` | `CONNECTED` | `connected` | Provider reports the account is linked |
 | `connected` | `TEST_PASSED` | `verified` | A test schedule succeeded on this channel: the provider's `testSchedule` reports `ok` (WP-34; nothing is published) |
 | `connected` | `TEST_FAILED` | `pending` | The test schedule failed; a new connection link is sent |
-| `verified` | `HEALTH_CHECK_FAILED` | `disconnected` | Owner is notified with a template |
+| `verified` | `HEALTH_CHECK_FAILED` | `disconnected` | The daily health check finds the account not connected (WP-35); the owner gets the `channel_disconnected` template and a console item opens |
 | `disconnected` | `RECONNECT_REQUESTED` | `pending` | A new connection link is sent |
 | any state except `revoked` | `REVOKED` | `revoked` | Business cancelled or owner removed the channel |
 

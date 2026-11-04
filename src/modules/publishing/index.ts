@@ -3,5 +3,5 @@
 
 export { createChannels, type ApplyChannelEvent, type Channels, type ChannelStatus } from './channels.js';
 export { createScheduling, MissingChannelError, type ApplyPostEvent, type Scheduling } from './scheduling.js';
-export { createPublishingJob, MAX_ATTEMPTS, RETRY_DELAYS_MS, type ApplyPublishingEvent, type Publishing, type PublishingJobDeps, type PublishingNotice } from './job.js';
+export { createPublishingJob, MAX_ATTEMPTS, RETRY_DELAYS_MS, STALE_MS, type ApplyPublishingEvent, type Publishing, type PublishingJobDeps, type PublishingNotice } from './job.js';
 export { noPublishingWindows, NoTimeAvailableError, proposeTimes, type ScheduleRules } from './times.js';

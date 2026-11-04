@@ -52,3 +52,13 @@ export const PUBLISHED_TEMPLATE = 'publication_confirmation';
 export const PUBLISHED_TEMPLATE_BODY = 'הפוסט "{{topic}}" עלה עכשיו ב{{networks}} ✅';
 export const FAILED_TEMPLATE = 'publication_failed';
 export const FAILED_TEMPLATE_BODY = 'לא הצלחנו לפרסם את הפוסט "{{topic}}" ב{{failed}}. הצוות שלנו כבר מטפל בזה ויעדכן אותך.';
+export const CHANNEL_DISCONNECTED_TEMPLATE = 'channel_disconnected';
+export const CHANNEL_DISCONNECTED_TEMPLATE_BODY = 'החיבור של Postly ל{{networks}} נותק, ולכן לא נוכל לפרסם שם עד שיחובר מחדש. הצוות שלנו ייצור איתך קשר עם קישור לחיבור.';
+
+/** The owner confirmed after a proposed time had passed (technical-design.md, Failure handling). */
+export function lateProposal(items: { topic: string; at: string }[]): string {
+  const lines = ['הזמן שהצעתי כבר עבר, אז לא תזמנתי. אלה זמנים חדשים:', ''];
+  items.forEach((item, i) => lines.push(`${i + 1}. "${item.topic}": ${item.at}`));
+  lines.push('', "מתאים? כתבו 'כן' ואתזמן.");
+  return lines.join('\n');
+}

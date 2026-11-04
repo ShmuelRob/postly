@@ -45,7 +45,7 @@ This document defines the Zod schemas for model tasks, the business profile, and
 
 ### `OpenQuestion`
 
-What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile), and an optional `postId` (the post a drafts question is about: `photo_choice` or `change_request`; added 2026-11-03 by WP-32, queued for the human), and optional `proposals` (the `schedule_confirmation` question: each proposed post's `postId` and time `at`; added 2026-11-04 by WP-34, queued for the human). The schema is in `src/contracts/open-question.ts`.
+What the agent is waiting for, stored in `conversation_state.open_question` (added in WP-30, queued for the human): `key` (which question of the step), `askedFields` (profile fields the question asks for; may be empty), `attempts` (how many times it was asked), `photoAssetIds` (business photos the owner sent during onboarding, not part of the profile), and an optional `postId` (the post a drafts question is about: `photo_choice` or `change_request`; added 2026-11-03 by WP-32, queued for the human), and optional `proposals` (the `schedule_confirmation` question: each proposed post's `postId` and time `at`; added 2026-11-04 by WP-34, queued for the human). The key `drafts_waiting` (WP-35, no schema change) marks drafts that could not be sent because the 24-hour window had closed. The schema is in `src/contracts/open-question.ts`.
 
 ## Model tasks
 
