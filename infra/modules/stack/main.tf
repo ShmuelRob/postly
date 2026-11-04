@@ -15,11 +15,11 @@ terraform {
 variable "project_id" { type = string }
 variable "region" { type = string }
 variable "env_name" {
-  description = "staging or prod."
+  description = "dev, stage or prod."
   type        = string
   validation {
-    condition     = contains(["staging", "prod"], var.env_name)
-    error_message = "The env_name must be staging or prod."
+    condition     = contains(["dev", "stage", "prod"], var.env_name)
+    error_message = "The env_name must be dev, stage or prod."
   }
 }
 variable "image_tag" {
@@ -32,7 +32,7 @@ variable "public_base_url" {
   type        = string
 }
 variable "business_number" {
-  description = "Postly's WhatsApp business number for this environment (a test number on staging)."
+  description = "Postly's WhatsApp business number for this environment (a test number on dev and stage)."
   type        = string
 }
 variable "sql_tier" { type = string }
@@ -53,6 +53,16 @@ variable "worker_max_instances" {
 }
 variable "media_noncurrent_days" { type = number }
 variable "media_coldline_after_days" { type = number }
+variable "sql_retained_backups" {
+  description = "Automated Cloud SQL backups kept."
+  type        = number
+  default     = 14
+}
+variable "log_retention_days" {
+  description = "Retention of the project's _Default log bucket; null leaves the GCP default (30 days)."
+  type        = number
+  default     = null
+}
 variable "alert_email" {
   type    = string
   default = null
@@ -81,7 +91,7 @@ locals {
   }
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
-    # The processes refuse to start in staging or prod without it (src/config.ts).
+    # The processes refuse to start in dev, stage or prod without it (src/config.ts).
     { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
   )
 }
@@ -128,6 +138,7 @@ module "sql" {
   tier                        = var.sql_tier
   high_availability           = var.sql_high_availability
   deletion_protection         = var.deletion_protection
+  retained_backups            = var.sql_retained_backups
 }
 
 module "storage" {
@@ -235,3 +246,12 @@ output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }
 output "secret_ids" { value = module.secrets.ids }
+
+# Shorter log retention for cheap environments (dev); prod and stage keep the GCP default.
+resource "google_logging_project_bucket_config" "default" {
+  count          = var.log_retention_days == null ? 0 : 1
+  project        = var.project_id
+  location       = "global"
+  bucket_id      = "_Default"
+  retention_days = var.log_retention_days
+}

@@ -8,7 +8,7 @@ const base: Record<string, string> = {
   POSTLY_ENV: 'local',
   POSTLY_PROVIDERS: 'simulators',
   DATABASE_URL: 'postgres://db.internal:5432/postly',
-  PUBLIC_BASE_URL: 'https://staging.example.test',
+  PUBLIC_BASE_URL: 'https://stage.example.test',
   BUSINESS_NUMBER: '+972500000000',
   ...passwords,
 };
@@ -42,15 +42,17 @@ describe('process configuration', () => {
     });
 
     it('reads the secret from the environment (Secret Manager on Cloud Run)', () => {
-      expect(loadConfig({ ...base, POSTLY_ENV: 'staging', MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager' }).webhookSecret).toBe('s3cret-from-manager');
+      expect(loadConfig({ ...base, POSTLY_ENV: 'stage', MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager' }).webhookSecret).toBe('s3cret-from-manager');
     });
 
-    it('refuses to start in staging or prod without a secret', () => {
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'staging' })).toThrow('MESSAGING_WEBHOOK_SECRET');
+    it('refuses to start in dev, stage or prod without a secret', () => {
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'dev' })).toThrow('MESSAGING_WEBHOOK_SECRET');
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'stage' })).toThrow('MESSAGING_WEBHOOK_SECRET');
       expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: '' })).toThrow('MESSAGING_WEBHOOK_SECRET');
     });
 
-    it('refuses the public default secret in staging or prod', () => {
+    it('refuses the public default secret in dev, stage or prod', () => {
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'dev', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
       expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
     });
 
@@ -62,6 +64,7 @@ describe('process configuration', () => {
 
     it('refuses an unknown environment', () => {
       expect(() => loadConfig({ ...base, POSTLY_ENV: 'production' })).toThrow('POSTLY_ENV');
+      expect(() => loadConfig({ ...base, POSTLY_ENV: 'staging' })).toThrow('POSTLY_ENV');
     });
   });
 });

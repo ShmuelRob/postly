@@ -25,15 +25,15 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
 - **worker** runs pg-boss jobs. Its first job is the weekly tick: `WeeklyUpdates.tick` every hour on the hour (UTC cron `0 * * * *`), on a pg-boss queue with the `singleton` policy, so with several worker instances only one tick is active at a time and each hourly job is created once (`src/worker.ts`). A failed tick fails the job and pg-boss retries it (3 retries). The worker serves only `/healthz`, because Cloud Run services need a port to probe.
 - **migrate** is a Cloud Run job (`src/db/provision.ts`), run as the Cloud SQL admin user before each rollout. It applies the Drizzle migrations in `drizzle/`, which create one login per role of [database-schema.md](database-schema.md#least-privilege); sets each login's password from Secret Manager; creates the pg-boss login `app_jobs` and its schema `pgboss`, owned by that login; and lets pg-boss create its tables as `app_jobs`. Terraform never creates database roles. **Keep `log_statement` off.** The `ALTER ROLE ... PASSWORD` statements carry the login passwords in clear text, so Cloud SQL's `log_statement` flag must stay `none` (Terraform sets it explicitly in `infra/modules/cloud_sql`); never turn on `ddl`, `mod` or `all`, or pgAudit statement logging, on this instance. `log_min_duration_statement` stays at 1 s for slow queries; the password statements run in milliseconds.
-- **Providers.** Until the vendor adapters land (WP-41), the image runs only on the simulators (`POSTLY_PROVIDERS=simulators`; any other value refuses to start) with in-process media storage. A staging deploy before WP-41 therefore reaches no vendor and keeps no media across restarts. WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
+- **Providers.** Until the vendor adapters land (WP-41), the image runs only on the simulators (`POSTLY_PROVIDERS=simulators`; any other value refuses to start) with in-process media storage. A stage deploy before WP-41 therefore reaches no vendor and keeps no media across restarts. WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
 
 ### Configuration
 
 | Variable | Where from | Meaning |
 | --- | --- | --- |
-| `POSTLY_ENV` | Terraform, docker-compose | Required, with no default: `staging` or `prod` on Cloud Run, `local` or `test` elsewhere. A process without it refuses to start, so a deployed service never falls back to the public webhook secret |
+| `POSTLY_ENV` | Terraform, docker-compose | Required, with no default: `dev`, `stage` or `prod` on Cloud Run, `local` or `test` elsewhere. A process without it refuses to start, so a deployed service never falls back to the public webhook secret |
 | `POSTLY_PROVIDERS` | Terraform | `simulators` until WP-41 |
-| `MESSAGING_WEBHOOK_SECRET` | Secret Manager `postly-<env>-messaging-webhook-secret` | Verifies inbound messaging webhooks. In `staging` and `prod` the processes refuse to start when it is missing or equals the simulator default, which is public in the repository (`src/config.ts`); `local` and `test` fall back to that default |
+| `MESSAGING_WEBHOOK_SECRET` | Secret Manager `postly-<env>-messaging-webhook-secret` | Verifies inbound messaging webhooks. In `dev`, `stage` and `prod` the processes refuse to start when it is missing or equals the simulator default, which is public in the repository (`src/config.ts`); `local` and `test` fall back to that default |
 | `DATABASE_URL` | Terraform | `postgres://<private ip>:5432/postly?sslmode=require`, with no user: each login's URL is built from it |
 | `DB_PASSWORD_<LOGIN>` | Secret Manager `postly-<env>-db-password-<login>` | One per login in `ALL_LOGINS` (`src/db/index.ts`): the 13 role logins and `app_jobs` |
 | `MIGRATE_ADMIN_URL` | Secret Manager `postly-<env>-db-admin-url` | The admin user's full URL; read only by the migrate job's service account |
@@ -43,14 +43,19 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 
 ### Terraform
 
-`infra/modules/stack` is one environment; `infra/environments/staging` and `infra/environments/prod` call it with their sizes. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings, never values), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`. `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow. The remote state backend (`gcs`) is commented out in each environment for the human to fill in. Real values go in a git-ignored `terraform.tfvars` (copy `terraform.tfvars.example`).
+`infra/modules/stack` is one environment; `infra/environments/dev`, `infra/environments/stage` and `infra/environments/prod` call it with their sizes. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings, never values), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`. `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow. The remote state backend (`gcs`) is commented out in each environment for the human to fill in. Real values go in a git-ignored `terraform.tfvars` (copy `terraform.tfvars.example`).
 
-| | staging | prod |
-| --- | --- | --- |
-| Cloud SQL | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
-| Worker instances | at most 1 | at most 2 |
-| Media: old object versions kept | 7 days | 30 days |
-| Media: to Coldline after | 90 days | 180 days |
+| | dev | stage | prod |
+| --- | --- | --- | --- |
+| Cloud SQL | `db-f1-micro`, zonal, no deletion protection | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
+| Cloud SQL backups kept | 3 | 14 | 14 |
+| Worker instances | at most 1 | at most 1 | at most 2 |
+| Media: old object versions kept | 3 days | 7 days | 30 days |
+| Media: to Coldline after | 30 days | 90 days | 180 days |
+| Log retention (`_Default` bucket) | 7 days | GCP default (30) | GCP default (30) |
+| Deploy approval | none (`main` only) | required reviewer (`main` only) | required reviewer (`main` only) |
+
+**Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the smallest sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
 
 The media lifecycle ages are provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
 
@@ -63,9 +68,9 @@ The media lifecycle ages are provisional until the human sets the media retentio
 | `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
 | `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
 
-Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`staging` or `prod`) can act as the deploy account.
+Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) can act as the deploy account.
 
-**The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `staging` and `prod`, and a deployment branch policy that allows only `main`, so no unreviewed branch can be deployed. Set both when creating the environments (step 6 below), and keep the reviewer list short.
+**The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `stage` and `prod`, and a deployment branch policy that allows only `main` on all three, so no unreviewed branch can be deployed. `dev` has no required reviewer on purpose: anyone who can run the workflow gets admin access to dev's database, which holds only test data. Set both when creating the environments (step 6 below), and keep the reviewer list short.
 
 ### Single web instance (review queue item 14)
 
@@ -85,15 +90,15 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 
 All of this costs money or creates cloud resources, so agents never do it.
 
-1. **GCP project and billing.** Create a project per environment (or one for staging first), link billing, and enable the APIs: `run`, `sqladmin`, `compute`, `servicenetworking`, `secretmanager`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `monitoring`, `logging`, `cloudresourcemanager`.
+1. **GCP project and billing.** Create a project per environment (or start with dev), link billing, and enable the APIs: `run`, `sqladmin`, `compute`, `servicenetworking`, `secretmanager`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `monitoring`, `logging`, `cloudresourcemanager`.
 2. **State bucket.** Create a versioned GCS bucket for Terraform state, then uncomment the `backend "gcs"` block in `infra/environments/<env>/main.tf` with its name.
-3. **Variables.** Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in the project, the test WhatsApp number (staging) or the real one (prod), the repository, and the alert email. `public_base_url` can be a placeholder for the first apply, then the web service's `run.app` URL or a custom domain.
+3. **Variables.** Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in the project, the test WhatsApp number (dev and stage) or the real one (prod), the repository, and the alert email. `public_base_url` can be a placeholder for the first apply, then the web service's `run.app` URL or a custom domain.
 4. **First apply.** `terraform init`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected. Alternatively push a first image by hand before applying.
-5. **Secrets.** Add a version to every secret in the `secret_ids` output: a strong random password for each `db-password-*`; for `db-admin-url`, set the Cloud SQL `postgres` user's password (`gcloud sql users set-password postgres --instance ...`) and store `postgres://postgres:<password>@<private ip>:5432/postly?sslmode=require`. Vendor secrets stay empty until WP-41, except `messaging-webhook-secret`: give it a strong random value, since web and worker refuse to start in staging or prod without it.
-6. **GitHub.** Create the environments `staging` and `prod` with required reviewers and a deployment branch policy that allows only `main` (see IAM above for why this is the real gate), and set on each the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the `workload_identity_provider` output) and `GCP_DEPLOY_SERVICE_ACCOUNT` (the `deploy_service_account` output).
-7. **Vendor accounts** (WP-41, later): WhatsApp (Twilio or 360dialog), publishing (Zernio or Ayrshare), Google AI, and the payment provider; test accounts and test keys on staging.
+5. **Secrets.** Add a version to every secret in the `secret_ids` output: a strong random password for each `db-password-*`; for `db-admin-url`, set the Cloud SQL `postgres` user's password (`gcloud sql users set-password postgres --instance ...`) and store `postgres://postgres:<password>@<private ip>:5432/postly?sslmode=require`. Vendor secrets stay empty until WP-41, except `messaging-webhook-secret`: give it a strong random value, since web and worker refuse to start in dev, stage or prod without it.
+6. **GitHub.** Create the environments `dev`, `stage` and `prod`, each with a deployment branch policy that allows only `main`, and required reviewers on `stage` and `prod` (see IAM above for why this is the real gate), and set on each the variables `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER` (the `workload_identity_provider` output) and `GCP_DEPLOY_SERVICE_ACCOUNT` (the `deploy_service_account` output).
+7. **Vendor accounts** (WP-41, later): WhatsApp (Twilio or 360dialog), publishing (Zernio or Ayrshare), Google AI, and the payment provider; test accounts and test keys on dev and stage.
 8. **Console sign-in.** The console answers only loopback requests (review queue item 16), so it is unreachable on Cloud Run until the team's sign-in is decided (for example IAP).
-9. **First deploy.** Run the Deploy workflow for `staging` and approve it. WP-44 is done when staging runs the end-to-end suite with test accounts, which needs WP-41.
+9. **First deploy.** Run the Deploy workflow for `stage` and approve it. WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 
 ## Migrations and rollback
 

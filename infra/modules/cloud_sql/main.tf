@@ -14,6 +14,10 @@ variable "private_services_connection" {
 variable "tier" { type = string }
 variable "high_availability" { type = bool }
 variable "deletion_protection" { type = bool }
+variable "retained_backups" {
+  type    = number
+  default = 14
+}
 
 resource "google_sql_database_instance" "postgres" {
   project             = var.project_id
@@ -39,7 +43,7 @@ resource "google_sql_database_instance" "postgres" {
       point_in_time_recovery_enabled = true
       start_time                     = "01:00"
       backup_retention_settings {
-        retained_backups = 14
+        retained_backups = var.retained_backups
       }
     }
 
