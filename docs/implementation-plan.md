@@ -113,6 +113,34 @@ Each flow ends with an end-to-end test from an inbound WhatsApp message to what 
 | WP-44 | Deployment: one image, web and worker on Cloud Run, Cloud SQL, Cloud Storage, secret manager, monitoring | Parallel | WP-22, WP-23, H8 | Stage runs the end-to-end suite with test accounts | in_progress |
 | WP-45 | Local playground (React, local only, never deployed and kept out of the production image): a WhatsApp-style chat where the human plays the owner through the messaging simulator (text, voice notes as audio files, photos, reply buttons), a mock Instagram and Facebook feed showing what reached the publishing simulator, and a state panel (business, conversation and post states, the review queue). Starts with scripted simulator data; each flow becomes playable as WP-30 to WP-34 land | Parallel | WP-02, WP-03, WP-22, WP-23 (WP-30 to close) | The human can run `npm run playground` and play onboarding end to end on simulators, covered by an end-to-end test that drives the UI | done |
 
+### Phase 5: audit trail and observability
+
+Added from the human's review of the queue on 2026-11-04 (items 15 and 29, and the observability decision). Docs first for each package, with Hebrew summaries.
+
+| ID | Package | Lane | Depends on | Done when | Status |
+| --- | --- | --- | --- | --- | --- |
+| WP-46 | Persisted workflow audit trail (item 15): a table recording every applied and every rejected workflow event (business, machine, from and to state, event, source, role, reason, time, actor, correlation id such as the message id), written in the same transaction as the transition, FORCE RLS and grants (H4), shown in the console. Keep everything for now; the docs decide whether it stays outside the business `on delete cascade` ([retention-checks.md](retention-checks.md)) | Core | WP-23, WP-40, H4 | An applied and a rejected event each leave one audit row, visible in the console, covered end to end | todo |
+| WP-47 | Observability: logging foundation. Structured logs across web, worker and jobs with request, business, message and job ids, and no customer content, phone numbers or secrets (H4, H8); a new observability doc with a Hebrew summary | Parallel | WP-44 | A test fails if a log line carries customer content or a secret; every job and request log has its ids | todo |
+| WP-48 | Observability: metrics and tracing. Cloud Trace through OpenTelemetry, Cloud Error Reporting, and metrics for messages in and out, drafts, approvals, publications by status and network, retries and failures, model run cost and latency, queue depth, and DB connections | Parallel | WP-47 | The metrics appear on the simulators locally and in `dev` | todo |
+| WP-49 | Observability: dashboards and alerts in Terraform (extending `infra/` monitoring): dashboards (including a per-business view), log-based metrics, uptime checks, SLOs, notification channels, and alerts for publishing failures, webhook errors, pg-boss backlog, worker not running, channel disconnected, cost spikes and 5xx | Parallel | WP-48, H8 | `terraform validate` and plan are clean; never applied by an agent | todo |
+| WP-50 | Observability: runbook. One entry per alert: what it means, how to check, what to do | Parallel | WP-49 | Every alert in WP-49 links to its runbook entry | todo |
+
+### Phase 6: polish
+
+| ID | Package | Lane | Depends on | Done when | Status |
+| --- | --- | --- | --- | --- | --- |
+| WP-60 | Polish (item 17): small touches, better wording, and variety in the owner messages so repeated messages do not read the same every week (H6 for every copy change) | Core | WP-35 | The copy changes are queued for the human; end-to-end transcripts show the new wording | todo |
+
+### Future: scheduling
+
+Plan only, no code now (items 17 and 27). Each needs PRD and state-machine changes first.
+
+| ID | Package | Lane | Depends on | Done when | Status |
+| --- | --- | --- | --- | --- | --- |
+| WP-70 | The owner picks the exact publishing time instead of choosing from the proposed slots | Core | WP-34 | End-to-end: a post goes live at the owner's time | todo |
+| WP-71 | Several posts per day at hours the owner sets | Core | WP-70 | End-to-end: two approved posts on one day publish at their hours | todo |
+| WP-72 | AI recommendations for the best hours to post, from the business's past results (a bounded model task through the model layer, H7) | Core | WP-70, WP-48 | The proposal shows the recommended hours; the model output is validated and recorded | todo |
+
 ## Session manager
 
 The manager is one long-running Claude session that owns this plan. It does not write product code.
