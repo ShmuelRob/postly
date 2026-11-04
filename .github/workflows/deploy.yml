@@ -1,19 +1,22 @@
 name: Deploy
 
-# Manual only. A run targets the GitHub environment of the same name (dev, stage or prod); stage
-# and prod wait for a required reviewer, dev does not, and all three deploy only from main. It then
-# authenticates with Workload Identity Federation (no key file), pushes the
-# image, runs the migration job, and rolls out web and worker. It never runs Terraform: the human
-# applies infra (docs/deployment.md, gate H8). Until the human fills the repository variables
-# below and sets up the environments, this workflow cannot authenticate and does nothing.
+# CD (docs/deployment.md, CI). A push to `dev`, `stage` or `main` deploys to dev, stage or prod.
+# The job runs in the GitHub environment of that name: dev deploys at once, stage and prod wait for
+# the environment's required reviewer (the approval gate). Each environment accepts only its own
+# branch, in GitHub and in the Workload Identity condition. `workflow_dispatch` redeploys an image
+# tag that already exists (a rollback); run it from the environment's branch. The job authenticates
+# with Workload Identity Federation (no key file), builds and pushes the image once, runs the
+# migration job, and rolls out web and worker. It never runs Terraform: the human applies infra
+# (gate H8). Until Terraform has set the environment variables, it stops at its first step.
 
 on:
+  push:
+    branches: [dev, stage, main]
   workflow_dispatch:
     inputs:
-      environment:
-        description: Target environment
-        type: choice
-        options: [dev, stage, prod]
+      image_tag:
+        description: Existing image tag (a commit SHA) to redeploy to this branch's environment
+        type: string
         required: true
 
 permissions:
@@ -21,40 +24,46 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-${{ inputs.environment }}
+  group: deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # The approval gate: the environment must have required reviewers (docs/deployment.md).
-    environment: ${{ inputs.environment }}
+    # dev, stage or main (prod). Any other ref has no environment and the job fails before it starts.
+    environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}
     env:
-      # Placeholders, set per environment by the human as GitHub environment variables.
+      ENV_NAME: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      PREFIX: postly-${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
     steps:
-      - name: Refuse to run before the human configured the environment
+      - name: Refuse to run before Terraform configured the environment
         run: |
+          case "$ENV_NAME" in dev|stage|prod) ;; *) echo "::error::no environment for ref ${GITHUB_REF_NAME}"; exit 1;; esac
           for v in PROJECT_ID REGION WIF_PROVIDER DEPLOY_SA; do
-            if [ -z "${!v}" ]; then echo "::error::$v is not set for environment ${{ inputs.environment }}"; exit 1; fi
+            if [ -z "${!v}" ]; then echo "::error::$v is not set for environment $ENV_NAME"; exit 1; fi
           done
+          echo "PREFIX=postly-$ENV_NAME" >> "$GITHUB_ENV"
+          echo "IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/postly-$ENV_NAME/postly:$IMAGE_TAG" >> "$GITHUB_ENV"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: github.event_name == 'push'
       - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Build and push the image
+      - name: Build and push the image (once per run)
+        if: github.event_name == 'push'
         run: |
-          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$PREFIX/postly:${GITHUB_SHA}"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
+      - name: Check the image to redeploy exists
+        if: github.event_name == 'workflow_dispatch'
+        run: gcloud artifacts docker images describe "$IMAGE" --quiet > /dev/null
       - name: Run the migration job (migrations first, then code)
         run: |
           gcloud run jobs update "$PREFIX-migrate" --region "$REGION" --image "$IMAGE" --quiet
