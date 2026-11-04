@@ -41,6 +41,7 @@ module "postly" {
   business_number   = var.business_number
   github_repository = var.github_repository
   alert_email       = var.alert_email
+  # Sizes: docs/deployment.md, Sizing (same in every environment).
   sql_tier                  = "db-custom-2-7680"
   sql_high_availability     = false
   deletion_protection       = false
