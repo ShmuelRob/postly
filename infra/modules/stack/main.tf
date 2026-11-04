@@ -80,6 +80,8 @@ data "google_project" "this" {
 
 locals {
   prefix = "postly-${var.env_name}"
+  # The branch that deploys to this environment (docs/deployment.md, Branches and promotion).
+  deploy_branch = { dev = "dev", stage = "stage", prod = "main" }[var.env_name]
   # Cloud Run's deterministic URL: https://<service>-<project number>.<region>.run.app.
   public_base_url = coalesce(var.public_base_url, "https://${local.prefix}-web-${data.google_project.this.number}.${var.region}.run.app")
   # Every database login of database-schema.md (Least privilege) plus the pg-boss login; the

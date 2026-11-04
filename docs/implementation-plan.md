@@ -11,7 +11,7 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 - TDD: failing tests first, then code. A package is done only when its end-to-end test passes and its report is shown to the human.
 - Stay inside the package's files. Any change outside them is reported, not made.
 - Never skip, weaken, or delete a failing end-to-end test.
-- One branch and one pull request per package, named `wp/<id>-<slug>`. Sessions never merge; the manager merges after the gates pass.
+- One branch and one pull request per package, named `wp/<id>-<slug>`, targeting `dev` ([deployment.md](deployment.md#terraform): `dev` → `stage` → `main` is the promotion path; `main` is prod). Sessions never merge; the manager merges after the gates pass.
 
 ## Lanes
 
@@ -28,7 +28,7 @@ Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the
 - **Gates no longer block, with two exceptions.** A gate that spends real money (a paid vendor plan, a real payment) or deploys to any cloud environment (WP-44, anything that creates cloud resources) still waits for the human. Every other gate becomes a queued review: the work goes ahead, and the item is added to [human-review-queue.md](human-review-queue.md) with the PR, what to look at, and the gate it stands in for. The human reviews the queue at their own pace; a finding becomes a fix package.
 - **Human-owned tests (H5).** Until the human writes them, a test-author session that does not implement writes the approval and publishing tests on their own branch, the reviewer checks them against the docs, and they merge before the implementing session starts. The implementing session may not change them; a test it believes is wrong is reported, not edited. The tests are queued for the human.
 - **Human-authored content (H2, H3, H6, H7).** Sessions draft the Hebrew copy, templates, prompts, styles, and example set from the docs, mark them provisional, and queue them for the human.
-- **Reviewer session.** One long-running reviewer session, separate from every developer session, takes over loop steps 4 to 6: it verifies each pull request, reviews it by area, queues human-review items, approves, and squash-merges it into main. It never writes product code beyond trivial fixes it states in the PR.
+- **Reviewer session.** One long-running reviewer session, separate from every developer session, takes over loop steps 4 to 6: it verifies each pull request, reviews it by area, queues human-review items, approves, and squash-merges it into `dev`. It never writes product code beyond trivial fixes it states in the PR.
 - **Vendor accounts.** Packages that need vendor test accounts or keys (WP-41) stay blocked until the human provides them, since agents do not create accounts.
 
 ## Human gates
@@ -124,7 +124,7 @@ The manager is one long-running Claude session that owns this plan. It does not 
 3. **Wait.** Do nothing until a session reports. Never poll.
 4. **Verify.** (Reviewer session under the [operating mode](#operating-mode).) On a report: run `npm run check` on the branch, open the end-to-end report, and start a separate review agent that did not write the code, split by area (security, tenant isolation, failure cases) where the package touches them.
 5. **Gate.** If the package touches a human-review area, or adds or changes an end-to-end test, show the human the diff summary, the test, and its report. Under the operating mode, add an entry to the review queue instead of waiting, unless the gate spends money or deploys. Set the package to `review`.
-6. **Merge.** After approval (the reviewer's, under the operating mode), squash-merge the pull request into main. The manager then sets the package to `done` and commits the status change.
+6. **Merge.** After approval (the reviewer's, under the operating mode), squash-merge the pull request into `dev`. The manager then sets the package to `done` and commits the status change.
 7. **Repeat** from step 1. When nothing is ready and nothing is running, list the open human gates and decisions to the human and stop.
 
 A session that reports a doc gap or a failing end-to-end test is not retried blindly: the manager brings it to the human, updates the docs and their Hebrew companions once decided, and then restarts the package.

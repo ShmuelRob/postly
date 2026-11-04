@@ -52,6 +52,7 @@ module "github" {
   source      = "../../modules/github_environment"
   repository  = var.github_repository
   environment = "stage"
+  branch      = module.postly.deploy_branch
   reviewers   = var.deploy_reviewers
   variables = {
     GCP_PROJECT_ID                 = var.project_id

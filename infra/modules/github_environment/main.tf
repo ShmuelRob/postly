@@ -1,5 +1,5 @@
 # The GitHub environment the deploy workflow runs in, named like the Postly environment: deployable
-# from `main` only, with required reviewers where given (stage and prod), and the four variables
+# only from its own branch (dev, stage, or main for prod), which is created here and protected, with required reviewers where given (stage and prod), and the four variables
 # the workflow reads. This is the real deploy gate (docs/deployment.md, IAM). The provider token
 # comes from the GITHUB_TOKEN environment variable, never from tfvars.
 
@@ -18,6 +18,10 @@ variable "repository" {
   type        = string
 }
 variable "environment" { type = string }
+variable "branch" {
+  description = "The branch that deploys to this environment; created from main unless it is main."
+  type        = string
+}
 variable "reviewers" {
   description = "GitHub usernames that must approve a deploy; empty means none (dev)."
   type        = list(string)
@@ -53,10 +57,40 @@ resource "github_repository_environment" "this" {
   }
 }
 
-resource "github_repository_environment_deployment_policy" "main" {
+resource "github_repository_environment_deployment_policy" "branch" {
   repository     = local.repository
   environment    = github_repository_environment.this.environment
-  branch_pattern = "main"
+  branch_pattern = var.branch
+}
+
+data "github_repository" "this" {
+  full_name = var.repository
+}
+
+resource "github_branch" "this" {
+  count         = var.branch == "main" ? 0 : 1
+  repository    = local.repository
+  branch        = var.branch
+  source_branch = "main"
+}
+
+# Code reaches the branch only through a pull request with the CI `check` job passing.
+resource "github_branch_protection" "this" {
+  repository_id    = data.github_repository.this.node_id
+  pattern          = var.branch
+  enforce_admins   = true
+  allows_deletions = false
+
+  required_status_checks {
+    strict   = false
+    contexts = ["check"]
+  }
+
+  required_pull_request_reviews {
+    required_approving_review_count = 0
+  }
+
+  depends_on = [github_branch.this]
 }
 
 resource "github_actions_environment_variable" "this" {

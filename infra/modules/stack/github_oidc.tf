@@ -22,9 +22,10 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"        = "assertion.sub"
     "attribute.repository"  = "assertion.repository"
     "attribute.environment" = "assertion.environment"
+    "attribute.ref"         = "assertion.ref"
   }
-  # Only jobs of this repository that run in the approval-guarded environment of this name.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.environment == \"${var.env_name}\""
+  # Only jobs of this repository that run in the environment of this name, on its own branch.
+  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.environment == \"${var.env_name}\" && assertion.ref == \"refs/heads/${local.deploy_branch}\""
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
@@ -36,4 +37,5 @@ resource "google_service_account_iam_member" "github_deploy" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
 
+output "deploy_branch" { value = local.deploy_branch }
 output "workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github.name }

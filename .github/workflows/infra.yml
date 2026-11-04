@@ -6,7 +6,7 @@ name: Infra
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [dev, stage, main]
 
 permissions:
   contents: read
