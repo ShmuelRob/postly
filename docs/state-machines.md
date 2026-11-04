@@ -106,7 +106,7 @@ Stored in `post.status`. This is the machine that protects the approval rule.
 | `awaiting_approval` | `APPROVED` | `approved` | See approval guard |
 | `awaiting_approval` | `CHANGE_REQUESTED` | `drafting` | |
 | `approved` | `CHANGE_REQUESTED` | `drafting` | Existing approval is invalidated |
-| `approved` | `SCHEDULED` | `scheduled` | Owner confirmed the times; one publication per connected channel exists |
+| `approved` | `SCHEDULED` | `scheduled` | Owner confirmed the times; one publication per network of the approved version exists, each on a verified connection |
 | `scheduled` | `CHANGE_REQUESTED` | `drafting` | Approval is invalidated; pending publications are cancelled |
 | `scheduled` | `PUBLISHING_STARTED` | `publishing` | First publication started |
 | `publishing` | `ALL_PUBLISHED` | `published` | Every publication is `published` |

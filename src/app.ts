@@ -95,9 +95,10 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
   const model = createModelLayer({ db, providers: providers.models, resolveMediaUrl: (b, a) => messaging.mediaUrl(b, a) });
-  const scheduling = createScheduling({ db, ...(options.now ? { now: options.now } : {}) });
+  const scheduling = createScheduling({ db, apply: (b, r) => workflow.apply(b, r), ...(options.now ? { now: options.now } : {}) });
   approvals = createApprovals({
     db,
+    workflow,
     mayAutoReply: (b) => workflow.mayAutoReply(b),
     recordInbound: (b, m) => messaging.record(b, m),
     cancelPendingPublications: (b, p) => scheduling.cancelPending(b, p),

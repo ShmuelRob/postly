@@ -1,62 +1,91 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Network } from '../../contracts/common.js';
-import { postMachine } from '../../contracts/state-machines/index.js';
-import type { Database } from '../../db/index.js';
+import { NETWORKS, type Network } from '../../contracts/common.js';
+import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 
 // Publications (state-machines.md, Post and Publication; technical-design.md, Approval flow).
 // Interim until WP-34: scheduling creates the publications from the post's valid approval; WP-34
 // adds the time proposals and the publishing job.
 
+/** The workflow's `apply`, for the post's `SCHEDULED` (publishing does not import workflow). */
+export type ApplyPostEvent = (
+  businessId: string,
+  request: {
+    machine: 'post';
+    id: string;
+    event: 'SCHEDULED';
+    source: 'system';
+    role: 'publishing';
+    guard: (tx: Tx, current: { from: string; to: string }) => Promise<string | null>;
+  },
+) => Promise<{ ok: true } | { ok: false; reason: string; detail?: string }>;
+
 export interface Scheduling {
   /**
-   * The owner confirmed the time: one `scheduled` publication per `verified` channel, tied to the
-   * valid approval of the post's current version, and `SCHEDULED` on the post, in one transaction.
-   * Throws when the post is not `approved` or has no valid approval of its current version.
+   * The owner confirmed the time: one `scheduled` publication per network of the approved version
+   * (its caption keys), each on that network's `verified` connection, tied to the valid approval of
+   * the post's current version, and `SCHEDULED` on the post, in one transaction. Throws, scheduling
+   * nothing, when the post is not `approved`, has no valid approval of its current version, or a
+   * network of the approved version has no verified connection.
    */
   schedule(businessId: string, postId: string, scheduledFor: Date): Promise<{ publicationId: string; network: Network }[]>;
   /** Cancels the post's `scheduled` and `retry_pending` publications. */
   cancelPending(businessId: string, postId: string): Promise<void>;
 }
 
-export function createScheduling(deps: { db: Database; now?: () => Date }): Scheduling {
+export function createScheduling(deps: { db: Database; apply: ApplyPostEvent; now?: () => Date }): Scheduling {
   const { db } = deps;
   const now = deps.now ?? (() => new Date());
-  const scheduledTo = (postMachine.transitions as Record<string, Record<string, string> | undefined>).approved?.SCHEDULED;
 
   return {
     async schedule(businessId, postId, scheduledFor) {
-      return db.withBusiness('publishing', businessId, async (tx) => {
-        const [post] = await tx.select().from(schema.post).where(eq(schema.post.id, postId)).for('update');
-        if (!post || post.status !== 'approved' || scheduledTo !== 'scheduled') throw new Error(`post ${postId} is not approved`);
-        const a = schema.approval;
-        const [approval] = await tx
-          .select()
-          .from(a)
-          .where(and(eq(a.postId, postId), isNull(a.invalidatedAt), eq(a.postVersionId, post.currentVersionId ?? postId)));
-        if (!approval) throw new Error(`post ${postId} has no valid approval of its current version`);
-        const channels = await tx
-          .select()
-          .from(schema.channelConnection)
-          .where(eq(schema.channelConnection.status, 'verified'));
-        if (channels.length === 0) throw new Error(`business ${businessId} has no verified channel`);
-        const rows = await tx
-          .insert(schema.publication)
-          .values(
-            channels.map((c) => ({
-              businessId,
-              postId,
-              approvalId: approval.id,
-              approvedVersionHash: approval.approvedVersionHash,
-              channelConnectionId: c.id,
-              network: c.network,
-              scheduledFor,
-            })),
-          )
-          .returning({ publicationId: schema.publication.id, network: schema.publication.network });
-        await tx.update(schema.post).set({ status: 'scheduled', updatedAt: now() }).where(eq(schema.post.id, postId));
-        return rows;
+      let rows: { publicationId: string; network: Network }[] = [];
+      const result = await deps.apply(businessId, {
+        machine: 'post',
+        id: postId,
+        event: 'SCHEDULED',
+        source: 'system',
+        role: 'publishing',
+        guard: async (tx) => {
+          const [post] = await tx.select({ currentVersionId: schema.post.currentVersionId }).from(schema.post).where(eq(schema.post.id, postId));
+          if (!post?.currentVersionId) return 'the post has no current version';
+          const a = schema.approval;
+          const [approval] = await tx
+            .select()
+            .from(a)
+            .where(and(eq(a.postId, postId), isNull(a.invalidatedAt), eq(a.postVersionId, post.currentVersionId)));
+          if (!approval) return 'no valid approval of the current version';
+          const [version] = await tx
+            .select({ captions: schema.postVersion.captions })
+            .from(schema.postVersion)
+            .where(eq(schema.postVersion.id, approval.postVersionId));
+          const networks = NETWORKS.filter((n) => (version?.captions as Partial<Record<Network, unknown>> | undefined)?.[n]);
+          if (networks.length === 0) return 'the approved version has no network';
+          const channels = await tx
+            .select()
+            .from(schema.channelConnection)
+            .where(and(eq(schema.channelConnection.status, 'verified'), inArray(schema.channelConnection.network, networks)));
+          const missing = networks.filter((n) => !channels.some((c) => c.network === n));
+          if (missing.length > 0) return `no verified connection for ${missing.join(', ')}`;
+          rows = await tx
+            .insert(schema.publication)
+            .values(
+              channels.map((c) => ({
+                businessId,
+                postId,
+                approvalId: approval.id,
+                approvedVersionHash: approval.approvedVersionHash,
+                channelConnectionId: c.id,
+                network: c.network,
+                scheduledFor,
+              })),
+            )
+            .returning({ publicationId: schema.publication.id, network: schema.publication.network });
+          return null;
+        },
       });
+      if (!result.ok) throw new Error(`post ${postId} was not scheduled: ${result.detail ?? result.reason}`);
+      return rows;
     },
 
     async cancelPending(businessId, postId) {

@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import type { Database, Tx } from '../../db/index.js';
+import type { BusinessRole, Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { MACHINE_STORES, type MachineName } from './machines.js';
 
@@ -22,6 +22,12 @@ export interface EventRequest {
   event: string;
   source: EventSource;
   guard?: Guard;
+  /**
+   * The role the transaction runs as, when not the machine's default: one that may update the status
+   * column and whose guard writes its own rows (the approval role for `APPROVED`, publishing for
+   * `SCHEDULED`). The handoff check runs only as the workflow role.
+   */
+  role?: BusinessRole;
 }
 
 export type RejectionReason = 'not_found' | 'invalid_transition' | 'guard_failed' | 'handoff';
@@ -79,8 +85,9 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
     async apply(businessId, request) {
       const store = MACHINE_STORES[request.machine];
       const transitions = store.machine.transitions as Record<string, Record<string, string> | undefined>;
-      const checkHandoff = request.source === 'inbound' && store.role === 'workflow';
-      const result = await db.withBusiness(store.role, businessId, async (tx): Promise<EventResult> => {
+      const role = request.role ?? store.role;
+      const checkHandoff = request.source === 'inbound' && role === 'workflow';
+      const result = await db.withBusiness(role, businessId, async (tx): Promise<EventResult> => {
         if (checkHandoff && (await handoffAt(tx, businessId))) return { ok: false, reason: 'handoff' };
         const from = await store.load(tx, request.id);
         if (from === undefined) return { ok: false, reason: 'not_found' };

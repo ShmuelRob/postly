@@ -95,6 +95,9 @@ export function networksFromChange(instructions: string[], current: Network[]): 
   return current;
 }
 
+/** The console item reason when a change is refused after the post's approval was invalidated. */
+export const CHANGE_REFUSED = 'change refused after approval was invalidated';
+
 const SCOPE_BY_TARGET = { caption: 'caption', design: 'design', media: 'design', schedule: 'schedule', channels: 'general' } as const;
 
 type PostRow = typeof schema.post.$inferSelect;
@@ -453,9 +456,18 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       : current;
     // A change to an approved or scheduled post invalidates its approval first, so a failure after
     // this leaves a post that cannot publish (technical-design.md, Approval flow).
-    if (post.status === 'approved' || post.status === 'scheduled') await deps.invalidate(businessId, post.id);
-    if (!(await conversation(businessId, 'CHANGE_REQUESTED', null)).ok) return;
-    if (!(await postEvent(businessId, post.id, 'CHANGE_REQUESTED')).ok) return;
+    const invalidated = post.status === 'approved' || post.status === 'scheduled';
+    if (invalidated) await deps.invalidate(businessId, post.id);
+    const applied = (await conversation(businessId, 'CHANGE_REQUESTED', null)).ok && (await postEvent(businessId, post.id, 'CHANGE_REQUESTED')).ok;
+    if (!applied) {
+      // The post keeps its status with no valid approval, so it cannot publish: the team is told.
+      if (invalidated) {
+        await db.withBusiness('workflow', businessId, (tx) =>
+          tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: post.id, details: { reason: CHANGE_REFUSED } }),
+        );
+      }
+      return;
+    }
     // PRD, Context that updates automatically: every change is saved as a rule, once the change is
     // applied, so a refused change leaves no rule behind (review of PR #43, item 5).
     await db.withBusiness('business_data', businessId, (tx) =>
