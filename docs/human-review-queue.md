@@ -3,6 +3,8 @@
 Items the human reviews at their own pace, under the [operating mode](implementation-plan.md#operating-mode). The work has already merged unless the item says it waits. The reviewer session adds items; the human marks them `ok` or writes a finding, and the manager turns each finding into a fix package.
 
 Status values: `open` (not reviewed yet), `ok` (reviewed, no change), `finding` (needs a fix package), `waits` (blocked on the human: money or deployment).
+WhatsApp template bodies to submit to Meta (items 20, 27, 28, 29 and the billing ones) are collected in [whatsapp-templates.md](whatsapp-templates.md).
+
 
 | # | Added | Package / PR | Gate | What to review | Status |
 | --- | --- | --- | --- | --- | --- |
