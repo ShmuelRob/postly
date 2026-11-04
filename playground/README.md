@@ -11,14 +11,14 @@ Then open http://127.0.0.1:5175. Docker must be running: the playground starts `
 ## What is on the page
 
 - **Chat** (right): you are the approver number. Send text, photos (📷, any image file), voice notes (🎤, any audio file), and tap reply buttons. Messages go through the simulator's signed webhook, the real webhook route, deduplication and burst merge (1.5 seconds of quiet), then to the workflow.
-- **Feed** (middle): what reached the publishing simulator, per network, with the images. Until the publishing flow (WP-34) lands, it holds two scripted demo posts on a separate demo account.
+- **Feed** (middle): what reached the publishing simulator, per network, with the images, next to two scripted demo posts on a separate demo account.
 - **State** (left): the business status, the conversation step and handoff flag, the channel connections, the posts, and the review queue (console items), read from the database.
 
 ## Flows
 
 The playground runs the product's composition root, `createApp` (`src/app.ts`), on the simulators: messaging hands each burst to the workflow, which runs onboarding (WP-30) for the new business. Onboarding is playable end to end: write first, answer the profile questions by text or voice note, send a logo, write `סיימתי` to get the three style samples (rendered by the design engine), pick a style, approve the summary with `מאשר`, then press **חיבור הרשתות בסימולטור** in the state panel (it completes the connection link on the publishing simulator) and write `חיברתי`. The business turns `active`.
 
-Two stand-ins replace the model, so free Hebrew works without a real model: `server/extraction.ts` fills the asked profile fields from each answer with simple rules (playground only, not product logic), and voice notes transcribe to the model simulator's fixed text. Reply buttons are shown but no flow sends them yet; tapping one reports an error until the approval flow (WP-33). The weekly flows (WP-31 to WP-34) become playable as `createApp` routes active businesses to them.
+Two stand-ins replace the model, so free Hebrew works without a real model: `server/extraction.ts` fills the asked profile fields from each answer with simple rules (playground only, not product logic), and voice notes transcribe to the model simulator's fixed text. Once active, write a weekly update (`server/weekly.ts` stands in for the model's planning, so the drafts pass the fact check), tap **אישור** under every draft, answer `כן` to the proposed times, then press **קפיצה בזמן ופרסום המתוזמנים** in the state panel: it moves the playground clock past the next scheduled time and runs the publishing job, and the posts appear in the feed with the confirmation template in the chat (WP-34). The panel shows the playground clock.
 
 ## Boundaries
 

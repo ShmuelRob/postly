@@ -264,14 +264,31 @@ e2eTest('an update after the cutoff counts for next week', { timeout: 60_000 }, 
   // Friday: a text update after the week was skipped.
   time.set('2026-11-06T09:00:00');
   modelSim.script('intent_detection', { intent: 'weekly_update', confidence: 0.92 });
+  // A plan whose briefs name no number without a source, so every draft passes the fact check.
+  modelSim.script('weekly_planning', (input) => ({
+    posts: [
+      { topic: 'מבצע חלות', contentType: 'promotions', format: 'single', factIds: input.facts.map((f) => f.id), mediaAssetIds: [], brief: 'המבצע על החלות' },
+      { topic: 'עוגות שמרים חדשות', contentType: 'products', format: 'single', factIds: [], mediaAssetIds: [], brief: 'העוגות החדשות עם שוקולד' },
+      { topic: 'הבצק שלנו', contentType: 'behind_the_scenes', format: 'single', factIds: [], mediaAssetIds: [], brief: 'הבצק שלנו תופח לאט' },
+    ],
+  }));
   await run.owner.sendsText(UPDATE_TEXT);
 
-  expect(run.owner.received().map((m) => m.text ?? m.kind).slice(0, 2)).toEqual(['template', copy.updateForNextWeek(3)]);
-  expect((await weeks(businessId)).map((w) => [w.weekStart, w.status, w.originalText])).toEqual([
+  // The reminder, the reply that it counts for next week, then one draft per planned post, as in the first case.
+  const received = run.owner.received();
+  expect(received.slice(0, 2).map((m) => m.text ?? m.kind)).toEqual(['template', copy.updateForNextWeek(3)]);
+  expect(received.slice(2).map((m) => m.kind)).toEqual(['buttons', 'buttons', 'buttons']);
+  const all = await weeks(businessId);
+  expect(all.map((w) => [w.weekStart, w.status, w.originalText])).toEqual([
     ['2026-11-01', 'skipped', null],
     ['2026-11-08', 'planned', UPDATE_TEXT],
   ]);
-  expect(await posts(businessId)).toHaveLength(3);
+  const next = all[1];
+  expect((await posts(businessId)).map((p) => [p.position, p.status, p.format, p.weeklyUpdateId])).toEqual([
+    [0, 'awaiting_approval', 'single', next?.id],
+    [1, 'awaiting_approval', 'single', next?.id],
+    [2, 'awaiting_approval', 'single', next?.id],
+  ]);
 
   // Sunday's tick keeps the early row as it is.
   time.set('2026-11-08T00:30:00');

@@ -6,10 +6,24 @@ import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
 import { createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
 import { createModelLayer } from './modules/model-layer/index.js';
-import { createChannels, createScheduling, type Scheduling } from './modules/publishing/index.js';
+import { eq } from 'drizzle-orm';
+import { BusinessProfile } from './contracts/business-profile.js';
+import * as schema from './db/schema.js';
+import {
+  createChannels,
+  createPublishingJob,
+  createScheduling,
+  proposeTimes,
+  type Publishing,
+  type PublishingNotice,
+  type Scheduling,
+} from './modules/publishing/index.js';
 import {
   createApprovals,
+  createScheduleFlow,
   draftsCopy,
+  scheduleCopy,
+  type ScheduleFlow,
   type Approvals,
   createOnboarding,
   createDrafts,
@@ -53,8 +67,12 @@ export interface App {
   drafts: Drafts;
   /** The approval guard (WP-33): only the approver's Approve tap on the current version approves. */
   approvals: Approvals;
-  /** Publications from a valid approval (interim until WP-34). */
+  /** Publications from a valid approval, at the confirmed times. */
   scheduling: Scheduling;
+  /** The time proposal and its confirmation (WP-34). */
+  schedule: ScheduleFlow;
+  /** The publishing job behind the publishing guard; its `tick` is the worker's every-minute job (WP-34). */
+  publishing: Publishing;
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
    * never processed (review queue item 14), at startup and then every quiet window. It runs in the
@@ -85,6 +103,7 @@ export function createApp(options: AppOptions): App {
       // completes onboarding is not read again as a weekly update.
       async handleInbound(burst) {
         if (await approve(burst)) return;
+        if (await schedule.handle(burst)) return;
         if (await drafts!.handle(burst)) return;
         await weekly!.handle(burst);
         await onboarding!.handle(burst);
@@ -118,11 +137,49 @@ export function createApp(options: AppOptions): App {
     if (decision.outcome === 'approved') {
       const topic = await drafts!.topicOf(burst.businessId, content.payload.postId);
       await messaging.sendText(burst.businessId, { to: burst.from, text: draftsCopy.approved(topic ?? '') });
+      await schedule.afterApproval(burst.businessId, content.payload.postId);
     } else if (decision.reason === 'stale_version' || decision.reason === 'wrong_state' || decision.reason === 'unknown_post') {
       await drafts!.resendOpen(burst.businessId, burst.from, draftsCopy.notCurrentDraft);
     }
     return true;
   }
+
+  const schedule = createScheduleFlow({
+    db,
+    workflow,
+    messaging,
+    propose: proposeTimes,
+    schedule: (b, p, at) => scheduling.schedule(b, p, at),
+    ...(options.now ? { now: options.now } : {}),
+  });
+
+  /** The owner's template when a post's publications are done (technical-design.md, Scheduling and publishing flow). */
+  async function notify(businessId: string, notice: PublishingNotice) {
+    const row = await db.withBusiness('workflow', businessId, async (tx) => {
+      const [business] = await tx.select().from(schema.business).where(eq(schema.business.id, businessId));
+      const [post] = await tx.select({ plan: schema.post.plan }).from(schema.post).where(eq(schema.post.id, notice.postId));
+      return business && { phone: business.approverPhone, profile: BusinessProfile.safeParse(business.profile), topic: (post?.plan as { topic?: string } | undefined)?.topic ?? '' };
+    });
+    if (!row) return;
+    const language = row.profile.success ? row.profile.data.languages[0]! : 'he';
+    await messaging.sendTemplate(businessId, {
+      to: row.phone,
+      language,
+      ...(notice.kind === 'published'
+        ? { templateName: scheduleCopy.PUBLISHED_TEMPLATE, variables: { topic: row.topic, networks: scheduleCopy.networks(notice.networks) } }
+        : { templateName: scheduleCopy.FAILED_TEMPLATE, variables: { topic: row.topic, failed: scheduleCopy.networks(notice.failed) } }),
+    });
+  }
+
+  const publishing = createPublishingJob({
+    db,
+    provider: providers.publishing,
+    apply: (b, r) => workflow.apply(b, r),
+    mayAutoReply: (b) => workflow.mayAutoReply(b),
+    urlFor: (path) => options.media.urlFor(path),
+    notify,
+    ...(options.now ? { now: options.now } : {}),
+  });
 
   const channels = createChannels({ db, provider: providers.publishing, apply: (b, r) => workflow.apply(b, r) });
 
@@ -163,5 +220,5 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
 
-  return { messaging, workflow, onboarding, weekly, drafts, approvals, scheduling, start: () => messaging.startSweep() };
+  return { messaging, workflow, onboarding, weekly, drafts, approvals, scheduling, schedule, publishing, start: () => messaging.startSweep() };
 }

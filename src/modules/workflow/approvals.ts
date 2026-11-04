@@ -77,6 +77,10 @@ export function createApprovals(deps: ApprovalsDeps): Approvals {
 
   async function decide(businessId: string, messageId: string, phone: string, payload: ApprovalButtonPayload): Promise<ApprovalDecision> {
     const a = schema.approval;
+    // The duplicate read runs before the post lock on purpose (technical-design.md, Approval flow):
+    // a message already handled must say `duplicate`, not the `wrong_state` its own approval caused.
+    // It is not what keeps a message from approving twice: a racing second handling either waits on
+    // the post lock and fails the state check, or fails the unique approval.message_id on insert.
     const seen = await db.withBusiness('approval', businessId, (tx) => tx.select({ id: a.id }).from(a).where(eq(a.messageId, messageId)));
     if (seen.length > 0) return refused('duplicate');
     let approvalId: string | undefined;

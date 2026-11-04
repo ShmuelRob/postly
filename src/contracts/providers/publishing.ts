@@ -16,6 +16,16 @@ export const ConnectionStatus = z.object({
 });
 export type ConnectionStatus = z.infer<typeof ConnectionStatus>;
 
+/** The channel test (WP-34): can a post be scheduled on this account? Validates only. */
+export const TestScheduleRequest = z.object({ providerAccountId: z.string().min(1), network: Network });
+export type TestScheduleRequest = z.infer<typeof TestScheduleRequest>;
+
+export const TestScheduleResult = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), error: z.string().min(1) }),
+]);
+export type TestScheduleResult = z.infer<typeof TestScheduleResult>;
+
 export const PublishRequest = z.object({
   /** The publication id, so a retried call never creates a second post. */
   idempotencyKey: Uuid,
@@ -52,6 +62,8 @@ export interface PublishingProvider {
   readonly name: string;
   createConnectionLink(request: CreateConnectionLinkRequest): Promise<ConnectionLink>;
   getConnectionStatus(request: ConnectionStatusRequest): Promise<ConnectionStatus>;
+  /** Asks whether a post can be scheduled on the account; creates, schedules and publishes nothing. */
+  testSchedule(request: TestScheduleRequest): Promise<TestScheduleResult>;
   publish(request: PublishRequest): Promise<PublishResult>;
   getPublicationStatus(providerPostId: string): Promise<PublicationStatus>;
   getMetrics(request: MetricsRequest): Promise<PostMetrics>;

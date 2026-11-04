@@ -68,7 +68,7 @@ async function main(command: string | undefined) {
     stops.push(app.start(), () => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
-    const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly });
+    const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing });
     // Cloud Run services need a port to probe; the worker serves only its health check.
     const health = Fastify({ logger: false });
     health.get('/healthz', async () => ({ ok: true }));

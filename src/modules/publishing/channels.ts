@@ -10,7 +10,7 @@ export type ApplyChannelEvent = (
   request: {
     machine: 'channel_connection';
     id: string;
-    event: 'CONNECTED' | 'TEST_PASSED';
+    event: 'CONNECTED' | 'TEST_PASSED' | 'TEST_FAILED';
     source: 'system';
     guard?: (tx: Tx, current: { from: string; to: string }) => Promise<string | null>;
   },
@@ -26,8 +26,9 @@ export interface Channels {
   requestLink(businessId: string, networks: Network[]): Promise<string>;
   /**
    * Asks the provider about every pending or connected channel: a linked account becomes
-   * `connected`, and the test (the provider reports it connected with an account id; no post is
-   * published, state-machines.md, Onboarding) makes it `verified`.
+   * `connected`, and the test (the provider's `testSchedule` confirms a post can be scheduled on the
+   * account; nothing is published, state-machines.md, Onboarding) makes it `verified`. A failed test
+   * applies `TEST_FAILED`, so the channel is `pending` again and the owner gets the link again.
    */
   checkAndTest(businessId: string): Promise<ChannelStatus[]>;
 }
@@ -66,6 +67,11 @@ export function createChannels(deps: { db: Database; provider: PublishingProvide
               return null;
             },
           });
+        }
+        const test = await provider.testSchedule({ providerAccountId: accountId, network: row.network });
+        if (!test.ok) {
+          await deps.apply(businessId, { machine: 'channel_connection', id: row.id, event: 'TEST_FAILED', source: 'system' });
+          continue;
         }
         await deps.apply(businessId, {
           machine: 'channel_connection',

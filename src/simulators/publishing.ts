@@ -10,6 +10,8 @@ import {
   type PublishingProvider,
   PublishRequest,
   type PublishResult,
+  TestScheduleRequest,
+  type TestScheduleResult,
 } from '../contracts/providers/publishing.js';
 
 type Metrics = Omit<PostMetrics[number], 'providerPostId'>;
@@ -58,6 +60,9 @@ export class PublishingSimulator implements PublishingProvider {
   private readonly accounts: Account[] = [];
   private readonly pending = new Set<string>();
   private readonly failures: ScriptedPublishFailure[] = [];
+  private readonly testFailures: string[] = [];
+  /** Every channel test the provider was asked for. */
+  readonly scheduleTests: TestScheduleRequest[] = [];
   private nextId = 1;
 
   constructor(options: PublishingSimulatorOptions = {}) {
@@ -82,6 +87,17 @@ export class PublishingSimulator implements PublishingProvider {
       return { status: account.connected ? 'connected' : 'disconnected', providerAccountId: account.providerAccountId };
     }
     return { status: this.pending.has(key(businessId, network)) ? 'pending' : 'disconnected' };
+  }
+
+  async testSchedule(request: TestScheduleRequest): Promise<TestScheduleResult> {
+    const parsed = TestScheduleRequest.parse(request);
+    this.scheduleTests.push(parsed);
+    const account = this.accounts.find((a) => a.providerAccountId === parsed.providerAccountId);
+    if (!account?.connected || account.network !== parsed.network) {
+      return { ok: false, error: `Account ${parsed.providerAccountId} is not connected on ${parsed.network}` };
+    }
+    const failure = this.testFailures.shift();
+    return failure === undefined ? { ok: true } : { ok: false, error: failure };
   }
 
   async publish(request: PublishRequest): Promise<PublishResult> {
@@ -149,6 +165,11 @@ export class PublishingSimulator implements PublishingProvider {
   /** The next publish call that reaches a connected account fails this way. */
   failNextPublish(failure: ScriptedPublishFailure): void {
     this.failures.push(failure);
+  }
+
+  /** The next channel test of a connected account fails with this error. */
+  failNextTestSchedule(error = 'Simulated scheduling permission missing'): void {
+    this.testFailures.push(error);
   }
 
   /** Fails a post that was already accepted. */

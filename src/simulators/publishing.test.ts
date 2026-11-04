@@ -69,6 +69,16 @@ describe('PublishingSimulator', () => {
     expect(sim.publishedOn('facebook')).toHaveLength(1);
   });
 
+  it('fails a scripted channel test once, creating no post', async () => {
+    const sim = new PublishingSimulator();
+    const account = sim.connect(businessId, 'instagram');
+    sim.failNextTestSchedule('no publishing permission');
+    expect(await sim.testSchedule({ providerAccountId: account, network: 'instagram' })).toEqual({ ok: false, error: 'no publishing permission' });
+    expect(await sim.testSchedule({ providerAccountId: account, network: 'instagram' })).toEqual({ ok: true });
+    expect(sim.scheduleTests).toHaveLength(2);
+    expect(sim.posts).toEqual([]);
+  });
+
   it('rejects publishing to an account that is not connected', async () => {
     const { sim, account, request } = make();
     sim.disconnect(account);

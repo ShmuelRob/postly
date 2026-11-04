@@ -9,6 +9,7 @@ import {
   type PublishingProvider,
   type PublishRequest,
   PublishResult,
+  TestScheduleResult,
 } from '../../contracts/providers/publishing.js';
 
 export interface PublishingContractContext {
@@ -59,6 +60,16 @@ export function describePublishingProviderContract(
         status: 'connected',
         providerAccountId: ctx.connected.providerAccountId,
       });
+    });
+
+    it('tests a schedule on a connected account without creating a post', async () => {
+      const result = await ctx.provider.testSchedule({ providerAccountId: ctx.connected.providerAccountId, network: ctx.connected.network });
+      expect(TestScheduleResult.parse(result)).toEqual({ ok: true });
+    });
+
+    it('fails the schedule test for an unknown account', async () => {
+      const result = TestScheduleResult.parse(await ctx.provider.testSchedule({ providerAccountId: `unknown-${randomUUID()}`, network: ctx.connected.network }));
+      expect(result.ok).toBe(false);
     });
 
     it('publishes and reports the publication status', async () => {

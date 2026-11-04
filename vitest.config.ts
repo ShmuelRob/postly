@@ -46,6 +46,9 @@ export default defineConfig({
           // The same migrated Postgres as the db project, for flows that store what the app did.
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
+          // Several e2e files use the H5 world, which runs one at a time (a database lock,
+          // test/h5/subject.ts), so a case may wait for another file's case under a full run.
+          testTimeout: 30_000,
         },
       },
     ],

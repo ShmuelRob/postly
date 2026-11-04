@@ -4,8 +4,8 @@ import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 
 // Publications (state-machines.md, Post and Publication; technical-design.md, Approval flow).
-// Interim until WP-34: scheduling creates the publications from the post's valid approval; WP-34
-// adds the time proposals and the publishing job.
+// Scheduling creates the publications from the post's valid approval, at the confirmed times (WP-34:
+// times.ts proposes them, job.ts publishes).
 
 /** The workflow's `apply`, for the post's `SCHEDULED` (publishing does not import workflow). */
 export type ApplyPostEvent = (
@@ -19,6 +19,16 @@ export type ApplyPostEvent = (
     guard: (tx: Tx, current: { from: string; to: string }) => Promise<string | null>;
   },
 ) => Promise<{ ok: true } | { ok: false; reason: string; detail?: string }>;
+
+/** Scheduling refused because a network of the approved version has no verified connection. */
+export class MissingChannelError extends Error {
+  override name = 'MissingChannelError';
+  constructor(readonly networks: Network[]) {
+    super(`no verified connection for ${networks.join(', ')}`);
+  }
+}
+
+const MISSING = 'no verified connection for ';
 
 export interface Scheduling {
   /**
@@ -66,7 +76,7 @@ export function createScheduling(deps: { db: Database; apply: ApplyPostEvent; no
             .from(schema.channelConnection)
             .where(and(eq(schema.channelConnection.status, 'verified'), inArray(schema.channelConnection.network, networks)));
           const missing = networks.filter((n) => !channels.some((c) => c.network === n));
-          if (missing.length > 0) return `no verified connection for ${missing.join(', ')}`;
+          if (missing.length > 0) return `${MISSING}${missing.join(', ')}`;
           rows = await tx
             .insert(schema.publication)
             .values(
@@ -84,6 +94,7 @@ export function createScheduling(deps: { db: Database; apply: ApplyPostEvent; no
           return null;
         },
       });
+      if (!result.ok && result.detail?.startsWith(MISSING)) throw new MissingChannelError(result.detail.slice(MISSING.length).split(', ') as Network[]);
       if (!result.ok) throw new Error(`post ${postId} was not scheduled: ${result.detail ?? result.reason}`);
       return rows;
     },

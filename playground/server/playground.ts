@@ -1,9 +1,9 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, min } from 'drizzle-orm';
 import { createApp } from '../../src/app.js';
 import type { Network } from '../../src/contracts/common.js';
-import type { InboundMessage } from '../../src/contracts/providers/index.js';
+import { decodeButtonId, type InboundMessage } from '../../src/contracts/providers/index.js';
 import { createDatabase, type Database, type DatabaseUrls } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
@@ -16,6 +16,7 @@ import type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-t
 import { playgroundExtraction } from './extraction.js';
 import { playgroundIntent } from './intent.js';
 import { seedFeed } from './seed.js';
+import { playgroundPlanning } from './weekly.js';
 
 export interface PlaygroundOptions {
   databaseUrls: DatabaseUrls;
@@ -40,6 +41,11 @@ export interface Playground {
   send(input: OwnerInput): Promise<void>;
   /** The owner finishes the connection link on the publishing simulator (every network it names). */
   connect(): Promise<void>;
+  /**
+   * Moves the playground clock just past the next scheduled publication (it never goes back) and runs
+   * the publishing job's tick, as the worker would at that time. Returns how many publications ran.
+   */
+  publishDue(): Promise<number>;
   state(): Promise<PlaygroundState>;
   /** The conversation in the e2e report's format. */
   transcript(): TranscriptEntry[];
@@ -62,10 +68,14 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   const businessPhone = options.businessPhone ?? '+972521230000';
   const db = createDatabase(options.databaseUrls, { max: 4 });
   const sim = new MessagingSimulator({ businessNumber: businessPhone });
-  const publishing = new PublishingSimulator();
+  // The playground clock: real time, moved forward by publishDue() so scheduled posts can go live now.
+  let skewMs = 0;
+  const clock = () => new Date(Date.now() + skewMs);
+  const publishing = new PublishingSimulator({ now: clock });
   const model = new ModelSimulator();
   model.setDefault('profile_extraction', playgroundExtraction);
   model.setDefault('intent_detection', playgroundIntent);
+  model.setDefault('weekly_planning', (input) => playgroundPlanning(input) as never);
 
   /** Files the browser can load, by storage path or URL: inbound media, renders, seeded posts. */
   const files = new Map<string, { mimeType: string; data: Uint8Array }>();
@@ -99,6 +109,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     samplePhotoUrl: media.urlFor('bundled/sample.png'),
     ...(options.burstQuietMs === undefined ? {} : { burstQuietMs: options.burstQuietMs }),
     logger: { rejected: (entry) => console.warn('[playground] rejected', entry) },
+    now: clock,
   });
   const server = buildServer({ messaging: app.messaging, publicBaseUrl: 'https://postly.example.test' });
   await freePhone(db, ownerPhone);
@@ -131,9 +142,12 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
         const id = sim.addMedia(input.mimeType, Buffer.from(input.dataBase64, 'base64'));
         return deliver({ kind: 'voice', providerMediaId: id });
       }
-      case 'button':
-        // No product flow sends reply buttons yet; approval buttons and their payloads come with WP-33.
-        throw new Error(`button ${input.buttonId}: no flow handles reply buttons yet`);
+      case 'button': {
+        // Buttons carry approval payloads only (contracts.md): the id is <action>:<postId>:<versionHash>.
+        const payload = decodeButtonId(input.buttonId);
+        if (!payload) throw new Error(`button ${input.buttonId}: not an approval button`);
+        return deliver({ kind: 'button_reply', buttonId: input.buttonId, payload });
+      }
     }
   };
 
@@ -141,6 +155,17 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     const link = publishing.connectionLinks.filter((l) => l.request.businessId === businessId).at(-1);
     if (!link) throw new Error('onboarding has not sent the connection link yet');
     for (const network of link.request.networks) publishing.connect(businessId, network);
+  };
+
+  const publishDue = async () => {
+    const [next] = await db.withSystem('console', (tx) =>
+      tx
+        .select({ at: min(schema.publication.scheduledFor) })
+        .from(schema.publication)
+        .where(and(eq(schema.publication.businessId, businessId), inArray(schema.publication.status, ['scheduled', 'retry_pending']))),
+    );
+    if (next?.at) skewMs = Math.max(skewMs, new Date(next.at).getTime() + 60_000 - Date.now());
+    return (await app.publishing.tick(clock(), { businessId })).ran;
   };
 
   const messages = (): ChatMessage[] => {
@@ -221,6 +246,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       channels: rows.channels.map((ch) => ({ network: ch.network, status: ch.status })),
       connectionLinkSent: publishing.connectionLinks.some((l) => l.request.businessId === businessId),
       posts: rows.posts.map((p) => ({ id: p.id, status: p.status, format: p.format })),
+      clock: clock().toISOString(),
       reviewQueue: rows.items.map((i) => ({ id: i.id, kind: i.kind, status: i.status, details: i.details })),
       messages: messages(),
       feed: await feed(),
@@ -243,6 +269,9 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
       await send((await readJson(req)) as OwnerInput);
       return json(res, 200, { ok: true });
     }
+    if (req.method === 'POST' && url.pathname === '/api/publish-due') {
+      return json(res, 200, { ran: await publishDue() });
+    }
     if (req.method === 'POST' && url.pathname === '/api/connect') {
       await connect();
       return json(res, 200, { ok: true });
@@ -261,6 +290,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     handle,
     send,
     connect,
+    publishDue,
     state,
     transcript: () =>
       messages().map((m) => ({

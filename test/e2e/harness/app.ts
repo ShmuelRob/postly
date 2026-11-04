@@ -252,6 +252,7 @@ function recordPublishing(
     name: inner.name,
     createConnectionLink: (request) => inner.createConnectionLink(request),
     getConnectionStatus: (request) => inner.getConnectionStatus(request),
+    testSchedule: (request) => inner.testSchedule(request),
     async publish(request) {
       const req = PublishRequest.parse(request);
       const entry: PublishingEntry = {
@@ -277,6 +278,8 @@ function recordPublishing(
     },
     getPublicationStatus: (id) => inner.getPublicationStatus(id),
     getMetrics: (request) => inner.getMetrics(request),
+    // The H5 world connects channels on the simulator itself (test/h5/subject.ts).
+    ...('connect' in inner ? { connect: (inner as unknown as { connect: (...args: unknown[]) => unknown }).connect.bind(inner) } : {}),
   };
 }
 

@@ -67,8 +67,16 @@ describe('scheduling follows the approved version', { timeout: 30_000 }, () => {
     const w = await open();
     const businessId = await w.createBusiness(APPROVER);
     await w.connectChannel(businessId, 'instagram');
+    await w.connectChannel(businessId, 'facebook');
     const draft = await w.createDraft(businessId, 'צבעונים חדשים, 25 ₪ לזר');
     await w.approval.handleApprovalReply(businessId, tap(draft.postId, draft.versionHash));
+    // Facebook drops after the draft was approved for both networks.
+    await db.withSystem('console', (tx) =>
+      tx
+        .update(schema.channelConnection)
+        .set({ status: 'disconnected' })
+        .where(and(eq(schema.channelConnection.businessId, businessId), eq(schema.channelConnection.network, 'facebook'))),
+    );
 
     await expect(w.schedule(businessId, draft.postId, SCHEDULED_FOR)).rejects.toThrow(/no verified connection for facebook/);
 
