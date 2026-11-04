@@ -51,7 +51,16 @@ export interface ConsoleService {
   pauseBusiness(businessId: string): Promise<void>;
   resumeBusiness(businessId: string): Promise<void>;
   setGlobalPause(paused: boolean, by: string, reason?: string): Promise<void>;
+  /** The plan's current monthly price (its newest `plan_price` row, or null) and every change, newest first. */
+  price(plan?: string): Promise<{ current: PlanPriceRow | null; history: PlanPriceRow[] }>;
+  /** Changes the monthly price by adding a `plan_price` row; links sent afterwards charge it (T1). */
+  setPrice(input: { plan?: string; amountAgorot: number; by: string; reason?: string }): Promise<PlanPriceRow>;
 }
+
+export type PlanPriceRow = typeof schema.planPrice.$inferSelect;
+
+/** PRD, Payment: the single plan for now (billing's DEFAULT_PLAN). */
+const DEFAULT_PLAN = 'basic';
 
 const refused = (result: EventResult): void => {
   if (!result.ok) throw new ConsoleActionError(result.reason === 'not_found' ? 404 : 409, result.reason, result.detail ?? result.from);
@@ -192,5 +201,19 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
     },
 
     setGlobalPause: (paused, by, reason) => workflow.setGlobalPause(paused, by, reason),
+
+    async price(plan = DEFAULT_PLAN) {
+      const history = await sys((tx) =>
+        tx.select().from(schema.planPrice).where(eq(schema.planPrice.plan, plan)).orderBy(desc(schema.planPrice.id)).limit(200),
+      );
+      return { current: history[0] ?? null, history };
+    },
+
+    async setPrice({ plan = DEFAULT_PLAN, amountAgorot, by, reason }) {
+      const [row] = await sys((tx) =>
+        tx.insert(schema.planPrice).values({ plan, amountAgorot, currency: 'ILS', changedBy: by, reason: reason ?? null }).returning(),
+      );
+      return row!;
+    },
   };
 }

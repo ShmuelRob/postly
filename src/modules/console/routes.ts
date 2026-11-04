@@ -17,6 +17,13 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const Id = z.object({ id: z.uuid() });
 const PauseBody = z.object({ by: z.string().min(1), reason: z.string().optional() });
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
+const PriceQuery = z.object({ plan: z.string().min(1).optional() });
+const PriceBody = z.object({
+  plan: z.string().min(1).optional(),
+  amountAgorot: z.number().int().positive(),
+  by: z.string().min(1),
+  reason: z.string().optional(),
+});
 
 /** GET /console (React page) and the JSON API under /console/api. */
 export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRouteOptions): void {
@@ -40,9 +47,9 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       const id = (params: unknown) => Id.parse(params).id;
 
       scope.get('/', async (_request, reply) => {
-        const [businesses, drafts, items, system] = await Promise.all([c.businesses(), c.drafts(), c.openItems(), c.system()]);
+        const [businesses, drafts, items, system, price] = await Promise.all([c.businesses(), c.drafts(), c.openItems(), c.system(), c.price()]);
         const conversations = await Promise.all(businesses.slice(0, 20).map(async (b) => [b.id, await c.messages(b.id)] as const));
-        const html = renderConsolePage({ businesses, drafts, items, system, conversations: Object.fromEntries(conversations) });
+        const html = renderConsolePage({ businesses, drafts, items, system, price, conversations: Object.fromEntries(conversations) });
         return reply.type('text/html; charset=utf-8').send(html);
       });
 
@@ -67,6 +74,13 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
         run(reply, () => {
           const body = PauseBody.parse(q.body ?? {});
           return c.setGlobalPause(true, body.by, body.reason);
+        }),
+      );
+      scope.get('/api/price', (q, reply) => run(reply, () => c.price(PriceQuery.parse(q.query).plan)));
+      scope.post('/api/price', (q, reply) =>
+        run(reply, () => {
+          const { plan, amountAgorot, by, reason } = PriceBody.parse(q.body ?? {});
+          return c.setPrice({ amountAgorot, by, ...(plan ? { plan } : {}), ...(reason ? { reason } : {}) });
         }),
       );
       scope.post('/api/system/resume', (q, reply) => run(reply, () => c.setGlobalPause(false, PauseBody.parse(q.body ?? {}).by)));

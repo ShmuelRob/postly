@@ -71,6 +71,13 @@
       "when": 1793750406000,
       "tag": "0009_deletion_role",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793750407000,
+      "tag": "0010_no_trial_plan_price",
+      "breakpoints": true
     }
   ]
 }
