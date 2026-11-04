@@ -17,7 +17,7 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 
 | Lane | Meaning | Concurrency |
 | --- | --- | --- |
-| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each rebases on the others' merges |
+| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each merges the base branch into its own when the others land (never rebase) |
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
 
