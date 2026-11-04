@@ -246,7 +246,7 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Pause or resume all publishing | `system_control` through `setGlobalPause` |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
 
-Authentication is not defined yet, so the routes answer only requests from the loopback address; anything else gets 403. Team sign-in must be decided before the console is deployed.
+Authentication is not defined yet. The console runs as its own process (`main.js console`) and its own Cloud Run service with internal-only ingress and no public invoker; the public web service never serves it. Locally the routes answer only the loopback address (anything else gets 403); deployed, the gate is the ingress and IAM. Neither is a sign-in, which must exist before any wider access ([security.md](security.md#console-exposure)).
 
 ## Security
 
@@ -255,6 +255,7 @@ Authentication is not defined yet, so the routes answer only requests from the l
 - Webhooks are verified before processing.
 - Media URLs stay stable until publishing, and retention follows a defined policy.
 - Payment card details are never stored.
+- The console exposure and the ranked security debts are in [security.md](security.md).
 
 ## Environments
 
