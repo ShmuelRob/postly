@@ -10,6 +10,7 @@ import {
   type SubscriptionStatusResult,
 } from '../contracts/providers/payment.js';
 import type { SubscriptionState } from '../contracts/state-machines/index.js';
+import { refill } from './persistent.js';
 
 export const PAYMENT_SIMULATOR_SIGNATURE_HEADER = 'x-simulator-payment-signature';
 
@@ -25,6 +26,8 @@ export interface PaymentSimulatorOptions {
   now?: () => Date;
   webhookSecret?: string;
   webhookUrl?: string;
+  /** Where payment links point: the dev sandbox's checkout page in simulated mode (WP-51). */
+  checkoutBaseUrl?: string;
 }
 
 /**
@@ -39,18 +42,39 @@ export class PaymentSimulator implements PaymentProvider, PaymentWebhooks {
   private readonly subscriptions = new Map<string, Subscription>();
   private readonly secret: string;
   private readonly url: string;
+  private readonly checkoutBaseUrl: string;
   private nextId = 1;
 
   constructor(options: PaymentSimulatorOptions = {}) {
     this.now = options.now ?? (() => new Date());
     this.secret = options.webhookSecret ?? 'simulator-payment-webhook-secret';
     this.url = options.webhookUrl ?? 'https://postly.example.test/webhooks/payment';
+    this.checkoutBaseUrl = (options.checkoutBaseUrl ?? 'https://pay.simulator.test').replace(/\/$/, '');
+  }
+
+  /** Everything the simulator holds, as JSON (simulated mode, src/simulators/persistent.ts). */
+  exportState(): unknown {
+    return { links: this.links, subscriptions: [...this.subscriptions], nextId: this.nextId };
+  }
+
+  importState(state: unknown): void {
+    const s = state as { links: PaymentSimulator['links']; subscriptions: [string, Subscription][]; nextId: number };
+    refill(this.links, s.links);
+    this.subscriptions.clear();
+    for (const [id, sub] of s.subscriptions) this.subscriptions.set(id, sub);
+    this.nextId = s.nextId;
+  }
+
+  /** The subscription created from a customer's payment, if the customer paid. */
+  subscriptionOf(providerCustomerId: string): { id: string; status: SubscriptionState } | undefined {
+    for (const [id, sub] of this.subscriptions) if (sub.customerId === providerCustomerId) return { id, status: sub.status };
+    return undefined;
   }
 
   async createPaymentLink(request: CreatePaymentLinkRequest): Promise<PaymentLink> {
     const parsed = CreatePaymentLinkRequest.parse(request);
     const providerCustomerId = `cus-sim-${this.nextId++}`;
-    const link = { url: `https://pay.simulator.test/checkout/${providerCustomerId}`, providerCustomerId };
+    const link = { url: `${this.checkoutBaseUrl}/checkout/${providerCustomerId}`, providerCustomerId };
     this.links.push({ request: parsed, link });
     return link;
   }

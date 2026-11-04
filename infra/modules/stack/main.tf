@@ -68,6 +68,34 @@ variable "log_retention_days" {
   type        = number
   default     = null
 }
+variable "sandbox_enabled" {
+  description = "The dev sandbox service (WP-51, docs/deployment.md \"The sandbox\"); only dev may set it."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.sandbox_enabled || var.env_name == "dev"
+    error_message = "The sandbox runs only in dev: stage and prod never run on the simulators."
+  }
+}
+variable "sandbox_invokers" {
+  description = "Who may invoke the sandbox, for example [\"user:you@example.com\"]; nobody else, never allUsers."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for m in var.sandbox_invokers : !contains(["allUsers", "allAuthenticatedUsers"], m)])
+    error_message = "The sandbox must not be public: list people or service accounts, never allUsers or allAuthenticatedUsers."
+  }
+}
+variable "sandbox_owner_phone" {
+  description = "The number the human plays in the sandbox (a test number)."
+  type        = string
+  default     = "+972500000001"
+}
+variable "sandbox_url" {
+  description = "Where payment links point: the sandbox as the human reaches it (gcloud run services proxy on port 8081)."
+  type        = string
+  default     = "http://localhost:8081"
+}
 variable "alert_email" {
   type    = string
   default = null
@@ -80,29 +108,39 @@ data "google_project" "this" {
 
 locals {
   prefix = "postly-${var.env_name}"
+  # Simulated mode (WP-51, docs/deployment.md): dev runs on the simulators with their state in Postgres;
+  # stage and prod are set to vendors, which refuses to start until WP-41.
+  simulated = var.env_name == "dev"
   # The branch that deploys to this environment (docs/deployment.md, Branches and promotion).
   deploy_branch = { dev = "dev", stage = "stage", prod = "main" }[var.env_name]
   # Cloud Run's deterministic URL: https://<service>-<project number>.<region>.run.app.
   public_base_url = coalesce(var.public_base_url, "https://${local.prefix}-web-${data.google_project.this.number}.${var.region}.run.app")
   # Every database login of database-schema.md (Least privilege) plus the pg-boss login; the
   # migration job sets their passwords from these secrets. Kept in step with ALL_LOGINS in src/db/index.ts.
-  logins = [
+  base_logins = [
     "app_messaging", "app_workflow", "app_content", "app_design", "app_approval", "app_publishing",
     "app_model", "app_billing", "app_business_data", "app_deletion", "app_sys_phone_lookup", "app_sys_scheduler",
     "app_sys_console", "app_sys_example_set", "app_jobs",
   ]
+  # The simulator store's login (src/db/simulator-store.ts) exists only where the simulators run.
+  logins = concat(local.base_logins, local.simulated ? ["app_simulator"] : [])
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
-  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
+  # Dev on the simulators has no vendor secrets; the simulators sign with messaging-webhook-secret.
+  vendor_secrets = concat(["messaging-webhook-secret"], local.simulated ? [] : ["messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"])
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
-  app_env = {
+  app_env = merge({
     POSTLY_ENV       = var.env_name
-    POSTLY_PROVIDERS = "simulators"
+    POSTLY_PROVIDERS = local.simulated ? "simulators" : "vendors"
     DATABASE_URL     = "postgres://${module.sql.private_ip}:5432/postly?sslmode=require"
     PUBLIC_BASE_URL  = local.public_base_url
     BUSINESS_NUMBER  = var.business_number
     MEDIA_BUCKET     = module.storage.name
-  }
+    }, local.simulated ? {
+    SIMULATOR_STORE = "postgres"
+    POSTLY_MODELS   = "simulator"
+    SANDBOX_URL     = var.sandbox_url
+  } : {})
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
     # The processes refuse to start in dev, stage or prod without it (src/config.ts).
@@ -234,6 +272,37 @@ module "worker" {
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
+# The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
+# allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy`. Runs as the web
+# account: it needs the same login passwords and the webhook secret.
+module "sandbox" {
+  count                = var.sandbox_enabled ? 1 : 0
+  source               = "../cloud_run"
+  project_id           = var.project_id
+  region               = var.region
+  name                 = "${local.prefix}-sandbox"
+  kind                 = "service"
+  image                = "${module.registry.repository_url}/postly-sandbox:${var.image_tag}"
+  command              = "sandbox"
+  service_account      = module.accounts.emails.web
+  subnetwork_id        = module.network.subnetwork_id
+  env                  = merge(local.app_env, { SANDBOX_OWNER_PHONE = var.sandbox_owner_phone })
+  secret_env           = local.app_secret_env
+  public               = false
+  external_ingress     = true
+  cpu_always_allocated = false
+  depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "sandbox" {
+  for_each = var.sandbox_enabled ? toset(var.sandbox_invokers) : toset([])
+  project  = var.project_id
+  location = var.region
+  name     = module.sandbox[0].name
+  role     = "roles/run.invoker"
+  member   = each.value
+}
+
 module "migrate" {
   source          = "../cloud_run"
   project_id      = var.project_id
@@ -262,6 +331,7 @@ module "monitoring" {
 
 output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
+output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
 output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }

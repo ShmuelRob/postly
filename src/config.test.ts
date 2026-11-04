@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
-import { ALL_LOGINS } from './db/index.js';
+import { ALL_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
 const passwords = Object.fromEntries(ALL_LOGINS.map((l) => [`DB_PASSWORD_${l.toUpperCase()}`, `pw-${l}`]));
@@ -8,10 +8,19 @@ const base: Record<string, string> = {
   POSTLY_ENV: 'local',
   POSTLY_PROVIDERS: 'simulators',
   DATABASE_URL: 'postgres://db.internal:5432/postly',
-  PUBLIC_BASE_URL: 'https://stage.example.test',
+  PUBLIC_BASE_URL: 'https://dev.example.test',
   BUSINESS_NUMBER: '+972500000000',
   ...passwords,
 };
+/** A deployed dev on the simulators (WP-51): the Postgres store and its login's password. */
+const dev: Record<string, string> = {
+  ...base,
+  POSTLY_ENV: 'dev',
+  MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager',
+  SIMULATOR_STORE: 'postgres',
+  DB_PASSWORD_APP_SIMULATOR: 'pw-sim',
+};
+const without = (env: Record<string, string>, name: string) => Object.fromEntries(Object.entries(env).filter(([k]) => k !== name));
 
 describe('process configuration', () => {
   it('builds one URL per role login from the server URL and the per-login passwords', () => {
@@ -23,16 +32,47 @@ describe('process configuration', () => {
   });
 
   it('refuses a missing login password instead of falling back to another login', () => {
-    const { DB_PASSWORD_APP_BILLING: _, ...rest } = base;
-    expect(() => loadConfig(rest)).toThrow('DB_PASSWORD_APP_BILLING');
+    expect(() => loadConfig(without(base, 'DB_PASSWORD_APP_BILLING'))).toThrow('DB_PASSWORD_APP_BILLING');
   });
 
   it('runs only on the simulators until the vendor adapters exist (WP-41)', () => {
     expect(() => loadConfig({ ...base, POSTLY_PROVIDERS: 'live' })).toThrow('POSTLY_PROVIDERS');
+    expect(() => loadConfig({ ...base, POSTLY_PROVIDERS: 'vendors' })).toThrow('WP-41');
   });
 
   it('refuses a database URL that carries its own user', () => {
     expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://admin:x@db:5432/postly' })).toThrow('no user');
+  });
+
+  describe('simulated mode (WP-51)', () => {
+    it('refuses the simulators in stage and prod, at startup', () => {
+      for (const env of ['stage', 'prod']) {
+        expect(() => loadConfig({ ...dev, POSTLY_ENV: env })).toThrow(`POSTLY_PROVIDERS=simulators is not allowed in ${env}`);
+        expect(() => loadConfig({ ...dev, POSTLY_ENV: env, SIMULATOR_STORE: 'memory' })).toThrow('not allowed');
+      }
+    });
+
+    it('allows the simulators in local, test and dev', () => {
+      expect(loadConfig(base).simulators).toEqual({ store: 'memory' });
+      expect(loadConfig({ ...base, POSTLY_ENV: 'test' }).simulators).toEqual({ store: 'memory' });
+      expect(loadConfig(dev).simulators).toEqual({
+        store: 'postgres',
+        storeUrl: `postgres://${SIMULATOR_LOGIN}:pw-sim@db.internal:5432/postly`,
+      });
+    });
+
+    it('requires the shared Postgres store in dev, so web, worker and the sandbox see one outside world', () => {
+      expect(() => loadConfig({ ...dev, SIMULATOR_STORE: 'memory' })).toThrow('SIMULATOR_STORE=postgres');
+      expect(() => loadConfig(without(dev, 'SIMULATOR_STORE'))).toThrow('SIMULATOR_STORE=postgres');
+      expect(() => loadConfig(without(dev, 'DB_PASSWORD_APP_SIMULATOR'))).toThrow('DB_PASSWORD_APP_SIMULATOR');
+    });
+
+    it('chooses the model provider separately: the simulator by default, Vertex once T5 lands its adapter', () => {
+      expect(loadConfig(dev).models).toBe('simulator');
+      expect(loadConfig({ ...dev, POSTLY_MODELS: 'simulator' }).models).toBe('simulator');
+      expect(() => loadConfig({ ...dev, POSTLY_MODELS: 'vertex' })).toThrow('T5');
+      expect(() => loadConfig({ ...dev, POSTLY_MODELS: 'openai' })).toThrow('POSTLY_MODELS');
+    });
   });
 
   describe('webhook secret', () => {
@@ -42,22 +82,20 @@ describe('process configuration', () => {
     });
 
     it('reads the secret from the environment (Secret Manager on Cloud Run)', () => {
-      expect(loadConfig({ ...base, POSTLY_ENV: 'stage', MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager' }).webhookSecret).toBe('s3cret-from-manager');
+      expect(loadConfig(dev).webhookSecret).toBe('s3cret-from-manager');
     });
 
-    it('refuses to start in dev, stage or prod without a secret', () => {
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'dev' })).toThrow('MESSAGING_WEBHOOK_SECRET');
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'stage' })).toThrow('MESSAGING_WEBHOOK_SECRET');
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: '' })).toThrow('MESSAGING_WEBHOOK_SECRET');
+    it('refuses to start in dev without a secret', () => {
+      expect(() => loadConfig(without(dev, 'MESSAGING_WEBHOOK_SECRET'))).toThrow('MESSAGING_WEBHOOK_SECRET');
+      expect(() => loadConfig({ ...dev, MESSAGING_WEBHOOK_SECRET: '' })).toThrow('MESSAGING_WEBHOOK_SECRET');
     });
 
-    it('refuses the public default secret in dev, stage or prod', () => {
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'dev', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
-      expect(() => loadConfig({ ...base, POSTLY_ENV: 'prod', MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
+    it('refuses the public default secret in dev', () => {
+      expect(() => loadConfig({ ...dev, MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('public');
     });
 
     it('refuses to start without POSTLY_ENV, so a deployed service never falls back to the public secret', () => {
-      const { POSTLY_ENV: _, ...rest } = base;
+      const rest = without(base, 'POSTLY_ENV');
       expect(() => loadConfig(rest)).toThrow('POSTLY_ENV');
       expect(() => loadConfig({ ...rest, MESSAGING_WEBHOOK_SECRET: SIMULATOR_WEBHOOK_SECRET })).toThrow('POSTLY_ENV');
     });

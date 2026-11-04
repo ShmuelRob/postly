@@ -13,6 +13,11 @@ variable "alert_email" {
   type    = string
   default = null
 }
+variable "sandbox_invokers" {
+  description = "Who may open the dev sandbox through gcloud run services proxy, for example [\"user:you@example.com\"]."
+  type        = list(string)
+  default     = []
+}
 variable "region" {
   type    = string
   default = "me-west1"

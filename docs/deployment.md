@@ -12,6 +12,7 @@ GitHub Actions (manual, approval-guarded) ── WIF ──> deploy service acco
         v                                     v
 Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 instance, webhooks + /healthz
                              Cloud Run: worker (pg-boss)   internal, 1 or 2 instances, /healthz only
+                             Cloud Run: sandbox (dev only)  own image, no public invoker (WP-51)
                              Cloud Run job: migrate        runs before each rollout
                                      │ direct VPC egress (private ranges)
                                      v
@@ -25,14 +26,17 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
 - **worker** runs pg-boss jobs. Its first job is the weekly tick: `WeeklyUpdates.tick` every hour on the hour (UTC cron `0 * * * *`), on a pg-boss queue with the `singleton` policy, so with several worker instances only one tick is active at a time and each hourly job is created once (`src/worker.ts`). A failed tick fails the job and pg-boss retries it (3 retries). The worker serves only `/healthz`, because Cloud Run services need a port to probe.
 - **migrate** is a Cloud Run job (`src/db/provision.ts`), run as the Cloud SQL admin user before each rollout. It applies the Drizzle migrations in `drizzle/`, which create one login per role of [database-schema.md](database-schema.md#least-privilege); sets each login's password from Secret Manager; creates the pg-boss login `app_jobs` and its schema `pgboss`, owned by that login; and lets pg-boss create its tables as `app_jobs`. Terraform never creates database roles. **Keep `log_statement` off.** The `ALTER ROLE ... PASSWORD` statements carry the login passwords in clear text, so Cloud SQL's `log_statement` flag must stay `none` (Terraform sets it explicitly in `infra/modules/cloud_sql`); never turn on `ddl`, `mod` or `all`, or pgAudit statement logging, on this instance. `log_min_duration_statement` stays at 1 s for slow queries; the password statements run in milliseconds.
-- **Providers.** Until the vendor adapters land (WP-41), the image runs only on the simulators (`POSTLY_PROVIDERS=simulators`; any other value refuses to start) with in-process media storage. A stage deploy before WP-41 therefore reaches no vendor and keeps no media across restarts. WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
+- **Providers.** Until the vendor adapters land (WP-41), only `dev` (and `local` and `test`) can run, on the simulators; `stage` and `prod` refuse to start until WP-41 ([Simulated mode](#simulated-mode-dev-wp-51)). WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
 
 ### Configuration
 
 | Variable | Where from | Meaning |
 | --- | --- | --- |
 | `POSTLY_ENV` | Terraform, docker-compose | Required, with no default: `dev`, `stage` or `prod` on Cloud Run, `local` or `test` elsewhere. A process without it refuses to start, so a deployed service never falls back to the public webhook secret |
-| `POSTLY_PROVIDERS` | Terraform | `simulators` until WP-41 |
+| `POSTLY_PROVIDERS` | Terraform | `simulators` (allowed only when `POSTLY_ENV` is `local`, `test` or `dev`) or `vendors` (refused until WP-41). Terraform sets `simulators` on dev and `vendors` on stage and prod, so stage and prod refuse to start until WP-41 |
+| `SIMULATOR_STORE` | Terraform | `memory` (the default; `local` and `test` only) or `postgres`. `dev` requires `postgres`: the simulators' state and the media live in the `simulator` schema, shared by web, worker and the sandbox and kept across restarts |
+| `POSTLY_MODELS` | Terraform | `simulator` (the default) or `vertex` (Gemini through Vertex AI, T5; refused until T5 lands its adapter). Dev moves to `vertex` once T5 lands and may switch back to `simulator` |
+| `DB_PASSWORD_APP_SIMULATOR` | Secret Manager `postly-dev-db-password-app-simulator` | Dev only, with `SIMULATOR_STORE=postgres`: the login that owns the `simulator` schema |
 | `MESSAGING_WEBHOOK_SECRET` | Secret Manager `postly-<env>-messaging-webhook-secret` | Verifies inbound messaging webhooks. In `dev`, `stage` and `prod` the processes refuse to start when it is missing or equals the simulator default, which is public in the repository (`src/config.ts`); `local` and `test` fall back to that default |
 | `DATABASE_URL` | Terraform | `postgres://<private ip>:5432/postly?sslmode=require`, with no user: each login's URL is built from it |
 | `DB_PASSWORD_<LOGIN>` | Secret Manager `postly-<env>-db-password-<login>` | One per login in `ALL_LOGINS` (`src/db/index.ts`): the 13 role logins and `app_jobs` |
@@ -89,6 +93,33 @@ Every secret and bucket binding is on the resource, not on the project. Only Git
 
 The inbound burst buffer lives in the web process's memory. The sweep (`App.start()`) covers a restart and a failed handler, but across two web instances a slow burst can still be handed over twice. Until bursts are durable (a pg-boss job or a database claim keyed by business and sender), the web service runs exactly one instance: `web_max_instances` must be 1, and Terraform refuses another value. The claim was not built in WP-44 because it changes the messaging module and needs a migration, while WP-32 is working on the core files; it stays open as item 14.
 
+## Simulated mode (dev, WP-51)
+
+The human has no WhatsApp, Instagram, Facebook or payment accounts yet, so the deployed `dev` runs end to end on the simulators in `src/simulators/`, with no vendor account and no vendor secret.
+
+- **The setting.** `POSTLY_PROVIDERS=simulators` puts web and worker on the messaging, publishing and payment simulators. It is allowed only when `POSTLY_ENV` is `local`, `test` or `dev`; in `stage` and `prod` the processes refuse to start (`src/config.ts`), so a simulator never answers for a real customer. The model provider is chosen separately: `POSTLY_MODELS=vertex` (T5) or `simulator`. In simulated mode the model simulator answers with the playground's word rules (`src/simulators/conversational/`), enough to play every flow by typing free Hebrew.
+- **A shared, durable store.** Web and worker are separate Cloud Run services, and the sandbox is a third, so in `dev` the simulators keep their state in Postgres (`SIMULATOR_STORE=postgres`), not in process memory. Each simulator's state is one JSON row in `simulator.state`, and stored files (inbound media, renders) are rows in `simulator.media`. Every simulator call runs in one transaction that locks its row, loads the state, runs the call and writes the state back (`src/simulators/persistent.ts`, `src/db/simulator-store.ts`), so calls from web, worker and sandbox are serialized. The `simulator` schema belongs to its own login `app_simulator`, which has no grant on any business table (like `app_jobs` for pg-boss). The migration job creates that login and schema only when `SIMULATOR_STORE=postgres`, so stage and prod have neither. `local` and `test` keep the in-memory store.
+- **Webhook secrets.** In simulated mode the payment simulator signs and verifies its callbacks with `MESSAGING_WEBHOOK_SECRET`, so dev needs no payment secret, and the public simulator defaults are never accepted in dev. Terraform gives dev no vendor secrets; only `messaging-webhook-secret` and the login passwords remain.
+- **Payments.** The payment link the owner gets points at the sandbox's checkout page (`<sandbox>/checkout/<customer id>`, `SANDBOX_URL`), with **Pay**, **Fail** and **Cancel**. Pay completes the payment on the simulator and sends the signed callback to the web service's payment webhook, as a provider would; Fail reports `past_due`; Cancel reports `cancelled`.
+
+### The sandbox
+
+A dev-only service, `postly-dev-sandbox`, built from the WP-45 playground (`playground/sandbox/`, reusing the `playground/web` UI). It shows:
+
+- a WhatsApp-style chat where the human plays the owner (and the approver). Every message is signed with the webhook secret and posted to the web service's messaging webhook, exactly as the vendor would; the replies are read from the messaging simulator's store;
+- a mock Instagram and Facebook feed of what reached the publishing simulator, and a button that finishes the connection link;
+- the mock checkout page for the payment link.
+
+It never enters the product image: it has its own `Dockerfile.sandbox` (with `Dockerfile.sandbox.dockerignore`), and the deploy workflow builds and rolls it out only for `dev`. Terraform creates the service only when `sandbox_enabled` is true, which only `infra/environments/dev` sets. It is not public: it has no `allUsers` invoker, and only the accounts in `sandbox_invokers` (the human) may invoke it, so every request needs that person's Google identity token. Its ingress accepts requests from outside the VPC, unlike the console's internal-only ingress (T3), because internal-only ingress would also block the human's proxy. The human reaches it with:
+
+```
+gcloud run services proxy postly-dev-sandbox --project <dev project> --region me-west1 --port 8081
+```
+
+and opens `http://localhost:8081`. The proxy adds the human's identity token; anyone else gets 403 from Cloud Run before the request reaches the sandbox.
+
+Posts go live at their real scheduled time (the worker's publishing job), since dev runs on the real clock.
+
 ## CI
 
 - `.github/workflows/ci.yml`: `npm run check` on every PR and on every push to `dev`, `stage` and `main`.
@@ -108,6 +139,8 @@ All of this costs money or creates cloud resources, so agents never do it. Per e
 3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
 5. **First deploy.** The apply creates the `dev` and `stage` branches; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
+
+To reach the dev sandbox, set `sandbox_invokers = ["user:<your email>"]` in dev's `terraform.tfvars` before the apply ([The sandbox](#the-sandbox)).
 
 Later: **vendor accounts** (WP-41: WhatsApp, publishing, Google AI, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 

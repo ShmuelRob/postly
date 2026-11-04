@@ -22,19 +22,26 @@ Two stand-ins replace the model, so free Hebrew works without a real model: `ser
 
 ## Boundaries
 
-- Local only, never deployed: React, Vite and the plugin are dev dependencies, and the entry point is `playground/vite.config.ts`, separate from the web and worker processes.
+- The playground itself is local only, never deployed: React, Vite and the plugin are dev dependencies, and the entry point is `playground/vite.config.ts`, separate from the web and worker processes. The dev sandbox below reuses its UI and is deployed only to dev, from its own image.
 - Product code never imports the playground: the `no-playground` rule in `.dependency-cruiser.mjs`.
-- The playground may import product code and the test helpers (`test/db/`, `test/e2e/harness/png.ts`).
+- The playground may import product code and the test helpers (`test/db/`, `test/e2e/harness/`).
 
 ## Layout
 
 | Path | What |
 | --- | --- |
 | `server/playground.ts` | Builds the app in-process (`createApp`, the webhook server, the design engine, in-memory storage, simulators) and serves `/api/*` |
-| `server/extraction.ts` | The rule-based stand-in for profile extraction on the model simulator |
-| `server/seed.ts` | Scripted feed posts |
+| `server/views.ts` | The chat and feed views, shared with the sandbox |
+| `sandbox/` | The dev sandbox (WP-51): `sandbox.ts` (API), `main.ts` (the service in `Dockerfile.sandbox`), `ui.ts` (Vite, for tests), `vite.config.ts` (the UI build) |
+| `server/seed.ts` | Scripted feed posts (the free-Hebrew model stand-ins moved to `src/simulators/conversational/`) |
 | `server/start.ts` | Starts Postgres and the playground for `npm run playground` |
 | `vite-plugin.ts`, `vite.config.ts`, `ui-server.ts` | Mounts the API on the Vite dev server; `ui-server.ts` serves an already-built playground for the e2e test |
 | `web/` | The React UI |
 
 The end-to-end test `test/e2e/playground.e2e.test.ts` plays onboarding through the UI with Playwright and saves screenshots to `reports/playground/`.
+
+## Dev sandbox (WP-51)
+
+The deployed `dev` runs on the simulators with their state in Postgres ([deployment.md](../docs/deployment.md#simulated-mode-dev-wp-51)). The sandbox is this UI for it: the same chat, feed and state panel, plus a sign-up button and a link to the mock checkout (`/checkout/<customer id>`, with Pay, Fail and Cancel). Unlike the playground it runs no app: it plays the outside world, signing each owner message and posting it to the web service's webhook, completing payments and sending the provider's callback to the payment webhook, and reading everything from the shared simulator store and the database. There is no time jump: posts go live when the worker publishes them at their time.
+
+Reach it with `gcloud run services proxy postly-dev-sandbox --region me-west1 --port 8081` and open http://localhost:8081 ([deployment.md](../docs/deployment.md#the-sandbox)). The end-to-end test `test/e2e/simulated-dev.e2e.test.ts` runs onboarding, payment, drafts, approval and publishing through it, across a web and a worker composition, and saves screenshots to `reports/simulated-dev/`.

@@ -1,73 +1,41 @@
 import Fastify from 'fastify';
-import { createApp } from './app.js';
 import { loadConfig } from './config.js';
-import { createDatabase, createPgBossQueue, provisionDatabase } from './db/index.js';
-import { createDesignRenderer } from './modules/design/index.js';
-import type { DeletionStorage } from './modules/business-data/index.js';
-import type { MediaStorage } from './modules/messaging/index.js';
+import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
 import { buildServer } from './server.js';
-import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from './simulators/index.js';
+import { createSimulatedApp } from './simulated.js';
+import { MemorySimulatorStore } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
-// land (WP-41) the composition uses the simulators, so a local or stage run reaches no vendor.
-
-/** In-process media for simulator runs; the Cloud Storage adapter comes with WP-41. */
-function memoryMedia(publicBaseUrl: string): MediaStorage & DeletionStorage & { get(url: string): Uint8Array | undefined; read(path: string): Promise<{ data: Uint8Array } | undefined> } {
-  const files = new Map<string, Uint8Array>();
-  const base = `${publicBaseUrl}/media/`;
-  return {
-    async put(path, bytes) {
-      files.set(path, bytes);
-    },
-    urlFor: (path) => base + path,
-    // Data deletion after cancellation (WP-43).
-    async removePrefix(prefix) {
-      for (const path of [...files.keys()]) if (path.startsWith(prefix)) files.delete(path);
-    },
-    async remove(paths) {
-      for (const path of paths) files.delete(path);
-    },
-    get: (url) => (url.startsWith(base) ? files.get(url.slice(base.length)) : undefined),
-    // Drafting (WP-32) reads rendered files back by storage path to record their SHA-256.
-    read: async (path) => {
-      const data = files.get(path);
-      return data ? { data } : undefined;
-    },
-  };
-}
+// land (WP-41) the composition uses the simulators (simulated mode, WP-51), so no run reaches a vendor;
+// stage and prod refuse to start (src/config.ts).
 
 async function main(command: string | undefined) {
   if (command === 'migrate') {
     const adminUrl = process.env.MIGRATE_ADMIN_URL;
     if (!adminUrl) throw new Error('MIGRATE_ADMIN_URL is required for migrate');
-    await provisionDatabase({ adminUrl, passwordFor: (login) => process.env[`DB_PASSWORD_${login.toUpperCase()}`] });
+    await provisionDatabase({
+      adminUrl,
+      passwordFor: (login) => process.env[`DB_PASSWORD_${login.toUpperCase()}`],
+      // Simulated mode in dev (WP-51): the simulators' schema and login.
+      simulatorStore: process.env.SIMULATOR_STORE === 'postgres',
+    });
     console.log(JSON.stringify({ level: 'info', msg: 'migrations applied and logins provisioned' }));
     return;
   }
   if (command !== 'web' && command !== 'worker') throw new Error('usage: node dist/src/main.js web|worker|migrate');
 
   const config = loadConfig(process.env);
-  const db = createDatabase(config.databaseUrls);
-  const media = memoryMedia(config.publicBaseUrl);
-  const design = createDesignRenderer({
-    assets: {
-      load: async (url) => {
-        const file = media.get(url);
-        if (!file) throw new Error(`no stored file at ${url}`);
-        return file;
-      },
-    },
-    store: { put: (path, bytes, mimeType) => media.put(path, bytes, mimeType) },
-  });
-  const app = createApp({
-    db,
-    providers: { messaging: new MessagingSimulator({ webhookSecret: config.webhookSecret }), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() }, payment: new PaymentSimulator() },
-    design,
-    media,
+  // Simulated mode (docs/deployment.md, "Simulated mode"): config allows it only in local, test and dev.
+  const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
+  const { app, close } = await createSimulatedApp({
+    store,
+    databaseUrls: config.databaseUrls,
+    webhookSecret: config.webhookSecret,
+    publicBaseUrl: config.publicBaseUrl,
     businessNumber: config.businessNumber,
-    samplePhotoUrl: media.urlFor('bundled/sample.png'),
+    ...(process.env.SANDBOX_URL ? { sandboxUrl: process.env.SANDBOX_URL } : {}),
   });
 
   const stops: Array<() => Promise<void> | void> = [];
@@ -88,7 +56,8 @@ async function main(command: string | undefined) {
   // Cloud Run sends SIGTERM and allows 10 seconds before SIGKILL.
   process.once('SIGTERM', async () => {
     for (const stop of stops) await stop();
-    await db.close();
+    await close();
+    if ('close' in store) await store.close();
     process.exit(0);
   });
 }

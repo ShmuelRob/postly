@@ -1,0 +1,34 @@
+import postgres from 'postgres';
+import { afterAll, expect, inject, it } from 'vitest';
+import { describeSimulatorStoreContract } from '../simulators/contract-suites/simulator-store.js';
+import type { SimulatorStore } from '../simulators/persistent.js';
+import { createDatabase } from './index.js';
+import { createPostgresSimulatorStore } from './simulator-store.js';
+
+// Simulated mode in dev (WP-51): the simulators' state in the `simulator` schema, through the
+// `app_simulator` login only (docs/deployment.md, "Simulated mode").
+const stores: Array<SimulatorStore & { close(): Promise<void> }> = [];
+afterAll(async () => {
+  for (const s of stores) await s.close();
+});
+
+describeSimulatorStoreContract('postgres', () => {
+  const store = createPostgresSimulatorStore(inject('simulatorStoreUrl'));
+  stores.push(store);
+  return store;
+});
+
+it('the simulator login reaches no business table, and the business roles cannot reach the simulator schema', async () => {
+  const simulator = postgres(inject('simulatorStoreUrl'), { max: 1, onnotice: () => {} });
+  try {
+    await expect(simulator.unsafe('select count(*) from public.business')).rejects.toThrow(/permission denied/);
+  } finally {
+    await simulator.end();
+  }
+  const db = createDatabase(inject('databaseUrls'), { max: 1 });
+  try {
+    await expect(db.withSystem('console', (tx) => tx.execute('select count(*) from simulator.state'))).rejects.toThrow(/permission denied/);
+  } finally {
+    await db.close();
+  }
+});
