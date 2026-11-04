@@ -10,7 +10,7 @@ export type ApplyChannelEvent = (
   request: {
     machine: 'channel_connection';
     id: string;
-    event: 'CONNECTED' | 'TEST_PASSED' | 'TEST_FAILED' | 'HEALTH_CHECK_FAILED';
+    event: 'CONNECTED' | 'TEST_PASSED' | 'TEST_FAILED' | 'HEALTH_CHECK_FAILED' | 'REVOKED';
     source: 'system';
     guard?: (tx: Tx, current: { from: string; to: string }) => Promise<string | null>;
   },
@@ -38,6 +38,13 @@ export interface Channels {
    * networks that were disconnected now, for the owner's template.
    */
   healthCheck(businessId: string): Promise<Network[]>;
+  /**
+   * Cancellation (WP-43; technical-design.md, Cancellation): disconnects every channel that is not
+   * `revoked` at the provider and applies `REVOKED` at once. A provider error does not stop the
+   * revoke; it opens a `channel_disconnected` console item (reason `cancellation`) for the team.
+   * Returns the networks revoked now and those whose provider disconnect failed.
+   */
+  revokeAll(businessId: string): Promise<{ revoked: Network[]; providerFailed: Network[] }>;
 }
 
 export function createChannels(deps: { db: Database; provider: PublishingProvider; apply: ApplyChannelEvent; now?: () => Date }): Channels {
@@ -122,6 +129,42 @@ export function createChannels(deps: { db: Database; provider: PublishingProvide
         if (result.ok) lost.push(row.network);
       }
       return lost;
+    },
+
+    async revokeAll(businessId) {
+      const revoked: Network[] = [];
+      const providerFailed: Network[] = [];
+      for (const row of await rows(businessId)) {
+        if (row.status === 'revoked') continue;
+        let providerError: string | undefined;
+        if (row.providerAccountId) {
+          try {
+            await provider.disconnectAccount({ providerAccountId: row.providerAccountId, network: row.network });
+          } catch (error) {
+            providerError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+          }
+        }
+        const result = await deps.apply(businessId, {
+          machine: 'channel_connection',
+          id: row.id,
+          event: 'REVOKED',
+          source: 'system',
+          guard: async (tx) => {
+            if (providerError !== undefined) {
+              await tx.insert(schema.consoleItem).values({
+                businessId,
+                kind: 'channel_disconnected',
+                referenceId: row.id,
+                details: { network: row.network, reason: 'cancellation', error: providerError },
+              });
+            }
+            return null;
+          },
+        });
+        if (result.ok) revoked.push(row.network);
+        if (providerError !== undefined) providerFailed.push(row.network);
+      }
+      return { revoked, providerFailed };
     },
   };
 }

@@ -3,25 +3,25 @@ import type { BusinessRole, SystemPurpose } from '../../src/db/index.js';
 // The grant matrix from database-schema.md, "Least privilege", copied without the backticks: a doc change and
 // this table change together. S select, I insert, U update, D delete, U(col, ...) update of those columns only.
 const MATRIX = `
-| Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | phone_lookup | scheduler | console | example_set |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| business | S | SIU | S | S | S | S |  | S | SU | S | S | SU |  |
-| channel_connection |  | S |  |  |  | SIU |  |  | S |  | S | SU |  |
-| conversation_state | SU | SIU |  |  |  |  |  |  |  |  |  | SIU |  |
-| message | SIU | S | S |  | S |  |  |  |  | SI |  | S |  |
-| media_asset | SI |  | S | SI |  | S |  |  | SIUD |  |  | S |  |
-| preference_rule |  |  | S |  |  |  |  |  | SIUD |  |  | S |  |
-| weekly_update |  | SIU | SU |  |  |  |  |  |  |  | S | S |  |
-| post |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  | S | SU |  |
-| post_version |  |  | SI | S | S | S |  |  | S |  |  | S |  |
-| approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  | S |  |
-| publication |  |  |  |  |  | SIU |  |  | S |  | S | SIU |  |
-| subscription |  |  |  |  |  |  |  | SIU |  |  | S | S |  |
-| model_run |  |  |  |  |  |  | SI |  |  |  |  | S | SI |
-| console_item |  | SI |  |  |  | SI | SI |  |  | SI |  | SIU |  |
-| model_task_config |  |  |  |  |  |  | S |  |  |  |  | SU | S |
-| prompt_template |  |  |  |  |  |  | S |  |  |  |  | SI | S |
-| system_control |  |  |  |  |  | S |  |  |  |  | S | SIU |  |
+| Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | deletion | phone_lookup | scheduler | console | example_set |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| business | S | SIU | S | S | S | S |  | S | SU | SD | S | S | SU |  |
+| channel_connection |  | S |  |  |  | SIU |  |  | S |  |  | S | SU |  |
+| conversation_state | SU | SIU |  |  |  |  |  |  |  |  |  |  | SIU |  |
+| message | SIU | S | S |  | S |  |  |  |  |  | SI |  | S |  |
+| media_asset | SI |  | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
+| preference_rule |  |  | S |  |  |  |  |  | SIUD |  |  |  | S |  |
+| weekly_update |  | SIU | SU |  |  |  |  |  |  |  |  | S | S |  |
+| post |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | SU |  |
+| post_version |  |  | SI | S | S | S |  |  | S |  |  |  | S |  |
+| approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
+| publication |  |  |  |  |  | SIU |  |  | S |  |  | S | SIU |  |
+| subscription |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
+| model_run |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
+| console_item |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SIU |  |
+| model_task_config |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
+| prompt_template |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
+| system_control |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;

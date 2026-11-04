@@ -41,6 +41,8 @@ export interface Scheduling {
   schedule(businessId: string, postId: string, scheduledFor: Date): Promise<{ publicationId: string; network: Network }[]>;
   /** Cancels the post's `scheduled` and `retry_pending` publications. */
   cancelPending(businessId: string, postId: string): Promise<void>;
+  /** Cancellation (WP-43): cancels every `scheduled` and `retry_pending` publication of the business. */
+  cancelAllPending(businessId: string): Promise<void>;
 }
 
 export function createScheduling(deps: { db: Database; apply: ApplyPostEvent; now?: () => Date }): Scheduling {
@@ -105,6 +107,15 @@ export function createScheduling(deps: { db: Database; apply: ApplyPostEvent; no
           .update(schema.publication)
           .set({ status: 'cancelled', updatedAt: now() })
           .where(and(eq(schema.publication.postId, postId), inArray(schema.publication.status, ['scheduled', 'retry_pending']))),
+      );
+    },
+
+    async cancelAllPending(businessId) {
+      await db.withBusiness('publishing', businessId, (tx) =>
+        tx
+          .update(schema.publication)
+          .set({ status: 'cancelled', updatedAt: now() })
+          .where(and(eq(schema.publication.businessId, businessId), inArray(schema.publication.status, ['scheduled', 'retry_pending']))),
       );
     },
   };

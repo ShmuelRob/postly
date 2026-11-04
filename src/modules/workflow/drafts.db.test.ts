@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { BusinessProfile } from '../../contracts/business-profile.js';
+import { WindowClosedError } from '../../contracts/providers/messaging.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { createDrafts, createWorkflow, draftsCopy as copy, type DraftsDeps } from './index.js';
@@ -106,5 +107,68 @@ describe('drafting errors', { timeout: 30_000 }, () => {
     const [state] = await db.withBusiness('workflow', id, (tx) => tx.select().from(schema.conversationState));
     expect(state?.handoffAt).not.toBeNull();
     expect(sent).toEqual([copy.draftsNeedReview]);
+  });
+});
+
+describe('the closed-window mark (review of PR #52, item c)', { timeout: 30_000 }, () => {
+  it('does not leak from a run that threw into the next run of the same business', async () => {
+    const { id, weekId, phone } = await plannedWeek();
+    // A second post in the first week, whose send throws after the first draft hit a closed window.
+    await db.withBusiness('workflow', id, (tx) =>
+      tx.insert(schema.post).values({
+        businessId: id,
+        weeklyUpdateId: weekId,
+        position: 1,
+        format: 'single',
+        plan: { topic: 'החלות', contentType: 'products', format: 'single', factIds: [], mediaAssetIds: [], brief: 'b' },
+      }),
+    );
+    let windowOpen = false;
+    let renders = 0;
+    let sends = 0;
+    const templates: string[] = [];
+    const drafts = createDrafts({
+      db,
+      workflow,
+      messaging: {
+        sendText: async () => {},
+        sendButtons: async () => {
+          sends += 1;
+          if (windowOpen) return;
+          // The first draft meets a closed window; the second send fails outright, so the run throws.
+          throw sends === 1 ? new WindowClosedError(phone, null) : new Error('provider down');
+        },
+        sendTemplate: async (_b, r) => void templates.push(r.templateName),
+      },
+      model: { run: async () => ({ captions: { instagram: { text: 'הבצק שלנו', hashtags: [] } }, usedFactIds: [] }) as never },
+      render: async () => {
+        renders += 1;
+        return { instagram: [{ storagePath: `r/${renders}.png`, width: 1080, height: 1080, mimeType: 'image/png' }] };
+      },
+      mediaUrl: async (_b, a) => `https://media.test/${a}`,
+      urlFor: (p) => `https://media.test/${p}`,
+      readFile: async () => new Uint8Array([1, 2, 3]),
+      invalidate: async () => {},
+      samplePhotoUrl: 'https://media.test/sample.png',
+    });
+    await drafts.draftWeek(id, weekId);
+    expect(templates).toEqual([]);
+
+    // The next run, with the window open: every draft goes out, so no drafts-waiting template.
+    windowOpen = true;
+    const nextWeek = randomUUID();
+    await db.withBusiness('workflow', id, async (tx) => {
+      await tx.update(schema.conversationState).set({ step: 'processing_update', handoffAt: null }).where(eq(schema.conversationState.businessId, id));
+      await tx.insert(schema.weeklyUpdate).values({ id: nextWeek, businessId: id, weekStart: '2026-11-08', status: 'planned', extractedFacts: { facts: [], missingDetails: [] } });
+      await tx.insert(schema.post).values({
+        businessId: id,
+        weeklyUpdateId: nextWeek,
+        position: 0,
+        format: 'single',
+        plan: { topic: 'העוגות', contentType: 'products', format: 'single', factIds: [], mediaAssetIds: [], brief: 'b' },
+      });
+    });
+    await drafts.draftWeek(id, nextWeek);
+    expect(templates).toEqual([]);
   });
 });

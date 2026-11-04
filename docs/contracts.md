@@ -103,7 +103,8 @@ WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 h
 | `testSchedule` | `providerAccountId`, `network` | `ok`, and `error` when not ok. Asks the provider whether a post can be scheduled on the account (the channel test, WP-34). It validates only: nothing is created, scheduled or published |
 | `publish` | `idempotencyKey` (the publication id), `providerAccountId`, `network`, `caption`, `mediaUrls`, `format`, `scheduledFor` | `providerPostId` |
 | `getPublicationStatus` | `providerPostId` | `status` (`scheduled`, `published`, `failed`), optional `error`, optional `publishedAt` |
-| `getMetrics` | `providerAccountId`, `from`, `to` | Per post: `providerPostId`, `reach`, `likes`, `comments`, `shares`; any metric may be missing |
+| `getMetrics` | `providerAccountId`, `from`, `to` | Per post: `providerPostId`, `reach`, `likes`, `comments`, `shares`; any metric may be missing. The monthly report (WP-43) uses it |
+| `disconnectAccount` | `providerAccountId`, `network` | `disconnectedAt`. Removes Postly's access to the account at the provider, so nothing more can be published on it; disconnecting an account that is already gone succeeds. Added 2026-11-04 by WP-43 for cancellation; queued for the human |
 
 ### `ModelProvider`
 

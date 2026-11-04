@@ -278,6 +278,7 @@ function recordPublishing(
     },
     getPublicationStatus: (id) => inner.getPublicationStatus(id),
     getMetrics: (request) => inner.getMetrics(request),
+    disconnectAccount: (request) => inner.disconnectAccount(request),
     // The H5 world connects channels on the simulator itself (test/h5/subject.ts).
     ...('connect' in inner ? { connect: (inner as unknown as { connect: (...args: unknown[]) => unknown }).connect.bind(inner) } : {}),
   };

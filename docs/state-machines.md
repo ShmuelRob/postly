@@ -25,7 +25,7 @@ Stored in `business.status`.
 | `active` | `CANCEL` | `cancelled` | |
 | `paused` | `CANCEL` | `cancelled` | |
 
-`cancelled` is terminal. On cancellation, channels are disconnected immediately and data deletion is scheduled after the retention period.
+`cancelled` is terminal. The `CANCEL` guard sets `cancelled_at` and `data_delete_after` (`cancelled_at` plus the retention period, 30 days by default). Then channels are disconnected immediately (`REVOKED`), pending publications and open posts are cancelled, and the subscription is cancelled (technical-design.md, Cancellation, data deletion and the monthly report, WP-43).
 
 ## Onboarding
 
@@ -154,7 +154,7 @@ Stored in `publication.status`. One row per post per channel.
 | `scheduled` | `CANCELLED` | `cancelled` | |
 | `retry_pending` | `CANCELLED` | `cancelled` | |
 
-`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice: when the publication already holds a `provider_post_id`, the job asks `getPublicationStatus` first, and a post the provider reports `scheduled` or `published` is `SUCCEEDED` without a new `publish` (`already_published`). When the earlier attempt left no provider id (the response was lost), the retry calls `publish` with the same idempotency key, the publication id, so the provider returns the existing post instead of creating a second one. The job stores `provider_post_id` as soon as `publish` returns, before `SUCCEEDED`, and clears it after the provider reports the post `failed` (WP-35). `published` means the provider holds the post; `published_at` is set, and the owner is told, only when the provider reports it live. A publication left `in_progress` for 10 minutes (a crashed run) is moved by the tick with `ATTEMPT_FAILED` or `ATTEMPTS_EXHAUSTED` and a console item.
+`published` and `cancelled` are terminal. Before each retry the job checks the provider status, so a post that went live is not published twice: when the publication already holds a `provider_post_id`, the job asks `getPublicationStatus` first, and a post the provider reports `scheduled` or `published` is `SUCCEEDED` without a new `publish` (`already_published`). When the earlier attempt left no provider id (the response was lost), the retry calls `publish` with the same idempotency key, the publication id, so the provider returns the existing post instead of creating a second one. The job stores `provider_post_id` as soon as `publish` returns, before `SUCCEEDED`, and keeps it when the provider reports the post `failed`: that attempt applies `ATTEMPTS_EXHAUSTED` at any attempt count, because the same idempotency key would return the same failed post (review of PR #52; this replaces the WP-35 rule that cleared it). `published` means the provider holds the post; `published_at` is set, and the owner is told, only when the provider reports it live. A publication left `in_progress` for 10 minutes (a crashed run) is moved by the tick with `ATTEMPT_FAILED` or `ATTEMPTS_EXHAUSTED` and a console item.
 
 ## Channel connection
 

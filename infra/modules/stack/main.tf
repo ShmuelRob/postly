@@ -64,7 +64,7 @@ locals {
   # migration job sets their passwords from these secrets. Kept in step with ALL_LOGINS in src/db/index.ts.
   logins = [
     "app_messaging", "app_workflow", "app_content", "app_design", "app_approval", "app_publishing",
-    "app_model", "app_billing", "app_business_data", "app_sys_phone_lookup", "app_sys_scheduler",
+    "app_model", "app_billing", "app_business_data", "app_deletion", "app_sys_phone_lookup", "app_sys_scheduler",
     "app_sys_console", "app_sys_example_set", "app_jobs",
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }

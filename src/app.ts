@@ -1,6 +1,9 @@
 import type { InboundMessage, MessagingProvider } from './contracts/providers/messaging.js';
 import type { ModelProvider } from './contracts/providers/model.js';
+import type { PaymentProvider, PaymentWebhooks } from './contracts/providers/payment.js';
 import type { PublishingProvider } from './contracts/providers/publishing.js';
+import { createBilling, type Billing } from './modules/billing/index.js';
+import { createDataDeletion, type DataDeletion, type DeletionStorage } from './modules/business-data/index.js';
 import type { TemplateRenderer } from './contracts/providers/renderer.js';
 import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
@@ -11,7 +14,9 @@ import { BusinessProfile } from './contracts/business-profile.js';
 import * as schema from './db/schema.js';
 import {
   createChannels,
+  createMonthlyReport,
   createPublishingJob,
+  previousMonth,
   createScheduling,
   proposeTimes,
   type Publishing,
@@ -20,6 +25,9 @@ import {
 } from './modules/publishing/index.js';
 import {
   createApprovals,
+  createCancellation,
+  cancellationCopy,
+  type Cancellation,
   createScheduleFlow,
   draftsCopy,
   scheduleCopy,
@@ -36,6 +44,8 @@ import {
   type WorkflowLogger,
 } from './modules/workflow/index.js';
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
+
 export interface AppOptions {
   db: Database;
   providers: {
@@ -43,11 +53,15 @@ export interface AppOptions {
     publishing: PublishingProvider;
     /** By the name `model_task_config.provider` uses, for example `google`. */
     models: Record<string, ModelProvider>;
+    /** The payment provider; without it there is no billing, and cancellation skips the subscription. */
+    payment?: PaymentProvider & PaymentWebhooks;
   };
   /** The design module's renderer factory (`createDesignRenderer(...).forBusiness`). */
   design: { forBusiness(business: BusinessRenderContext): TemplateRenderer };
   /** File storage for inbound media and renders, with the URLs providers fetch them from. */
-  media: MediaStorage & { read(path: string): Promise<{ data: Uint8Array } | undefined> };
+  media: MediaStorage & { read(path: string): Promise<{ data: Uint8Array } | undefined> } & Partial<DeletionStorage>;
+  /** From cancellation to data deletion (default 30 days, WP-43). */
+  retentionMs?: number;
   businessNumber: string;
   /** The photo used for the onboarding style samples when the owner sent none. */
   samplePhotoUrl: string;
@@ -75,6 +89,14 @@ export interface App {
   publishing: Publishing;
   /** The daily channel health check (WP-35); `businessId` limits it to one business (tests, playground). */
   channelHealth: { tick(now: Date, options?: { businessId?: string }): Promise<void> };
+  /** Billing, when a payment provider is wired (WP-42); a provider `cancelled` cancels the business. */
+  billing?: Billing;
+  /** Cancellation (WP-43): channels disconnected at once, then publications, posts and the subscription. */
+  cancellation: Cancellation;
+  /** The daily data deletion job (WP-43). */
+  dataDeletion: DataDeletion;
+  /** The monthly report job (WP-43): the previous month's figures, in each business's time zone, to every active business. */
+  monthlyReport: { tick(now: Date, options?: { businessId?: string }): Promise<{ sent: string[] }> };
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
    * never processed (review queue item 14), at startup and then every quiet window. It runs in the
@@ -208,9 +230,74 @@ export function createApp(options: AppOptions): App {
             variables: { networks: scheduleCopy.networks(lost) },
           });
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: String(error) }));
+          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: errorText(error) }));
         }
       }
+    },
+  };
+
+  /** The owner's language and number, for a template. */
+  async function owner(businessId: string) {
+    const row = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.business).where(eq(schema.business.id, businessId)))[0]);
+    if (!row) return undefined;
+    const profile = BusinessProfile.safeParse(row.profile);
+    return { phone: row.approverPhone, language: profile.success ? profile.data.languages[0]! : 'he' };
+  }
+
+  let cancellation: Cancellation | undefined;
+  const billing = providers.payment
+    ? createBilling({ db, messaging, provider: providers.payment, onCancelled: async (b) => void (await cancellation!.cancel(b, 'payment_provider')) })
+    : undefined;
+  cancellation = createCancellation({
+    db,
+    workflow,
+    revokeChannels: (b) => channels.revokeAll(b),
+    cancelPublications: (b) => scheduling.cancelAllPending(b),
+    ...(billing ? { cancelSubscription: (b: string) => billing.cancel(b) } : {}),
+    messaging,
+    ...(options.retentionMs !== undefined ? { retentionMs: options.retentionMs } : {}),
+    ...(options.now ? { now: options.now } : {}),
+  });
+
+  const { removePrefix, remove } = options.media;
+  const dataDeletion = createDataDeletion({
+    db,
+    ...(removePrefix && remove ? { storage: { removePrefix: (p: string) => removePrefix.call(options.media, p), remove: (p: string[]) => remove.call(options.media, p) } } : {}),
+  });
+
+  const report = createMonthlyReport({ db, provider: providers.publishing });
+  const monthlyReport: App['monthlyReport'] = {
+    async tick(at, tickOptions = {}) {
+      const active = await db.withSystem('scheduler', (tx) =>
+        tx
+          .select({ id: schema.business.id, timezone: schema.business.timezone })
+          .from(schema.business)
+          .where(and(eq(schema.business.status, 'active'), tickOptions.businessId ? eq(schema.business.id, tickOptions.businessId) : undefined)),
+      );
+      const sent: string[] = [];
+      for (const { id, timezone } of active) {
+        try {
+          const { from, to } = previousMonth(at, timezone);
+          const figures = await report.figures(id, from, to);
+          const to_ = figures && (await owner(id));
+          if (!figures || !to_) continue;
+          await messaging.sendTemplate(id, {
+            to: to_.phone,
+            language: to_.language,
+            templateName: cancellationCopy.MONTHLY_REPORT_TEMPLATE,
+            variables: {
+              month: cancellationCopy.monthName(from, timezone),
+              posts: String(figures.posts),
+              reach: cancellationCopy.metric(figures.reach),
+              engagement: cancellationCopy.metric(figures.engagement),
+            },
+          });
+          sent.push(id);
+        } catch (error) {
+          console.error(JSON.stringify({ level: 'error', msg: 'monthly report failed', businessId: id, error: errorText(error) }));
+        }
+      }
+      return { sent };
     },
   };
 
@@ -251,5 +338,21 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
 
-  return { messaging, workflow, onboarding, weekly, drafts, approvals, scheduling, schedule, publishing, channelHealth, start: () => messaging.startSweep() };
+  return {
+    messaging,
+    workflow,
+    onboarding,
+    weekly,
+    drafts,
+    approvals,
+    scheduling,
+    schedule,
+    publishing,
+    channelHealth,
+    ...(billing ? { billing } : {}),
+    cancellation,
+    dataDeletion,
+    monthlyReport,
+    start: () => messaging.startSweep(),
+  };
 }

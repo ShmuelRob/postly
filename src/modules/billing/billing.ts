@@ -36,6 +36,11 @@ export interface BillingOptions {
   messaging: Messaging;
   provider: PaymentProvider & PaymentWebhooks;
   plan?: string;
+  /**
+   * The provider reported the subscription `cancelled`: the business is cancelled (WP-43). The owner
+   * then gets the cancellation template from it, not billing's text.
+   */
+  onCancelled?(businessId: string): Promise<void>;
 }
 
 export interface Billing {
@@ -43,6 +48,11 @@ export interface Billing {
   sendPaymentLink(businessId: string): Promise<{ url: string }>;
   /** Verifies the provider's callback, then applies the provider's current status; throws InvalidWebhookSignatureError when it does not verify. */
   handleWebhook(request: WebhookRequest): Promise<WebhookOutcome>;
+  /**
+   * Cancellation (WP-43): a subscription with a provider id that is not `cancelled` is cancelled at the
+   * payment provider, then stored `cancelled`. Idempotent; no subscription row is a no-op.
+   */
+  cancel(businessId: string): Promise<void>;
 }
 
 const EVENTS_TO: Record<SubscriptionState, SubscriptionEvent[]> = {
@@ -134,10 +144,30 @@ export function createBilling(options: BillingOptions): Billing {
       return { url: link.url };
     },
 
+    async cancel(businessId) {
+      // The provider call holds no row lock (review of PR #54): cancelling at the provider is idempotent,
+      // so a parallel callback or a second cancel can run meanwhile, and the stored status is set after it.
+      const [row] = await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId)));
+      if (!row || row.status === 'cancelled') return;
+      if (row.providerSubscriptionId) await provider.cancelSubscription(row.providerSubscriptionId);
+      await db.withBusiness('billing', businessId, async (tx) => {
+        const [locked] = await tx.select().from(schema.subscription).where(eq(schema.subscription.id, row.id)).for('update');
+        if (!locked || locked.status === 'cancelled') return;
+        await tx
+          .update(schema.subscription)
+          .set({ status: transition(subscriptionMachine, locked.status, 'CANCELLED'), updatedAt: new Date() })
+          .where(eq(schema.subscription.id, row.id));
+      });
+    },
+
     async handleWebhook(request) {
       const event = await provider.verifyWebhook(request);
       const outcome = await apply(event);
       if (outcome.kind !== 'applied' || outcome.to === 'trialing') return outcome;
+      if (outcome.to === 'cancelled' && options.onCancelled) {
+        await options.onCancelled(event.businessId);
+        return { ...outcome, notified: true };
+      }
       return { ...outcome, notified: await notify(event.businessId, BILLING_COPY[outcome.to]) };
     },
   };

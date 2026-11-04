@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Network } from '../../contracts/common.js';
 import {
+  DisconnectAccountResult,
   ConnectionLink,
   ConnectionStatus,
   PostMetrics,
@@ -109,6 +110,12 @@ export function describePublishingProviderContract(
         to: new Date(now).toISOString(),
       });
       expect(PostMetrics.safeParse(metrics).success).toBe(true);
+    });
+
+    it('disconnects an account, and disconnecting it again succeeds', async () => {
+      const request = { providerAccountId: ctx.connected.providerAccountId, network: ctx.connected.network };
+      expect(DisconnectAccountResult.safeParse(await ctx.provider.disconnectAccount(request)).success).toBe(true);
+      expect(DisconnectAccountResult.safeParse(await ctx.provider.disconnectAccount(request)).success).toBe(true);
     });
   });
 }

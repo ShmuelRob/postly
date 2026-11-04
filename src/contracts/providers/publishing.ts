@@ -57,6 +57,13 @@ export const PostMetrics = z.array(
 );
 export type PostMetrics = z.infer<typeof PostMetrics>;
 
+/** Cancellation (WP-43): removes Postly's access to the account at the provider. */
+export const DisconnectAccountRequest = z.object({ providerAccountId: z.string().min(1), network: Network });
+export type DisconnectAccountRequest = z.infer<typeof DisconnectAccountRequest>;
+
+export const DisconnectAccountResult = z.object({ disconnectedAt: Timestamp });
+export type DisconnectAccountResult = z.infer<typeof DisconnectAccountResult>;
+
 /** The only code that knows the unified social API implements this. */
 export interface PublishingProvider {
   readonly name: string;
@@ -67,4 +74,6 @@ export interface PublishingProvider {
   publish(request: PublishRequest): Promise<PublishResult>;
   getPublicationStatus(providerPostId: string): Promise<PublicationStatus>;
   getMetrics(request: MetricsRequest): Promise<PostMetrics>;
+  /** Removes Postly's access to the account; an account already gone succeeds. */
+  disconnectAccount(request: DisconnectAccountRequest): Promise<DisconnectAccountResult>;
 }

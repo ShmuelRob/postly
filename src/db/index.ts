@@ -27,6 +27,7 @@ export const BUSINESS_ROLES = [
   'model',
   'billing',
   'business_data',
+  'deletion',
 ] as const;
 export type BusinessRole = (typeof BUSINESS_ROLES)[number];
 

@@ -136,13 +136,61 @@ describe('the publishing job ends every error in a defined state (WP-35, review 
     expect(publishing.posts).toHaveLength(1);
   });
 
-  it('clears the provider id after the provider reports the post failed, so the next attempt publishes again', async () => {
-    const s = await scheduled([]);
+  it('a retry that finds the provider post failed ends the publication: it never publishes the same failed post as published (review of PR #52, item a)', async () => {
+    const s = await scheduled(['SUCCEEDED']);
     publishing.failNextPublish({ mode: 'fail_status', error: 'media rejected' });
-    await s.job.runPublication(s.publicationId);
-    await read((tx) => tx.update(schema.publication).set({ status: 'retry_pending' }).where(eq(schema.publication.id, s.publicationId)));
+    // The first attempt hands the post to the provider, which accepts it and then reports it failed.
     expect((await s.job.runPublication(s.publicationId)).outcome).toBe('retry_pending');
-    expect(await s.row()).toMatchObject({ status: 'retry_pending', providerPostId: null, lastError: 'media rejected' });
+    const providerPostId = (await s.row()).providerPostId;
+    expect(providerPostId).toEqual(publishing.posts[0]!.providerPostId);
+
+    // Attempt 2 of 3, yet the publication fails for good: the same idempotency key would return the same failed post.
+    expect(await s.job.runPublication(s.publicationId)).toEqual({ outcome: 'failed', error: 'media rejected' });
+    expect(await s.row()).toMatchObject({ status: 'failed', attempts: 2, providerPostId, lastError: 'media rejected' });
+    expect(s.calls.filter((c) => c === 'publish')).toHaveLength(1);
+
+    // A console retry ends the same way; it never reports the failed post as published.
+    await read((tx) => tx.update(schema.publication).set({ status: 'retry_pending' }).where(eq(schema.publication.id, s.publicationId)));
+    expect((await s.job.runPublication(s.publicationId)).outcome).toBe('failed');
+    expect((await s.row()).status).toBe('failed');
+    expect(s.calls.filter((c) => c === 'publish')).toHaveLength(1);
+    expect((await items(s.businessId)).filter((i) => i.kind === 'publication_failed' && i.status === 'open')).toHaveLength(1);
+  });
+
+  it('a post the provider drops after accepting it resolves, with one console item, even when its sibling finishes later (review of PR #52, item b)', async () => {
+    const w = await open();
+    const businessId = await w.createBusiness(APPROVER);
+    await w.connectChannel(businessId, 'instagram');
+    await w.connectChannel(businessId, 'facebook');
+    const draft = await w.createDraft(businessId, 'צבעונים חדשים הגיעו, 25 ₪ לזר');
+    await w.app.deliverInbound(tap(draft.postId, draft.versionHash));
+    // A time already passed, so the provider holds each post live as soon as it accepts it.
+    const pubs = await w.schedule(businessId, draft.postId, '2026-11-03T07:00:00.000Z');
+    const app = subjectApp(w);
+    const notices: unknown[] = [];
+    const job = createPublishingJob({
+      db,
+      provider: publishing,
+      apply: (b, r) => app.workflow.apply(b, r),
+      mayAutoReply: async () => true,
+      urlFor: (path) => `https://media.test/${path}`,
+      notify: async (_b, n) => void notices.push(n),
+      now: () => NOW,
+    });
+    // The provider accepts the first post and then reports it failed; the second goes live.
+    publishing.failNextPublish({ mode: 'fail_status', error: 'removed by the network' });
+    const [first, second] = pubs;
+    expect((await job.runPublication(first!.publicationId)).outcome).toBe('published');
+    expect((await job.runPublication(second!.publicationId)).outcome).toBe('published');
+    // Later ticks (the settle sweep) add nothing.
+    await job.tick(NOW, { businessId });
+    await job.tick(NOW, { businessId });
+
+    const [post] = await read((tx) => tx.select({ status: schema.post.status }).from(schema.post).where(eq(schema.post.id, draft.postId)));
+    expect(post?.status).toBe('partially_published');
+    expect(notices).toEqual([{ kind: 'failed', postId: draft.postId, published: [second!.network], failed: [first!.network] }]);
+    const failedItems = (await items(businessId)).filter((i) => i.kind === 'publication_failed');
+    expect(failedItems.map((i) => i.referenceId)).toEqual([first!.publicationId]);
   });
 
   it('an error after STARTED and before the provider call ends in retry_pending with a console item, not in_progress', async () => {

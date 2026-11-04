@@ -19,6 +19,7 @@ x-app: &app
     DB_PASSWORD_APP_MODEL: local-only
     DB_PASSWORD_APP_BILLING: local-only
     DB_PASSWORD_APP_BUSINESS_DATA: local-only
+    DB_PASSWORD_APP_DELETION: local-only
     DB_PASSWORD_APP_SYS_PHONE_LOOKUP: local-only
     DB_PASSWORD_APP_SYS_SCHEDULER: local-only
     DB_PASSWORD_APP_SYS_CONSOLE: local-only

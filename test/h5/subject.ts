@@ -9,17 +9,25 @@ import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createChannels } from '../../src/modules/publishing/index.js';
 import { draftsCopy } from '../../src/modules/workflow/index.js';
-import { ModelSimulator } from '../../src/simulators/index.js';
+import { ModelSimulator, PaymentSimulator } from '../../src/simulators/index.js';
 import { placeholderPng } from '../e2e/harness/png.js';
 import type { Draft, H5World, H5WorldFactory } from './world.js';
 
 const apps = new WeakMap<H5World, App>();
+const extras = new WeakMap<H5World, { payment: PaymentSimulator; files: Map<string, Uint8Array> }>();
 
 /** The real app behind a world, for tests outside the pinned H5 files that need more than the world's surface (WP-35). */
 export function subjectApp(world: H5World): App {
   const app = apps.get(world);
   if (!app) throw new Error('not a subject world');
   return app;
+}
+
+/** The world's payment simulator and stored files (WP-43: cancellation and data deletion). */
+export function subjectExtras(world: H5World): { payment: PaymentSimulator; files: Map<string, Uint8Array> } {
+  const found = extras.get(world);
+  if (!found) throw new Error('not a subject world');
+  return found;
 }
 
 /**
@@ -62,6 +70,7 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
 
   const files = new Map<string, Uint8Array>();
   const model = new ModelSimulator();
+  const payment = new PaymentSimulator({ now });
   /** The caption the next caption_writing call returns (one world runs at a time). */
   let nextCaption = 'פוסט';
   model.setDefault('caption_writing', (input) => {
@@ -75,7 +84,7 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
 
   const app = createApp({
     db,
-    providers: { messaging, publishing, models: { google: model } },
+    providers: { messaging, publishing, models: { google: model }, payment },
     design: {
       forBusiness: ({ storagePrefix }) => ({
         async render(request) {
@@ -95,6 +104,12 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
       read: async (ref) => {
         const data = files.get(ref.startsWith(MEDIA_ORIGIN) ? ref.slice(MEDIA_ORIGIN.length) : ref);
         return data && { data };
+      },
+      removePrefix: async (prefix) => {
+        for (const path of [...files.keys()]) if (path.startsWith(prefix)) files.delete(path);
+      },
+      remove: async (paths) => {
+        for (const path of paths) files.delete(path);
       },
     },
     businessNumber: '+972501234560',
@@ -295,5 +310,6 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
     },
   };
   apps.set(world, app);
+  extras.set(world, { payment, files });
   return world;
 };

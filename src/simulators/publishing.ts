@@ -4,6 +4,8 @@ import {
   CreateConnectionLinkRequest,
   type ConnectionStatus,
   ConnectionStatusRequest,
+  DisconnectAccountRequest,
+  type DisconnectAccountResult,
   MetricsRequest,
   type PostMetrics,
   type PublicationStatus,
@@ -140,6 +142,25 @@ export class PublishingSimulator implements PublishingProvider {
         return at >= start && at <= end;
       })
       .map((p) => ({ providerPostId: p.providerPostId, ...p.metrics }));
+  }
+
+  /** Every account Postly disconnected (cancellation, WP-43). */
+  readonly disconnections: DisconnectAccountRequest[] = [];
+  private readonly disconnectFailures: string[] = [];
+
+  async disconnectAccount(request: DisconnectAccountRequest): Promise<DisconnectAccountResult> {
+    const parsed = DisconnectAccountRequest.parse(request);
+    const failure = this.disconnectFailures.shift();
+    if (failure !== undefined) throw new Error(failure);
+    this.disconnections.push(parsed);
+    const account = this.accounts.find((a) => a.providerAccountId === parsed.providerAccountId);
+    if (account) account.connected = false;
+    return { disconnectedAt: this.now().toISOString() };
+  }
+
+  /** The next disconnectAccount call fails with this error. */
+  failNextDisconnect(error = 'Simulated provider outage'): void {
+    this.disconnectFailures.push(error);
   }
 
   /** The owner finishes the connection flow; returns the provider account id. */
