@@ -56,10 +56,10 @@ export default defineConfig({
       },
       {
         test: {
-          // The e2e suites that drive a browser, after the other projects finish, as the design project.
+          // The e2e suites that drive a browser, last: after the design project (its own group, since maxWorkers differs).
           name: 'e2e-browser',
           include: browserE2eTests,
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 2 },
           maxWorkers: 1,
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
