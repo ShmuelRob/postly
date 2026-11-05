@@ -11,7 +11,7 @@ export interface ConsoleRouteOptions {
   cancelBusiness?(businessId: string): Promise<unknown>;
   /**
    * How requests are gated until team sign-in exists (docs/security.md, "Console exposure").
-   * `loopback` (default, local runs): only loopback addresses. `private-ingress` (deployed): the
+   * `loopback` (default, local runs): only loopback socket addresses (never X-Forwarded-For). `private-ingress` (deployed): the
    * console runs as its own Cloud Run service with internal-only ingress and no public invoker, so the
    * gate is the network and IAM, not the request's address. Neither is a sign-in.
    */
@@ -56,7 +56,9 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
     async (scope) => {
       const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
-        if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        // The socket peer, never `request.ip`: with trustProxy set, `request.ip` comes from X-Forwarded-For,
+        // which a caller can spoof (docs/security.md, D8).
+        if (loopbackOnly && !LOOPBACK.has(request.raw.socket.remoteAddress ?? '')) return reply.code(403).send({ error: 'console is local only' });
         // CSRF and DNS rebinding (docs/security.md, D3): a known Host, and for any POST a JSON body
         // (which a cross-origin page cannot send without a CORS preflight) and no foreign Origin.
         const host = request.headers.host ?? '';
