@@ -92,6 +92,7 @@ export const consoleItemKind = pgEnum('console_item_kind', [
   'channel_disconnected',
   'unknown_number',
   'handoff',
+  'payment_link_failed',
 ]);
 export const consoleItemStatus = pgEnum('console_item_status', ['open', 'resolved']);
 
