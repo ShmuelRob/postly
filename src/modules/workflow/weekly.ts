@@ -1,9 +1,11 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { BusinessProfile } from '../../contracts/business-profile.js';
+import type { OpenQuestion } from '../../contracts/open-question.js';
 import type { ModelTaskInput, ModelTaskName, ModelTaskOutput } from '../../contracts/model-tasks.js';
 import type { SendTemplateRequest, SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { type Agent, type AgentDeps, createAgent, type TurnResult } from '../agent/index.js';
 import { checkPlan, checkQuotes } from '../content/index.js';
 import type { OnboardingBurst } from './onboarding.js';
 import { localWeek } from './week.js';
@@ -22,6 +24,7 @@ export interface WeeklyDeps {
     sendText(businessId: string, request: SendTextRequest): Promise<unknown>;
     sendTemplate(businessId: string, request: SendTemplateRequest): Promise<unknown>;
   };
+  /** The model layer. With its spend reads (the full layer, as the app passes it) the weekly agent can run (agent.md). */
   model: {
     run<T extends ModelTaskName>(
       businessId: string,
@@ -29,7 +32,7 @@ export interface WeeklyDeps {
       input: ModelTaskInput<T>,
       options?: { referenceId?: string; check?: (output: ModelTaskOutput<T>) => string | null },
     ): Promise<ModelTaskOutput<T>>;
-  };
+  } & Partial<Omit<AgentDeps['models'], 'run'>>;
   now?: () => Date;
   /** Runs once the week's plan is stored: drafting (technical-design.md, Drafts flow). */
   afterPlan?(businessId: string, weekId: string): Promise<void>;
@@ -55,6 +58,8 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
   const now = deps.now ?? (() => new Date());
   /** Weeks whose plan was just stored and that drafting picks up next. */
   const pendingDrafts = new Map<string, string>();
+  /** For the weekly agent's later turns: whether a week's update came late (the reply's wording). */
+  const lateWeeks = new Map<string, 'closed' | 'taken' | null>();
 
   const loadBusiness = (businessId: string) =>
     db.withBusiness('workflow', businessId, async (tx) => {
@@ -88,6 +93,125 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
           }
         : {}),
     });
+
+  /** Sets the open question and applies a conversation event, in one transaction. */
+  const conversation = (businessId: string, event: string, question?: OpenQuestion | null) =>
+    workflow.apply(businessId, {
+      machine: 'conversation',
+      id: businessId,
+      event,
+      source: 'inbound',
+      ...(question !== undefined
+        ? {
+            guard: async (tx) => {
+              await tx.update(schema.conversationState).set({ openQuestion: question }).where(eq(schema.conversationState.businessId, businessId));
+              return null;
+            },
+          }
+        : {}),
+    });
+
+  // The weekly-update agent (agent.md; WP-93), behind its agent_flows switch. The workflow gives it
+  // the state machine effects its tools need; the agent module never imports workflow.
+  const models = deps.model;
+  const agent: Agent | undefined =
+    models.costCap && models.spentSince && models.spentByAllSince && models.spentOnTurn
+      ? createAgent({
+          db,
+          models: models as AgentDeps['models'],
+          // The agent ignores what a send returns; the messaging module returns the provider id.
+          messaging: { sendText: (b, r) => deps.messaging.sendText(b, r) as ReturnType<AgentDeps['messaging']['sendText']> },
+          ...(deps.now ? { now: deps.now } : {}),
+          events: {
+            async questionAsked(businessId, question) {
+              const [state] = await db.withBusiness('workflow', businessId, (tx) =>
+                tx.select({ open: schema.conversationState.openQuestion }).from(schema.conversationState).where(eq(schema.conversationState.businessId, businessId)),
+              );
+              const open = state?.open as OpenQuestion | null | undefined;
+              const attempts = open?.key === question.key ? open.attempts + 1 : 1;
+              await conversation(businessId, 'QUESTION_ASKED', {
+                key: question.key,
+                askedFields: question.askedFields,
+                attempts,
+                photoAssetIds: [],
+                ...(question.postId ? { postId: question.postId } : {}),
+              });
+            },
+            async planStored(businessId, input) {
+              let ids: string[] = [];
+              const stored = await workflow.apply(businessId, {
+                machine: 'weekly_update',
+                id: input.weekId,
+                event: 'FACTS_EXTRACTED',
+                source: 'system',
+                guard: async (tx) => {
+                  const rows = await tx
+                    .insert(schema.post)
+                    .values(input.posts.map((p, position) => ({ businessId, weeklyUpdateId: input.weekId, position, format: p.format, plan: p })))
+                    .returning({ id: schema.post.id });
+                  ids = rows.map((r) => r.id);
+                  return null;
+                },
+              });
+              return stored.ok ? ids : null;
+            },
+          },
+        })
+      : undefined;
+
+  /** The newest week of the business. */
+  const latestWeek = (businessId: string) =>
+    db.withBusiness('workflow', businessId, async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(schema.weeklyUpdate)
+        .where(eq(schema.weeklyUpdate.businessId, businessId))
+        .orderBy(desc(schema.weeklyUpdate.weekStart))
+        .limit(1);
+      return row;
+    });
+
+  /**
+   * What follows a weekly-agent turn: once the plan is stored, the owner hears how many posts are
+   * coming and drafting starts; a hand-off or a failure before a plan sends the week to review
+   * (EXTRACTION_FAILED). A question sent to the owner waits for the answer.
+   */
+  async function afterTurn(businessId: string, to: string, weekId: string, result: TurnResult) {
+    const week = await latestWeek(businessId);
+    if (week?.id !== weekId) return;
+    if (week.status === 'planned') {
+      const rows = await db.withBusiness('workflow', businessId, (tx) =>
+        tx.select({ id: schema.post.id }).from(schema.post).where(eq(schema.post.weeklyUpdateId, weekId)),
+      );
+      const n = rows.length;
+      const late = lateWeeks.get(weekId) ?? null;
+      lateWeeks.delete(weekId);
+      const text = late === 'closed' ? copy.updateForNextWeek(n) : late === 'taken' ? copy.updateCountsForNextWeek(n) : copy.updateReceived(n);
+      await deps.messaging.sendText(businessId, { to, text });
+      await deps.afterPlan?.(businessId, weekId);
+      return;
+    }
+    // The runtime already handed the conversation to a person (the console item and the owner's line).
+    if (week.status === 'received' && (result.status === 'handed_off' || result.status === 'failed')) await weekEvent(businessId, weekId, 'EXTRACTION_FAILED');
+  }
+
+  /** A burst that continues the weekly agent's gathering: an answer, a photo, or more details. */
+  async function continueAgent(burst: OnboardingBurst, step: string, weekId: string, photos: string[]) {
+    const { businessId } = burst;
+    if (photos.length > 0) {
+      // Photos sent while the agent gathers belong to this week's update (plan_posts may use them).
+      await db.withBusiness('workflow', businessId, async (tx) => {
+        const [row] = await tx.select({ photos: schema.weeklyUpdate.mediaAssetIds }).from(schema.weeklyUpdate).where(eq(schema.weeklyUpdate.id, weekId));
+        await tx
+          .update(schema.weeklyUpdate)
+          .set({ mediaAssetIds: [...new Set([...(row?.photos ?? []), ...photos])], updatedAt: new Date() })
+          .where(eq(schema.weeklyUpdate.id, weekId));
+      });
+    }
+    if (step === 'awaiting_answer' && !(await conversation(businessId, 'ANSWER_RECEIVED', null)).ok) return;
+    const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) });
+    await afterTurn(businessId, burst.from, weekId, result);
+  }
 
   async function tickBusiness(businessId: string, at: Date) {
     const loaded = await loadBusiness(businessId);
@@ -135,14 +259,27 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
   async function handle(burst: OnboardingBurst) {
     const { businessId } = burst;
     const loaded = await loadBusiness(businessId);
-    const busy = loaded?.step === 'processing_update';
-    if (!loaded || loaded.business.status !== 'active' || (loaded.step !== 'idle' && !busy)) return;
+    if (!loaded || loaded.business.status !== 'active') return;
+    const agentOn = agent !== undefined && (await agent.flowEnabled(businessId, 'weekly'));
+    const busy = loaded.step === 'processing_update';
+    const answering = agentOn && loaded.step === 'awaiting_answer';
+    if (loaded.step !== 'idle' && !busy && !answering) return;
     const { business } = loaded;
     // state-machines.md, Conversation: an update is accepted only from the approver number.
     if (burst.from !== business.approverPhone) return;
     if (!(await workflow.mayAutoReply(businessId))) return;
     const profile = BusinessProfile.parse(business.profile);
     const reply = (text: string) => deps.messaging.sendText(businessId, { to: burst.from, text });
+
+    // The weekly agent is still gathering this week's update: the burst continues it (agent.md).
+    if (agentOn && (busy || answering)) {
+      const week = await latestWeek(businessId);
+      if (week?.status === 'received') {
+        const photos = burst.messages.filter((m) => m.content.kind === 'image').flatMap((m) => m.mediaAssetIds);
+        return continueAgent(burst, loaded.step, week.id, photos);
+      }
+      if (answering) return;
+    }
 
     let recognized = false;
     try {
@@ -174,6 +311,14 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
         'inbound',
       );
       if (!received.ok) return;
+      if (agentOn) {
+        // The weekly agent gathers the facts and plans (agent.md, How it fits the state machines):
+        // the conversation moves to processing_update first, so its questions can wait for answers.
+        lateWeeks.set(week.id, late);
+        await workflow.apply(businessId, { machine: 'conversation', id: businessId, event: 'UPDATE_RECEIVED', source: 'inbound' });
+        const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) });
+        return afterTurn(businessId, burst.from, week.id, result);
+      }
       await plan(burst, week.id, profile, update, late);
       if (pendingDrafts.delete(week.id)) await deps.afterPlan?.(businessId, week.id);
     } catch (error) {
@@ -268,6 +413,11 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     tickBusiness,
     handle,
   };
+}
+
+/** The ids of a burst's stored messages (the agent turn's trigger). */
+function messageIds(burst: OnboardingBurst): string[] {
+  return burst.messages.flatMap((m) => ('id' in m && typeof m.id === 'string' ? [m.id] : []));
 }
 
 /** The short profile context fact_extraction gets. */
