@@ -1,11 +1,6 @@
-import { z } from "zod";
-import { HexColor, Network, PostFormat, Url, VisualStyle } from "../common.js";
-import {
-  BadgeKind,
-  BadgeText,
-  CarouselLayout,
-  PhotoEdit,
-} from "../design-spec.js";
+import { z } from 'zod';
+import { HexColor, Network, PostFormat, Url, VisualStyle } from '../common.js';
+import { BadgeKind, BadgeText, CarouselLayout, PhotoEdit } from '../design-spec.js';
 
 export const RenderRequest = z
   .object({
@@ -24,27 +19,21 @@ export const RenderRequest = z
     badge: z.object({ kind: BadgeKind, text: BadgeText }).optional(),
     carouselLayout: CarouselLayout.optional(),
   })
-  .refine(
-    (r) => r.edits === undefined || r.edits.length === r.photoUrls.length,
-    {
-      message: "One edit per photo",
-      path: ["edits"],
-    },
-  );
+  .refine((r) => r.edits === undefined || r.edits.length === r.photoUrls.length, {
+    message: 'One edit per photo',
+    path: ['edits'],
+  });
 export type RenderRequest = z.infer<typeof RenderRequest>;
 
 export const RenderedFile = z.object({
   storagePath: z.string().min(1),
   width: z.int().positive(),
   height: z.int().positive(),
-  mimeType: z.enum(["image/jpeg", "image/png"]),
+  mimeType: z.enum(['image/jpeg', 'image/png']),
 });
 
 /** One file per image per network; a carousel has several files per network. */
-export const RenderResult = z.partialRecord(
-  Network,
-  z.array(RenderedFile).min(1),
-);
+export const RenderResult = z.partialRecord(Network, z.array(RenderedFile).min(1));
 export type RenderResult = z.infer<typeof RenderResult>;
 
 export interface TemplateRenderer {

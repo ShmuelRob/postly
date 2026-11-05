@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrastRatio, edgeColor, ensureContrast, ensureGraphicContrast, MIN_GRAPHIC_CONTRAST, resolvePalette } from './color.js';
+import { contrastRatio, edgeColor, ensureContrast, ensureGraphicContrast, fillForText, MIN_GRAPHIC_CONTRAST, resolvePalette } from './color.js';
 
 describe('contrastRatio', () => {
   it('follows the WCAG formula', () => {
@@ -75,5 +75,23 @@ describe('edgeColor', () => {
     }
     expect(edgeColor('#FFC83D', '#14141F')).toBe('#14141F');
     expect(edgeColor('#1F3A5F', '#14141F')).toBe('#FFFFFF');
+  });
+});
+
+describe('fillForText', () => {
+  it('keeps a fill that already carries the text at 4.5:1', () => {
+    expect(fillForText('#1F3A5F', '#FFFFFF')).toBe('#1F3A5F');
+  });
+
+  it('darkens a fill under light text until it reaches 4.5:1', () => {
+    for (const fill of ['#B5683C', '#E8B4C8', '#FFC83D']) {
+      const out = fillForText(fill, '#FBF6EE');
+      expect(contrastRatio('#FBF6EE', out)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('lightens a fill under dark text until it reaches 4.5:1', () => {
+    const out = fillForText('#14141F', '#111111');
+    expect(contrastRatio('#111111', out)).toBeGreaterThanOrEqual(4.5);
   });
 });
