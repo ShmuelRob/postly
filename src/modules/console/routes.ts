@@ -16,9 +16,25 @@ export interface ConsoleRouteOptions {
    * gate is the network and IAM, not the request's address. Neither is a sign-in.
    */
   access?: 'loopback' | 'private-ingress';
+  /**
+   * Host names (no port) the console answers, against DNS rebinding (D3). Locally the default is the
+   * loopback names; deployed, unset leaves the Host check to the internal-only ingress.
+   */
+  allowedHosts?: readonly string[];
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/** The host name of a Host header or Origin, without the port; undefined when it does not parse. */
+function hostName(value: string): string | undefined {
+  try {
+    return new URL(value.includes('://') ? value : `http://${value}`).hostname;
+  } catch {
+    return undefined;
+  }
+}
 
 const Id = z.object({ id: z.uuid() });
 const PauseBody = z.object({ by: z.string().min(1), reason: z.string().optional() });
@@ -41,6 +57,20 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
         if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        // CSRF and DNS rebinding (docs/security.md, D3): a known Host, and for any POST a JSON body
+        // (which a cross-origin page cannot send without a CORS preflight) and no foreign Origin.
+        const host = request.headers.host ?? '';
+        const allowed = options.allowedHosts ?? (loopbackOnly ? LOOPBACK_HOSTS : undefined);
+        if (allowed && !allowed.includes(hostName(host) ?? '')) return reply.code(403).send({ error: 'unknown host' });
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          const origin = request.headers.origin;
+          if (origin !== undefined && (origin === 'null' || new URL(origin, 'http://x').host !== host)) {
+            return reply.code(403).send({ error: 'cross-origin request' });
+          }
+          if (!(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+            return reply.code(415).send({ error: 'JSON body required' });
+          }
+        }
       });
 
       const run = async (reply: FastifyReply, action: () => Promise<unknown>) => {

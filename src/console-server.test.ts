@@ -61,4 +61,43 @@ describe('console process', () => {
     expect(cancelled).toEqual([id]);
     await server.close();
   });
+
+  describe('CSRF and DNS rebinding (D3, WP-80)', () => {
+    const post = (server: ReturnType<typeof buildConsoleServer>, headers: Record<string, string>) =>
+      server.inject({ method: 'POST', url: '/console/api/system/resume', remoteAddress: '127.0.0.1', headers, payload: JSON.stringify({ by: 'team' }) });
+
+    it('refuses a Host that is not a loopback name locally (DNS rebinding)', async () => {
+      const server = buildConsoleServer({ console: stubConsole, access: 'loopback' });
+      const res = await server.inject({ method: 'GET', url: '/console/api/businesses', remoteAddress: '127.0.0.1', headers: { host: 'evil.example:4000' } });
+      expect(res.statusCode).toBe(403);
+      for (const host of ['localhost:4000', '127.0.0.1:4000', '[::1]:4000', 'localhost']) {
+        const ok = await server.inject({ method: 'GET', url: '/console/api/businesses', remoteAddress: '127.0.0.1', headers: { host } });
+        expect(ok.statusCode, host).toBe(200);
+      }
+      await server.close();
+    });
+
+    it('deployed, accepts only the configured hosts when they are set', async () => {
+      const server = buildConsoleServer({ console: stubConsole, access: 'private-ingress', allowedHosts: ['console.internal'] });
+      expect((await server.inject({ method: 'GET', url: '/console/api/businesses', headers: { host: 'console.internal' } })).statusCode).toBe(200);
+      expect((await server.inject({ method: 'GET', url: '/console/api/businesses', headers: { host: 'other.example' } })).statusCode).toBe(403);
+      await server.close();
+    });
+
+    it('refuses a POST without a JSON content type', async () => {
+      const server = buildConsoleServer({ console: stubConsole, access: 'loopback' });
+      expect((await post(server, { host: 'localhost:4000', 'content-type': 'text/plain' })).statusCode).toBe(415);
+      await server.close();
+    });
+
+    it('refuses a POST from another origin and accepts the same origin', async () => {
+      const server = buildConsoleServer({ console: stubConsole, access: 'loopback' });
+      const json = { host: 'localhost:4000', 'content-type': 'application/json' };
+      expect((await post(server, { ...json, origin: 'https://evil.example' })).statusCode).toBe(403);
+      expect((await post(server, { ...json, origin: 'null' })).statusCode).toBe(403);
+      expect((await post(server, { ...json, origin: 'http://localhost:4000' })).statusCode).toBe(200);
+      expect((await post(server, json)).statusCode).toBe(200);
+      await server.close();
+    });
+  });
 });
