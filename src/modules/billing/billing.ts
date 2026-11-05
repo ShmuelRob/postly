@@ -1,4 +1,5 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { BusinessProfile } from '../../contracts/business-profile.js';
 import { WindowClosedError, type WebhookRequest } from '../../contracts/providers/messaging.js';
 import type { PaymentEvent, PaymentProvider, PaymentWebhooks, PlanPrice } from '../../contracts/providers/payment.js';
 import { subscriptionMachine, type SubscriptionState } from '../../contracts/state-machines/index.js';
@@ -6,6 +7,8 @@ import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { canTransition, transition } from '../../shared/state-machine.js';
 import type { Messaging } from '../messaging/index.js';
+import { log } from '../../shared/logger.js';
+import { holdCopy, holdOn, holdStep } from './hold.js';
 
 type SubscriptionEvent = (typeof subscriptionMachine.events)[number];
 
@@ -45,7 +48,16 @@ export interface BillingOptions {
    * then gets the cancellation template from it, not billing's text.
    */
   onCancelled?(businessId: string): Promise<void>;
+  /**
+   * The billing hold (T16): pauses or resumes the business through the existing business pause
+   * (`PAUSE` / `RESUME`, source `system`). Resolves false when the machine refused.
+   */
+  pauseBusiness?(businessId: string): Promise<boolean>;
+  resumeBusiness?(businessId: string): Promise<boolean>;
+  now?: () => Date;
 }
+
+export type HoldAction = { businessId: string; action: 'reminded' | 'held' };
 
 export interface Billing {
   /** Creates the payment link, stores the subscription row, and sends the link to the approver in WhatsApp. */
@@ -57,6 +69,11 @@ export interface Billing {
    * payment provider, then stored `cancelled`. Idempotent; no subscription row is a no-op.
    */
   cancel(businessId: string): Promise<void>;
+  /**
+   * The daily billing-hold tick (technical-design.md, Billing): reminders on days 1, 3 and 6 of the
+   * grace period, then the business pause on day 7. Only `active` businesses; `businessId` limits it to one.
+   */
+  holdTick(now: Date, options?: { businessId?: string }): Promise<HoldAction[]>;
 }
 
 const EVENTS_TO: Record<SubscriptionState, SubscriptionEvent[]> = {
@@ -74,6 +91,7 @@ export function eventFor(from: SubscriptionState, reported: SubscriptionState): 
 export function createBilling(options: BillingOptions): Billing {
   const { db, messaging, provider } = options;
   const plan = options.plan ?? DEFAULT_PLAN;
+  const now = options.now ?? (() => new Date());
 
   async function approverPhone(businessId: string): Promise<string> {
     const [row] = await db.withBusiness('billing', businessId, (tx) =>
@@ -99,8 +117,8 @@ export function createBilling(options: BillingOptions): Billing {
    * now, read while the subscription row is locked, so a stale, replayed or parallel callback applies
    * at most the current status once.
    */
-  function apply(event: PaymentEvent): Promise<WebhookOutcome> {
-    return db.withBusiness('billing', event.businessId, async (tx): Promise<WebhookOutcome> => {
+  function apply(event: PaymentEvent): Promise<WebhookOutcome & { wasHeld?: boolean }> {
+    return db.withBusiness('billing', event.businessId, async (tx): Promise<WebhookOutcome & { wasHeld?: boolean }> => {
       const [row] = await tx
         .select()
         .from(schema.subscription)
@@ -121,10 +139,13 @@ export function createBilling(options: BillingOptions): Billing {
           status: to,
           providerSubscriptionId: event.providerSubscriptionId,
           ...(current.currentPeriodEnd === undefined ? {} : { currentPeriodEnd: new Date(current.currentPeriodEnd) }),
+          // The billing hold (T16): a failure starts a grace period, a payment ends it.
+          ...(to === 'past_due' ? { graceStartedAt: now(), remindersSent: 0, heldAt: null } : {}),
+          ...(to === 'active' ? { graceStartedAt: null, remindersSent: 0, heldAt: null } : {}),
           updatedAt: new Date(),
         })
         .where(eq(schema.subscription.id, row.id));
-      return { kind: 'applied', from: row.status, to, notified: false };
+      return { kind: 'applied', from: row.status, to, notified: false, wasHeld: to === 'active' && row.heldAt !== null };
     });
   }
 
@@ -137,7 +158,84 @@ export function createBilling(options: BillingOptions): Billing {
     return { amountAgorot: row.amountAgorot, currency: 'ILS' };
   }
 
+  async function owner(businessId: string) {
+    const [row] = await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.business).where(eq(schema.business.id, businessId)));
+    if (!row) throw new Error(`Unknown business: ${businessId}`);
+    const profile = BusinessProfile.safeParse(row.profile);
+    return { phone: row.approverPhone, name: row.name, timezone: row.timezone, language: profile.success ? profile.data.languages[0]! : 'he' };
+  }
+
+  /** One business's step of the hold tick; the row's counters make a repeated or parallel tick a no-op. */
+  async function holdOne(businessId: string, at: Date): Promise<HoldAction['action'] | null> {
+    const [row] = await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.subscription).where(eq(schema.subscription.businessId, businessId)));
+    if (!row || (row.status !== 'pending' && row.status !== 'past_due') || !row.graceStartedAt) return null;
+    const step = holdStep(row, at);
+    if (step.kind === 'none') return null;
+    const to = await owner(businessId);
+    const sameRow = and(
+      eq(schema.subscription.id, row.id),
+      eq(schema.subscription.status, row.status),
+      eq(schema.subscription.remindersSent, row.remindersSent),
+      isNull(schema.subscription.heldAt),
+    );
+    if (step.kind === 'remind') {
+      const variables: Record<string, string> = { businessName: to.name, holdOn: holdOn(row.graceStartedAt, to.timezone) };
+      let customerId = row.providerCustomerId;
+      // A fresh link only while nothing was paid: for `past_due` it would detach the provider's subscription.
+      if (row.status === 'pending') {
+        const link = await provider.createPaymentLink({ businessId, plan: row.plan, price: await currentPrice(businessId) });
+        variables.link = link.url;
+        customerId = link.providerCustomerId;
+      }
+      const claimed = await db.withBusiness('billing', businessId, (tx) =>
+        tx
+          .update(schema.subscription)
+          .set({ remindersSent: step.remindersSent, providerCustomerId: customerId, updatedAt: new Date() })
+          .where(sameRow)
+          .returning({ id: schema.subscription.id }),
+      );
+      if (claimed.length === 0) return null;
+      await messaging.sendTemplate(businessId, {
+        to: to.phone,
+        language: to.language,
+        templateName: row.status === 'pending' ? holdCopy.REMINDER_TEMPLATE : holdCopy.FAILED_TEMPLATE,
+        variables,
+      });
+      return 'reminded';
+    }
+    const claimed = await db.withBusiness('billing', businessId, (tx) =>
+      tx.update(schema.subscription).set({ heldAt: at, updatedAt: new Date() }).where(sameRow).returning({ id: schema.subscription.id }),
+    );
+    if (claimed.length === 0) return null;
+    if (!options.pauseBusiness || !(await options.pauseBusiness(businessId))) {
+      // The business left `active` meanwhile (a team pause, a cancellation): billing holds nothing.
+      await db.withBusiness('billing', businessId, (tx) => tx.update(schema.subscription).set({ heldAt: null }).where(eq(schema.subscription.id, row.id)));
+      return null;
+    }
+    await messaging.sendTemplate(businessId, { to: to.phone, language: to.language, templateName: holdCopy.HOLD_TEMPLATE, variables: { businessName: to.name } });
+    return 'held';
+  }
+
   return {
+    async holdTick(at, tickOptions = {}) {
+      const active = await db.withSystem('scheduler', (tx) =>
+        tx
+          .select({ id: schema.business.id })
+          .from(schema.business)
+          .where(and(eq(schema.business.status, 'active'), tickOptions.businessId ? eq(schema.business.id, tickOptions.businessId) : undefined)),
+      );
+      const done: HoldAction[] = [];
+      for (const { id } of active) {
+        try {
+          const action = await holdOne(id, at);
+          if (action) done.push({ businessId: id, action });
+        } catch (error) {
+          log.error('billing hold failed', { businessId: id, error: error instanceof Error ? error : String(error) });
+        }
+      }
+      return done;
+    },
+
     async sendPaymentLink(businessId) {
       const price = await currentPrice(businessId);
       const link = await provider.createPaymentLink({ businessId, plan, price });
@@ -151,7 +249,7 @@ export function createBilling(options: BillingOptions): Billing {
         } else {
           await tx
             .insert(schema.subscription)
-            .values({ businessId, plan, provider: provider.name, providerCustomerId: link.providerCustomerId });
+            .values({ businessId, plan, provider: provider.name, providerCustomerId: link.providerCustomerId, graceStartedAt: now() });
         }
       });
       await messaging.sendText(businessId, { to: await approverPhone(businessId), text: BILLING_COPY.paymentLink(link.url, price.amountAgorot) });
@@ -176,7 +274,10 @@ export function createBilling(options: BillingOptions): Billing {
 
     async handleWebhook(request) {
       const event = await provider.verifyWebhook(request);
-      const outcome = await apply(event);
+      const { wasHeld, ...outcome } = await apply(event);
+      if (wasHeld && options.resumeBusiness && !(await options.resumeBusiness(event.businessId))) {
+        log.error('billing hold: resume refused', { businessId: event.businessId });
+      }
       if (outcome.kind !== 'applied' || outcome.to === 'pending') return outcome;
       if (outcome.to === 'cancelled' && options.onCancelled) {
         await options.onCancelled(event.businessId);

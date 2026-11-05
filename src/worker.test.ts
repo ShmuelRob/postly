@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryQueue } from './db/index.js';
-import { CHANNEL_HEALTH_JOB, DATA_DELETION_JOB, MONTHLY_REPORT_JOB, PUBLISHING_TICK_JOB, WEEKLY_TICK_JOB, startWorkerProcess } from './worker.js';
+import { BILLING_HOLD_JOB, CHANNEL_HEALTH_JOB, DATA_DELETION_JOB, MONTHLY_REPORT_JOB, PUBLISHING_TICK_JOB, WEEKLY_TICK_JOB, startWorkerProcess } from './worker.js';
 
 const publishing = { tick: async () => ({ ran: 0 }) };
 const channelHealth = { tick: async () => {} };
@@ -64,5 +64,16 @@ describe('worker process', () => {
     await queue.fire(MONTHLY_REPORT_JOB);
     expect(await queue.drain()).toBe(2);
     expect(ran).toEqual([['deletion', at], ['report', at]]);
+  });
+
+  it('schedules the daily billing hold with the current time (T16)', async () => {
+    const queue = createMemoryQueue();
+    const at = new Date('2026-11-10T05:00:00Z');
+    const ran: Date[] = [];
+    await startWorkerProcess({ queue, weekly: { tick: async () => {} }, publishing, channelHealth, billingHold: { tick: async (now) => void ran.push(now) }, now: () => at });
+    expect(queue.schedules().slice(3)).toEqual([{ name: BILLING_HOLD_JOB, cron: '0 5 * * *', singleton: true }]);
+    await queue.fire(BILLING_HOLD_JOB);
+    expect(await queue.drain()).toBe(1);
+    expect(ran).toEqual([at]);
   });
 });

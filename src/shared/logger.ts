@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { context as otelContext, trace as otelTrace } from '@opentelemetry/api';
 
 // The one logger (docs/observability.md, Logging): JSON lines on stdout in Cloud Logging's structured
 // format, correlation ids from an AsyncLocalStorage context, and no customer content or secrets.
+// WP-48: every ERROR line is a Cloud Error Reporting event, and a line inside a span carries its trace.
 
 export type LogValue = string | number | boolean | null | undefined | Error;
 export type LogFields = Record<string, LogValue>;
@@ -61,6 +63,21 @@ export function traceFromHeaders(headers: Record<string, string | string[] | und
 const SENSITIVE_KEY = /text|body|caption|content|^message$|phone|^from$|^to$|token|secret|passw|key|authorization|cookie|url|dsn|credential/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const REPORTED_ERROR = 'type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent';
+
+/** `Name: scrubbed message` and the stack frames (paths and line numbers only), for Error Reporting. */
+function stackTrace(error: Error): string {
+  const frames = (error.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line)).slice(0, 30);
+  return [`${error.name}: ${scrub(error.message)}`, ...frames].join('\n');
+}
+
+/** The trace and span of the active OpenTelemetry span, when there is one. */
+function activeSpan(): { traceId: string; spanId: string; sampled: boolean } | undefined {
+  const ctx = otelTrace.getSpan(otelContext.active())?.spanContext();
+  if (!ctx || !otelTrace.isSpanContextValid(ctx)) return undefined;
+  return { traceId: ctx.traceId, spanId: ctx.spanId, sampled: (ctx.traceFlags & 1) === 1 };
+}
+
 const sensitiveKey = (key: string) => !/Id$/.test(key) && SENSITIVE_KEY.test(key);
 
 /** Removes phone numbers, URL credentials, bearer tokens and key-like strings from free text. */
@@ -96,7 +113,19 @@ function write(severity: Severity, message: string, fields: LogFields = {}): voi
     else if (key in fields) entry[key] = cleaned;
   }
   for (const key of LABEL_KEYS) if (key in fields && labels[key] !== undefined) entry[key] = labels[key];
-  if (context.trace) entry['logging.googleapis.com/trace'] = context.trace;
+  const span = activeSpan();
+  const project = process.env.GOOGLE_CLOUD_PROJECT;
+  if (span && project) {
+    entry['logging.googleapis.com/trace'] = `projects/${project}/traces/${span.traceId}`;
+    entry['logging.googleapis.com/spanId'] = span.spanId;
+    entry['logging.googleapis.com/trace_sampled'] = span.sampled;
+  } else if (context.trace) entry['logging.googleapis.com/trace'] = context.trace;
+  if (severity === 'ERROR') {
+    entry['@type'] = REPORTED_ERROR;
+    entry.serviceContext = { service: baseLabels.process ?? 'postly', version: process.env.K_REVISION ?? 'local' };
+    const error = Object.values(fields).find((value): value is Error => value instanceof Error);
+    if (error) entry.stack_trace = stackTrace(error);
+  }
   if (Object.keys(labels).length > 0) entry['logging.googleapis.com/labels'] = labels;
   try {
     sink(JSON.stringify(entry));

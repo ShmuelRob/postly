@@ -369,6 +369,11 @@ export const subscription = pgTable(
     providerCustomerId: text('provider_customer_id'),
     providerSubscriptionId: text('provider_subscription_id'),
     currentPeriodEnd: tz('current_period_end'),
+    /** Billing hold (T16): when the grace period started; null once paid. */
+    graceStartedAt: tz('grace_started_at'),
+    remindersSent: integer('reminders_sent').notNull().default(0),
+    /** When billing paused the business; null when billing holds nothing. */
+    heldAt: tz('held_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

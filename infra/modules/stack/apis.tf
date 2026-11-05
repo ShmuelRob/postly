@@ -6,7 +6,9 @@ locals {
     "run", "sqladmin", "compute", "servicenetworking", "secretmanager", "artifactregistry", "iam",
     "iamcredentials", "sts", "monitoring", "logging", "cloudresourcemanager", "storage",
     "aiplatform", # Gemini through Vertex AI, called as the service account (no API key)
-    "iap",        # console sign-in (docs/security.md, "Console exposure")
+    # Spans from OpenTelemetry, and ERROR log lines grouped as errors (docs/observability.md, WP-48).
+    "cloudtrace", "clouderrorreporting",
+    "iap", # console sign-in (docs/security.md, "Console exposure")
   ]
 }
 
