@@ -1,6 +1,6 @@
 # Postly Technical Design
 
-Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and models run only bounded tasks, so a model cannot publish or approve anything.
+Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and models run only bounded tasks, so a model cannot publish or approve anything. The hybrid agent (2026-11-05, [agent.md](agent.md)) keeps this rule: its model calls are bounded tasks whose output is a list of tool calls that code checks and applies.
 
 ## Principles
 
@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`); the three agent tasks will run on Gemini Flash Lite (agent.md, A8) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -51,6 +51,7 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Business data | Profiles, preferences, post history, and media library |
 | Billing | Payment links, subscription status, the plan price, and the placeholder provider |
 | Console | Conversations, drafts, errors, manual intervention, and the global pause |
+| Agent | The agent runtime (turn loop, limits, `agent_turn` records) and the tool framework; each tool applies its effect through the module that owns the data ([agent.md](agent.md)). New in WP-90, `src/modules/agent/` |
 
 ## Task routing
 
@@ -66,6 +67,9 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Image selection and quality check | Vision model | Mid tier |
 | Factual comparison against the source | Code, with an optional model check | Low cost |
 | Rendering, approval, scheduling, and publishing | Code only | None |
+| Agent steps: onboarding, weekly update, drafts and fixes (`agent_onboarding`, `agent_weekly`, `agent_drafts`; [agent.md](agent.md)) | Model, every tool call checked by code | Gemini Flash Lite (`gemini-2.5-flash-lite`; A8, decided 2026-11-05) |
+
+With the agent flows on, the agents replace profile field extraction, fact extraction, weekly planning, caption writing and change interpretation in those flows; those tasks stay as the fallback path behind the `agent_flows` switch until the human retires them (agent.md, A9). Intent detection, transcription and image review stay as they are; image review gains suggested edits for the drafts agent.
 
 ## Control over prompts, models, and flow
 
@@ -96,6 +100,7 @@ The full schema is in [database-schema.md](database-schema.md), and the state ma
 | `console_item` | Work routed to a person: failed validation, failed publishing, unknown numbers, and handoffs |
 | `workflow_event` | Audit trail: every applied and rejected workflow event, with business, machine, from and to state, event, guard result, reason, actor and correlation id. Append-only and kept after the business is deleted |
 | `model_task_config`, `prompt_template`, `system_control` | System tables: model settings per task, prompt versions, and the global pause |
+| `agent_turn`, `agent_config` | One row per agent turn (trigger, steps with tool calls and results, cost, stop reason), and the agent limits per agent ([agent.md](agent.md#data)) |
 
 Every business-owned table is protected by row-level security. The publishing job accepts only a publication tied to an approved version hash.
 
@@ -126,13 +131,30 @@ These are defaults stored in configuration, so they can change without a code ch
 | Data deletion | Daily at 03:00 UTC: every cancelled business past `data_delete_after` (WP-43) |
 | Monthly report | 06:00 UTC on the first of each month, for the previous calendar month in `business.timezone` (WP-43) |
 | Publishing tick | Every minute: publications due by `scheduled_for`, retries by the retry spacing |
+| Agent limits (A4, `agent_config`, decided 2026-11-05) | 12 steps and 24 tool calls a turn, USD 0.06 a turn, USD 1.00 a business a day, USD 50 for all businesses a day, 90 seconds a turn; a limit hands the conversation off ([agent.md](agent.md#limits)) |
+| Agent flows | `agent_flows` off for every flow until its package lands; switched per flow globally (`system_control`) or per business (`business`) |
 | No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, candle lighting at sunset minus 40 minutes in Jerusalem, 30 in Haifa and Zikhron Ya'akov, 20 elsewhere; havdalah at nightfall (sun 8.5° below the horizon); by the business's city when the city table knows its English or Hebrew name, otherwise Jerusalem |
+
+## The agent
+
+Decided 2026-11-05; the full design, the tools and their checks, the limits, and the human's decisions on it (A1 to A10) are in [agent.md](agent.md). In short:
+
+- Workflow routes to the agent module (`agent.runTurn`), never the other way round; tools get the state machine events as injected callbacks ([agent.md](agent.md#module-direction)).
+- The agent module runs a **turn** per trigger (a claimed burst routed by the conversation step, or a code event), holding the business's `conversation_state` row so one turn runs per business. Each step is one model-layer call of the agent's task, whose `AgentStep` output (one to four tool calls and a confidence) is Zod-validated, retried and recorded like every task; `model_run.agent_turn_id` ties the calls to the turn.
+- Each tool call is checked (allowed for this agent and state, its schema, its code checks: verbatim quotes, the fact check, the plan checks, the design ranges, the badge rules) and applied through the owning module in its role and transaction. A refusal changes nothing and goes back to the agent.
+- Messages the agent proposes (`ask_owner`, `request_photo`) are sent by messaging only inside the 24-hour window; drafts are sent with their buttons by the drafts code, exactly as below. Approval, times, scheduling, rendering and publishing are untouched.
+- Code evaluates each agent's "done" rule after each step and applies the state machine event (state-machines.md, [Agent-driven steps](state-machines.md#agent-driven-steps)).
+- Limits (steps, tool calls, cost per turn, per business per day and in total, time, repeated questions, low confidence, refusals) end the turn with a hand-off: the handoff flag, an `agent_limit` or `handoff` console item with the turn id, and a fixed line to the owner.
+- Tests never call a real model: the scripted agent drives every unit, db and e2e test, and the real-Gemini eval is a manual, opt-in script (agent.md, [Testing](agent.md#testing-without-paying-for-a-model)).
+
+The flows below describe the fixed (one-shot) path, which stays as the fallback while `agent_flows` is off for that flow. With it on, the parts the agent takes over are named in each flow's agent note.
 
 ## Onboarding flow
 
 Built in WP-30 (2026-11-03); the copy is provisional (H6) and queued for the human. The workflow module runs the [onboarding machine](state-machines.md#onboarding); each step uses the module that owns it.
 
 - **Inbound media.** Messaging downloads every voice note and image through `getMedia`, stores the file, records a `media_asset` row (`voice` or `photo`, source `owner`), and passes the asset ids with the burst. Voice notes are transcribed with the `transcription` task before anything reads the text.
+- **Agent note.** With the onboarding agent on, the profile questions, the brand assets and profile corrections are the agent's (agent.md); the intro, style samples, profile summary, channel connection and activation stay as below.
 - **Profile questions.** One or two topics per message, in a fixed order: name, field and products; location, hours, and pickup or delivery; audience and differentiator; channels and Shabbat publishing. Each answer goes to `profile_extraction` with the fields asked, and the fields found merge into the `BusinessProfileDraft` in `business.profile`. A question whose required fields stay empty is asked again, up to three times in all, and then the conversation is handed off to a person.
 - **Brand assets.** The agent asks for a logo, then for photos of the business; the owner can skip each. The first image after the logo question is the logo (`brand.logoAssetId`).
 - **Style samples.** The design module renders one sample post per style from the owner's first photo (or a bundled sample photo when there is none), with the business name and logo, and messaging sends each with its style name. The owner answers with a style name or number.
@@ -144,6 +166,7 @@ Built in WP-30 (2026-11-03); the copy is provisional (H6) and queued for the hum
 
 Built in WP-31 (2026-11-03); the copy is provisional (H6) and queued for the human. The workflow module runs the [weekly update machine](state-machines.md#weekly-update) and the conversation's first step; the content module owns the code checks on the model output.
 
+- **Agent note.** With the weekly agent on, recognizing the update and `UPDATE_RECEIVED` stay as below; fact extraction and planning become the weekly agent's `record_fact`, its questions about missing details (`QUESTION_ASKED`, `ANSWER_RECEIVED`), `request_photo`, and `plan_posts`, whose checks are the planning checks below plus an owner quote for any departure from the profile. A hand-off or limit before a plan applies `EXTRACTION_FAILED`.
 - **Week rows.** A scheduler tick (`WeeklyUpdates.tick(now)`) runs every hour. It finds active businesses with `withSystem('scheduler')`, then per business, in the business's timezone, it does what is due: from Sunday 00:00 it creates the week's `weekly_update` row (`awaiting`; an existing row is kept); from Monday 10:00, for a week still `awaiting`, it applies `REMINDER_SENT` first and then sends the reminder, so a crash or a second tick never sends it twice (at most once: a failed send is logged and not retried; WP-32 fix); from Thursday 12:00 it applies `WEEK_ENDED` to a week still `awaiting` or `reminded` (a week that was never reminded, for example because the business was activated after Monday 10:00, closes at the cutoff too; WP-32 fix). Each step is idempotent, so a late or repeated tick does no harm.
 - **Reminder template.** `weekly_reminder`, in the business's first language, with one variable, `businessName`. It goes out with `sendTemplate`, because the 24-hour window is usually closed. The template text is submitted to WhatsApp for approval with the H6 copy.
 - **Recognizing an update.** A burst from the approver number while the conversation is `idle` is an update when it holds a photo or a voice note, or when `intent_detection` on its text returns `weekly_update`. Other intents are left to the packages that handle them. Voice notes are transcribed first, as in onboarding.
@@ -159,6 +182,7 @@ Built in WP-31 (2026-11-03); the copy is provisional (H6) and queued for the hum
 
 Built in WP-32 (2026-11-03); the copy and the `caption_writing` version-2 prompt are provisional (H6, H7) and queued for the human. The workflow module runs the [post machine](state-machines.md#post) and the conversation from `processing_update` to `reviewing_drafts`; the content module owns the fact check and the content hash; the design module renders. Approval itself is WP-33.
 
+- **Agent note.** With the drafts agent on, the caption, the several-photos question, the overlay text (now the design's `title`, fact-checked), the photo edits, the optional badge, the carousel order and changes are the drafts agent's `create_draft`, `ask_owner`, `plan_posts` (revise) and `apply_change`. The fact check, the version and hash, invalidation, rendering and sending with buttons stay exactly as below; the version also stores its `design_spec`. Free text that is not a change still only resends the drafts.
 - **When.** Right after the plan is stored (`FACTS_EXTRACTED`, conversation `processing_update`), the week's posts are drafted one by one in `position` order, in the same handler (WP-44 may move this to a job). When every post is sent, failed, or waiting for an answer, `DRAFTS_SENT` moves the conversation to `reviewing_drafts`. When no draft could be sent at all, the conversation is handed off to a person (the console items already exist) and the owner is told the team is looking at it. Any other error while drafting (not a model failure, for example a send that fails) opens a `draft_failed` console item for the week and hands the conversation to a person, so it never waits in `processing_update` answering every message with "still working" (review of PR #43).
 - **Several photos.** A post planned as `single` with more than one photo is not drafted yet: `DRAFT_STARTED`, then `DETAIL_MISSING` (`awaiting_clarification`), and the conversation asks one question (`QUESTION_ASKED`, open question `photo_choice` with the post id): 1 for a carousel, 2 for one photo, 3 for a post per photo. Choices are answered by text, because buttons carry approval payloads only. Code reads the answer from the digit or the words (קרוסלה; אחת; כל תמונה or נפרד); any other answer is asked again, up to three times in all, and then the conversation is handed off. On a valid answer the conversation applies `ANSWER_RECEIVED` and the post `DETAIL_PROVIDED`. Carousel sets the post's `format` to `carousel` (the owner's choice wins over the profile's formats); one photo keeps the first photo; a post per photo keeps the first photo on this post and inserts a new `planned` post for each other photo after the week's last position, so the week can hold more posts than `postsPerWeek`.
 - **Caption.** `caption_writing` gets the plan, the facts the plan names, a short business context, the active preference rules, the post's networks (the profile's channels, or the networks of the current version after a channel change), the languages, the tone, the fixed hashtags, and on a redraft the change instructions (`changes`). Code runs the fact check below as `RunOptions.check`, so a mismatch is a failed attempt: the model retries, and when every attempt fails the post moves to `needs_review` (`DRAFT_FAILED`; the model layer's console item exists) and nothing is sent for it. The optional `fact_check` model task is not used in Phase 1.
@@ -191,6 +215,7 @@ Built in WP-33 (2026-11-04), queued for the human (approval code). The approval 
 
 Built in WP-34 (2026-11-04), queued for the human (publishing code, provisional Hebrew copy and template text, the channel test contract). The publishing module owns the time proposals, the publications and the publishing job; the workflow module runs the conversation. No model is involved.
 
+- **How times are worded** (agent.md, [Time proposals](agent.md#time-proposals)). Each proposed time is labelled as the owner's usual slot when it comes from the profile's days and hours, and as a default slot otherwise; no message claims the time is when followers are most active until WP-72.
 - **Time proposals** (`proposeTimes`, pure code). One time per approved post, in `position` order, each on a different day. Days are the profile's `schedule.days`, or Sunday to Thursday when empty; the hour is the profile's `schedule.hours` in turn, or 10:00 when empty, in `business.timezone`. A time is at least one hour from now. Unless `publishOnShabbatAndHolidays`, a time inside the no-publishing window (Configuration defaults: Shabbat and Israeli yom tov from 30 minutes before candle lighting to 30 minutes after havdalah, by `jewish-calendar.ts`, at the profile's city when its English or Hebrew name is in the city table, otherwise Jerusalem; yom tov days are Rosh Hashana (two days), Yom Kippur, Sukkot I, Shemini Atzeret, Pesach I and VII, and Shavuot, with neighbouring rest days merged into one window) moves to the next allowed day. The search looks 21 days ahead.
 - **Proposing.** After each approval, when the conversation is in `reviewing_drafts` and every post of the week is `approved` or `cancelled` with at least one `approved`, the conversation applies `ALL_DRAFTS_RESOLVED` (to `confirming_schedule`) with the open question `schedule_confirmation`, whose `proposals` hold each post id and its proposed time, and the owner gets one message listing each post's topic and time and how to confirm.
 - **Confirming.** In `confirming_schedule`, a short confirming text (`SCHEDULE_CONFIRM_WORDS`) creates the publications of every proposed post that is still `approved`, at its proposed time ([scheduling](#approval-flow)), then applies `SCHEDULE_CONFIRMED` (to `idle`), and the owner gets a confirmation listing the times. This text accepts times only; a post is approved only by its button. A post whose network has no verified connection is not scheduled: the owner is told which channel needs reconnecting, a `channel_disconnected` console item opens, and the conversation is handed to a person. Any other text in `confirming_schedule` is a schedule change: in Phase 1 the conversation is handed to a person (a `handoff` console item with the owner's text) and the owner is told someone will set the times; reading requested times from text is a follow-up. An Approve tap keeps its usual path. A Change tap reopens the drafts: `CHANGE_REQUESTED` (to `processing_update`, dropping the proposal) and `DRAFTS_SENT` (back to `reviewing_drafts`), then the drafts flow takes the tap, and once every draft is resolved again the times are proposed again. Any other message here is a schedule change. A change to a scheduled post after the times were confirmed (conversation `idle`) is not routed to drafts yet; that is a follow-up.

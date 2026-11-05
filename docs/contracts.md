@@ -63,6 +63,8 @@ Each task has an input schema and an output schema. The model layer validates th
 | `image_review` | Media asset id, purpose (post photo or logo) | `usable`, `score` (0 to 1), `issues`, and an optional normalized `crop` |
 | `fact_check` | Caption text and the facts it may use | `mismatches`: each with the caption text and the issue |
 
+With the hybrid agent (2026-11-05, [agent.md](agent.md), queued under H1 and H7) three tasks are added, each on Gemini Flash Lite in `model_task_config` (A8), all with the input `AgentContext` and the output `AgentStep` ([Agent](#agent)): `agent_onboarding`, `agent_weekly` and `agent_drafts`. `image_review` gains output fields: `description` (up to 200 characters, what the photo shows, for the agent), and suggested `rotateDeg`, `brightness` and `contrast` within the [photo edit ranges](agent.md#photo-edits). The one-shot tasks stay in the registry as the fallback (agent.md, A9).
+
 Fact types are `price`, `discount_percent`, `date`, `date_range`, `time`, `address`, `phone`, `product`, `promotion`, `testimonial`, and `other`.
 
 Code checks that the schema cannot express:
@@ -73,6 +75,24 @@ Code checks that the schema cannot express:
 - `caption_writing`: every price, discount, date, time, address, and phone number in a caption matches a fact in `usedFactIds` or the profile. This code comparison is the fact check; the `fact_check` model task is optional and only adds mismatches. The exact rules are in technical-design.md, Drafts flow.
 
 What a `post_version` stores (WP-32): `captions` is `ChannelCaptions`; `rendered_media` (`RenderedMedia`) maps each network to its rendered `media_asset` ids in slide order; `fact_sources` (`FactSource[]`) is the used facts, each `factId`, `type`, `value`, and `sourceQuote`; `content_hash` is the SHA-256 of the canonical JSON of `{ format, captions, renderedMedia }`. The schemas are in `src/contracts/post-version.ts`.
+
+## Agent
+
+Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md)); queued for the human (H1). The schemas go in `src/contracts/agent.ts` and `src/contracts/design-spec.ts`.
+
+| Schema | Shape |
+| --- | --- |
+| `AgentName` | `onboarding`, `weekly`, or `drafts` |
+| `AgentContext` | The agent's input, built by code from one business: `agent`, `persona` (`name`: the business override or the global name for the language; the persona always speaks in the feminine, A2), `languages`, `tone`, `profile` (the draft or the full profile) and `missingFields`, `messages` (the last 20 within 14 days: `role` `owner` or `postly`, `text`, `at`, `photos` with their asset id and `image_review` notes), `step`, `openQuestion`, `week` (update text, transcript, recorded facts, declines), `posts` (id, state, plan, current captions and `DesignSpec`), `rules` (active preference rules), `history` (the last 8 topics), `tools` (names allowed now), `doneRule` (text), `budget` (steps and cost left), and `toolResults` (the previous steps' results in this turn). No phone numbers, provider ids or payment data |
+| `AgentStep` | The output of every agent task: `calls`, 1 to 4 `AgentToolCall`s run in order, and `confidence` (0 to 1) |
+| `AgentToolCall` | A discriminated union on `tool`: `ask_owner`, `set_profile_field`, `record_fact`, `request_photo`, `record_decline`, `plan_posts`, `create_draft`, `apply_change`, `hand_off_to_console`, `end_turn`; each variant's fields and code checks are in [agent.md](agent.md#tools) |
+| `AgentToolResult` | `ok` with `data` (for example the new fact id or the version id), or `refused` with `reason` and `detail`. Reasons: `not_allowed`, `unknown_id`, `invalid_input`, `quote_not_found`, `value_not_in_quote`, `fact_mismatch`, `forbidden_content`, `plan_invalid`, `badge_invalid`, `edit_out_of_range`, `render_failed`, `no_change`, `window_closed`, `question_limit`, `photo_request_limit` |
+| `DesignSpec` | `photos` (1 for a single post, 2 to 10 for a carousel, the first is the cover), each `assetId`, optional `crop` (`x`, `y`, `w`, `h` in 0..1), `rotateDeg` (-10 to 10, steps of 0.5), `brightness` and `contrast` (-0.3 to 0.3); `title` (1 to 40 characters, at most 2 lines); optional `badge` (`kind`: `discount`, `price`, `new`, `sale`, `holiday`; `text` up to 8 characters for `discount` and `price`, fixed by kind otherwise; `factId` for `discount` and `price`); `carouselLayout` (`standard` or `numbered`) |
+| `AgentTurnStopReason` | `done`, `waiting_for_owner`, `end_turn`, `handed_off`, `max_steps`, `max_tool_calls`, `turn_budget`, `daily_budget`, `global_budget`, `timeout`, `stuck`, `low_confidence`, `refusals`, `invalid_output` |
+
+Code checks the schemas cannot express are listed per tool in [agent.md](agent.md#tools). A refused call changes nothing. No tool takes or returns an `InboundMessage`, a button payload, or an approval, so no agent output can reach `ApprovalService`.
+
+`post_version` gains `design_spec` (the `DesignSpec` it was rendered from); the content hash is unchanged (it covers the rendered media). `BusinessProfile` gains an optional `persona` (`agentName`), default empty, which overrides the global name "Postly" / "פוסטלי" in `system_control.agent_name` (agent.md, A1, decided 2026-11-05). There is no gender field: the persona is feminine (A2). `ModelProvider` is unchanged: the agent tasks are ordinary `generateStructured` calls.
 
 ## Provider interfaces
 
@@ -135,7 +155,9 @@ The provider returns raw output. Only the model layer validates it against the t
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `render` | `style`, `format`, `photoUrls`, `overlayText`, optional `logoUrl`, `brandColors`, `networks` | Per network, a list of files (several for a carousel), each with `storagePath`, `width`, `height`, `mimeType` |
+| `render` | `style`, `format`, `photoUrls`, `overlayText`, optional `logoUrl`, `brandColors`, `networks`; proposed with the agent (2026-11-05, H1): optional `edits` (per photo, in `photoUrls` order: `crop`, `rotateDeg`, `brightness`, `contrast`, as in `DesignSpec`), optional `badge` (`kind`, `text`), optional `carouselLayout` | Per network, a list of files (several for a carousel), each with `storagePath`, `width`, `height`, `mimeType` |
+
+The edits are applied in the order rotate, crop, tone, before the style template; an out-of-range value or a badge that breaks its rules ([agent.md](agent.md#badge-element), and design-styles.md once H2 adds it) is rejected. Without `edits`, `badge` and `carouselLayout` a render is exactly as today.
 
 The business context a render needs but `RenderRequest` does not carry (the business name for the no-logo fallback, the business languages for text direction, the storage prefix, and the `image_review` crops) is bound when the renderer is created: the design module's `forBusiness()` returns a `TemplateRenderer` for one business. A single post with more than one photo is rejected. Decided 2026-11-02 and queued for the human; moving these fields onto `RenderRequest` later is a contract change.
 

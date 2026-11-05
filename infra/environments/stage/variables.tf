@@ -8,6 +8,10 @@ variable "project_id" {
 variable "business_number" {
   description = "Postly's WhatsApp number for this environment (a test number)."
   type        = string
+  validation {
+    condition     = can(regex("^\\+[1-9][0-9]{6,14}$", var.business_number))
+    error_message = "business_number must be an E.164 number such as +15550000001 (a made-up one is fine on the simulators)."
+  }
 }
 variable "alert_email" {
   type    = string
