@@ -143,7 +143,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
         return deliver({ kind: 'voice', providerMediaId: id });
       }
       case 'button': {
-        // Buttons carry approval payloads only (contracts.md): the id is <action>:<postId>:<versionHash>.
+        // Buttons carry approval payloads only (contracts.md): the id is <action>:<postId>:<versionId>:<versionHash>.
         const payload = decodeButtonId(input.buttonId);
         if (!payload) throw new Error(`button ${input.buttonId}: not an approval button`);
         return deliver({ kind: 'button_reply', buttonId: input.buttonId, payload });

@@ -239,7 +239,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       for (const [i, url] of slides.entries()) await deps.messaging.sendText(businessId, { to, text: copy.carouselSlide(i + 1, slides.length), mediaUrl: url });
     }
     const details = (version.factSources as { type: string; value: string }[]).filter((f) => !['product', 'promotion', 'other', 'testimonial'].includes(f.type)).map((f) => f.value);
-    const payload = { postId: post.id, versionHash: version.contentHash };
+    const payload = { postId: post.id, versionId: version.id, versionHash: version.contentHash };
     await deps.messaging.sendButtons(businessId, {
       to,
       text: copy.draftText(plan.topic, networks.map((n) => ({ network: n, caption: captions[n]! })), details),

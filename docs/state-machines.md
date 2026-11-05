@@ -128,7 +128,7 @@ When the owner sent several photos for a planned single post, the draft asks the
 
 1. The event comes from a WhatsApp button tap, never from free text or a model output.
 2. The sender phone equals `business.approver_phone`.
-3. The button payload carries the content hash of a `post_version`, and that hash equals the hash of `post.current_version_id`.
+3. The button payload carries the content hash of a `post_version`, and that hash equals the hash of `post.current_version_id`. The payload also carries the id of the version row the button was sent for, and that id equals `post.current_version_id` (T15, 2026-11-05): a button stays bound to the exact version it was sent for, so a later version with the same hash (for example a revert) never revives an old button. A payload without a version id is checked by hash alone; every button Postly sends carries one.
 4. The post is in `awaiting_approval`.
 
 Any new `post_version` invalidates earlier approvals (`approval.invalidated_at` is set). A request to publish on only one channel is a change request. The approval service also refuses a tap while the conversation is in [handoff](#human-handoff), and a message it already handled (WP-33; refusal reasons and their order are in [technical-design.md](technical-design.md#approval-flow)). The guard is checked inside one transaction that locks the post row, so two taps cannot both approve. Invalidation happens before the new version is written and before `CHANGE_REQUESTED` leaves `approved` or `scheduled`.
