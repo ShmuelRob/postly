@@ -48,15 +48,37 @@ export const JOBS_SCHEMA = 'pgboss';
 /** Every login the migration job gives a password: one per role and purpose, plus the job queue's. */
 export const ALL_LOGINS: readonly string[] = [...BUSINESS_ROLES.map(loginFor), ...SYSTEM_PURPOSES.map(loginFor), JOBS_LOGIN];
 
+/**
+ * The logins each process uses (docs/security.md, D9): a process loads only these passwords and gets
+ * URLs for nothing else. The console process runs the console API and the cancellation; its list is
+ * proved by `src/modules/console/console.db.test.ts`, which runs every console action with only these
+ * logins. Web and worker still load every login until they are narrowed the same way.
+ */
+export const PROCESS_LOGINS: Record<'web' | 'worker' | 'console', readonly string[]> = {
+  web: ALL_LOGINS,
+  worker: ALL_LOGINS,
+  console: ['app_sys_console', 'app_workflow', 'app_publishing', 'app_billing', 'app_messaging', JOBS_LOGIN],
+};
+
 export interface DatabaseUrls {
-  /** One connection string per business role, logging in as `loginFor(role)`. */
-  business: Record<BusinessRole, string>;
-  /** One connection string per system purpose, logging in as `loginFor(purpose)`. */
-  system: Record<SystemPurpose, string>;
+  /**
+   * One connection string per business role, logging in as `loginFor(role)`. A process lists only the
+   * logins it uses (PROCESS_LOGINS); using a role with no URL throws.
+   */
+  business: Partial<Record<BusinessRole, string>>;
+  /** One connection string per system purpose, logging in as `loginFor(purpose)`; partial as above. */
+  system: Partial<Record<SystemPurpose, string>>;
 }
 
-/** Builds DatabaseUrls from one server URL, with each login's password from passwordFor. */
-export function databaseUrls(serverUrl: string, passwordFor: (login: string) => string): DatabaseUrls {
+/** The subset of urls for the given logins only. */
+export function onlyLogins(urls: DatabaseUrls, logins: readonly string[]): DatabaseUrls {
+  const keep = <K extends BusinessRole | SystemPurpose>(m: Partial<Record<K, string>>) =>
+    Object.fromEntries(Object.entries(m).filter(([k]) => logins.includes(loginFor(k as K)))) as Partial<Record<K, string>>;
+  return { business: keep(urls.business), system: keep(urls.system) };
+}
+
+/** Builds DatabaseUrls from one server URL, with each login's password from passwordFor; only `logins` when given. */
+export function databaseUrls(serverUrl: string, passwordFor: (login: string) => string, logins: readonly string[] = ALL_LOGINS): DatabaseUrls {
   const as = (role: BusinessRole | SystemPurpose) => {
     const u = new URL(serverUrl);
     u.username = loginFor(role);
@@ -64,8 +86,8 @@ export function databaseUrls(serverUrl: string, passwordFor: (login: string) => 
     return u.toString();
   };
   return {
-    business: Object.fromEntries(BUSINESS_ROLES.map((r) => [r, as(r)])) as Record<BusinessRole, string>,
-    system: Object.fromEntries(SYSTEM_PURPOSES.map((p) => [p, as(p)])) as Record<SystemPurpose, string>,
+    business: Object.fromEntries(BUSINESS_ROLES.filter((r) => logins.includes(loginFor(r))).map((r) => [r, as(r)])),
+    system: Object.fromEntries(SYSTEM_PURPOSES.filter((p) => logins.includes(loginFor(p))).map((p) => [p, as(p)])),
   };
 }
 
@@ -90,10 +112,16 @@ function checkUrl(role: BusinessRole | SystemPurpose, url: string | undefined): 
   if (user !== loginFor(role)) throw new Error(`database URL for ${role} must log in as ${loginFor(role)}`);
 }
 
-/** Opens nothing until first use; every role and purpose needs its own URL (database-schema.md, "In code"). */
+/** Opens nothing until first use; each role and purpose has its own URL, or none in a process that never uses it (database-schema.md, "In code"). */
 export function createDatabase(urls: DatabaseUrls, options: { max?: number } = {}): Database {
-  for (const role of BUSINESS_ROLES) checkUrl(role, urls.business?.[role]);
-  for (const purpose of SYSTEM_PURPOSES) checkUrl(purpose, urls.system?.[purpose]);
+  // A missing URL is allowed (the process does not use that login) and fails at use; a present one
+  // must log in as its own role.
+  for (const role of BUSINESS_ROLES) if (urls.business?.[role] !== undefined) checkUrl(role, urls.business[role]);
+  for (const purpose of SYSTEM_PURPOSES) if (urls.system?.[purpose] !== undefined) checkUrl(purpose, urls.system[purpose]);
+  const urlFor = (role: BusinessRole | SystemPurpose, url: string | undefined): string => {
+    if (url === undefined) throw new Error(`database login ${loginFor(role)} is not configured in this process`);
+    return url;
+  };
   const clients = new Map<string, postgres.Sql>();
   const dbs = new Map<string, Db>();
   const open = (url: string): Db => {
@@ -111,14 +139,14 @@ export function createDatabase(urls: DatabaseUrls, options: { max?: number } = {
     async withBusiness(role, businessId, fn) {
       if (!BUSINESS_ROLES.includes(role)) throw new Error(`unknown business role: ${String(role)}`);
       const id = BusinessId.parse(businessId);
-      return open(urls.business[role]).transaction(async (tx) => {
+      return open(urlFor(role, urls.business[role])).transaction(async (tx) => {
         await tx.execute(sql`select set_config('app.business_id', ${id}, true)`);
         return fn(tx);
       });
     },
     async withSystem(purpose, fn) {
       if (!SYSTEM_PURPOSES.includes(purpose)) throw new Error(`unknown system purpose: ${String(purpose)}`);
-      return open(urls.system[purpose]).transaction((tx) => fn(tx));
+      return open(urlFor(purpose, urls.system[purpose])).transaction((tx) => fn(tx));
     },
     async close() {
       await Promise.all([...clients.values()].map((c) => c.end()));

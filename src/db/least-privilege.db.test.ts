@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
@@ -22,7 +23,7 @@ const TABLES = Object.values(schema as Record<string, unknown>)
   .map((t) => getTableConfig(t));
 
 // Catalog queries run on one role login; has_*_privilege answers about any role.
-const catalog = postgres(urls.system.console, { max: 1, onnotice: () => {} });
+const catalog = postgres(urls.system.console!, { max: 1, onnotice: () => {} });
 afterAll(() => catalog.end());
 
 /** Drizzle wraps the Postgres error; its message is in cause. */
@@ -166,14 +167,17 @@ describe('withBusiness and withSystem', () => {
     }
   });
 
-  it('createDatabase requires a URL for every role, logging in as that role', () => {
+  it('createDatabase checks every URL logs in as its role, and a left-out login fails at use', async () => {
     const { workflow: _, ...missing } = urls.business;
-    expect(() => createDatabase({ ...urls, business: missing as typeof urls.business })).toThrow(/workflow/);
+    // D9 (WP-84): a process may leave out logins it never uses; using one then fails before connecting.
+    const partial = createDatabase({ ...urls, business: missing });
+    await expect(partial.withBusiness('workflow', randomUUID(), async () => 1)).rejects.toThrow(/app_workflow is not configured/);
+    await partial.close();
     expect(() => createDatabase({ ...urls, system: { ...urls.system, console: '' } })).toThrow(/console/);
-    expect(() => createDatabase({ ...urls, business: { ...urls.business, approval: urls.business.publishing } })).toThrow(
+    expect(() => createDatabase({ ...urls, business: { ...urls.business, approval: urls.business.publishing! } })).toThrow(
       /approval.*app_approval/,
     );
-    expect(() => createDatabase({ ...urls, system: { ...urls.system, scheduler: urls.business.workflow } })).toThrow(/scheduler/);
+    expect(() => createDatabase({ ...urls, system: { ...urls.system, scheduler: urls.business.workflow! } })).toThrow(/scheduler/);
   });
 
   it('reject an unknown role or purpose before connecting', async () => {

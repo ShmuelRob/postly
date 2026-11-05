@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { ALL_LOGINS, type DatabaseUrls, databaseUrls, JOBS_LOGIN, SIMULATOR_LOGIN } from './db/index.js';
+import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
+
+export { PROCESS_LOGINS };
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
 // Process configuration from the environment (docs/deployment.md). On Cloud Run each password is a
@@ -65,7 +67,9 @@ function loginUrl(serverUrl: string, login: string, password: string): string {
   return url.toString();
 }
 
-export function loadConfig(env: Record<string, string | undefined>): Config {
+/** `process` limits the passwords read to that process's logins (docs/security.md, D9); web by default. */
+export function loadConfig(env: Record<string, string | undefined>, process: keyof typeof PROCESS_LOGINS = 'web'): Config {
+  const logins = PROCESS_LOGINS[process];
   const parsed = Env.safeParse(env);
   if (!parsed.success) throw new Error(`invalid configuration: ${z.prettifyError(parsed.error)}`);
   const { POSTLY_ENV: envName, POSTLY_PROVIDERS: providers, POSTLY_MODELS: models } = parsed.data;
@@ -98,13 +102,13 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
           ...(parsed.data.CONSOLE_IAP_AUDIENCE ? { iapAudience: parsed.data.CONSOLE_IAP_AUDIENCE } : {}),
           ...(parsed.data.CONSOLE_HOST ? { host: parsed.data.CONSOLE_HOST } : {}),
         };
-  const missing = ALL_LOGINS.map(passwordVar).filter((name) => !env[name]);
+  const missing = logins.map(passwordVar).filter((name) => !env[name]);
   if (missing.length) throw new Error(`missing database passwords: ${missing.join(', ')}`);
   const passwordFor = (login: string) => env[passwordVar(login)]!;
   return {
     env: parsed.data.POSTLY_ENV,
     webhookSecret: secret || SIMULATOR_WEBHOOK_SECRET,
-    databaseUrls: databaseUrls(parsed.data.DATABASE_URL, passwordFor),
+    databaseUrls: databaseUrls(parsed.data.DATABASE_URL, passwordFor, logins),
     jobsUrl: loginUrl(parsed.data.DATABASE_URL, JOBS_LOGIN, passwordFor(JOBS_LOGIN)),
     publicBaseUrl: parsed.data.PUBLIC_BASE_URL,
     businessNumber: parsed.data.BUSINESS_NUMBER,

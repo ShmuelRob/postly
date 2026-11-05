@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import Fastify from 'fastify';
 import { afterAll, afterEach, describe, expect, inject, it } from 'vitest';
 import { seed } from '../../../test/db/rows.js';
-import { createDatabase, type Tx } from '../../db/index.js';
+import { createDatabase, onlyLogins, PROCESS_LOGINS, type Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { createWorkflow } from '../workflow/index.js';
 import { createConsole, registerConsoleRoutes } from './index.js';
@@ -11,12 +11,16 @@ import { createConsole, registerConsoleRoutes } from './index.js';
 // Every console action goes through the console API (technical-design.md, "Console (Phase 1)").
 
 const db = createDatabase(inject('databaseUrls'), { max: 4 });
-const workflow = createWorkflow(db, { rejected: () => {} });
+// The console and its workflow calls get only the console process's logins (D9, WP-84): an action that
+// needs any other login fails here.
+const consoleDb = createDatabase(onlyLogins(inject('databaseUrls'), PROCESS_LOGINS.console), { max: 2 });
+const workflow = createWorkflow(consoleDb, { rejected: () => {} });
 const app = Fastify();
 // Signed in as `team@postly` through the local dev bypass (the actor of every action, D4).
-registerConsoleRoutes(app, { console: createConsole(db, workflow), auth: { mode: 'dev-bypass', actor: 'team@postly' }, log: () => {} });
+registerConsoleRoutes(app, { console: createConsole(consoleDb, workflow), auth: { mode: 'dev-bypass', actor: 'team@postly' }, log: () => {} });
 afterAll(async () => {
   await app.close();
+  await consoleDb.close();
   await db.close();
 });
 

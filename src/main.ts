@@ -32,7 +32,7 @@ async function main(command: string | undefined) {
   }
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
-  const config = loadConfig(process.env);
+  const config = loadConfig(process.env, command);
   // Metrics and traces (docs/observability.md, WP-48): exported only in dev, stage and prod.
   const stopTelemetry = startTelemetry({
     service: command,

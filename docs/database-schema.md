@@ -84,6 +84,8 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 
 `createDatabase(urls)` in `src/db/index.ts` takes one connection string per login, `urls.business[role]` and `urls.system[purpose]`, and opens each pool on first use. `withBusiness(role, businessId, fn)` runs `fn` in one transaction on that role's login with `app.business_id` set. `withSystem(purpose, fn)` runs it on that purpose's system login. An unknown role or purpose is rejected before any connection is made. `createDatabase` refuses to start unless every role and purpose has a URL whose user name is `loginFor(role)`, so a missing URL never falls back to the `PG*` environment variables or to another login. Each pool holds at most 3 connections by default. No other way to query leaves `src/db/`. `loginFor(roleOrPurpose)` gives the login name, for deployment and test setup.
 
+A process passes URLs only for the logins it uses (`PROCESS_LOGINS` in `src/db/index.ts`; security.md D9): `createDatabase` still checks each URL it is given logs in as its own role, and a role with no URL fails with `database login … is not configured in this process` at first use, before any connection is opened.
+
 ### Same-business references
 
 Every foreign key from a business-owned table to another business-owned table is composite, `(business_id, <ref>_id)` referencing `(business_id, id)` (decided 2026-11-03, built in WP-24 before WP-33), so a row can only reference a parent of its own business. Postgres checks foreign keys without RLS, so with single-column keys a business could point its own approval at another business's post version, and probe whether an id exists. The composite key refuses both. Each referenced table has a `unique (business_id, id)` constraint for this.

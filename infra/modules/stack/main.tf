@@ -150,6 +150,12 @@ locals {
   # The simulator store's login (src/db/simulator-store.ts) exists only where the simulators run.
   logins        = concat(local.base_logins, local.simulated ? ["app_simulator"] : [])
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
+  # The console process's logins (docs/security.md, D9); kept in step with PROCESS_LOGINS.console in src/db/index.ts.
+  # In simulated mode the console also needs the simulator store's login, which loadConfig requires
+  # with SIMULATOR_STORE=postgres (WP-51).
+  console_base_logins   = ["app_sys_console", "app_workflow", "app_publishing", "app_billing", "app_messaging", "app_jobs"]
+  console_logins        = concat(local.console_base_logins, local.simulated ? ["app_simulator"] : [])
+  console_login_secrets = { for login in local.console_logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
   # Dev on the simulators has no vendor secrets; the simulators sign with messaging-webhook-secret.
   vendor_secrets = concat(["messaging-webhook-secret"], local.simulated ? [] : ["messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"])
@@ -169,6 +175,11 @@ locals {
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
     # The processes refuse to start in dev, stage or prod without it (src/config.ts).
+    { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
+  )
+  # The console reads only its own logins' passwords (D9).
+  console_secret_env = merge(
+    { for secret, env in local.console_login_secrets : env => module.secrets.ids[secret] },
     { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
   )
 }
@@ -202,10 +213,17 @@ module "secrets" {
   project_id = var.project_id
   prefix     = local.prefix
   secrets = merge(
-    { for secret, _ in local.login_secrets : secret => [module.accounts.emails.web, module.accounts.emails.worker, module.accounts.emails.migrate] },
+    { for secret, _ in local.login_secrets : secret => concat(
+      [module.accounts.emails.web, module.accounts.emails.worker, module.accounts.emails.migrate],
+      contains(keys(local.console_login_secrets), secret) ? [module.accounts.emails.console] : [],
+    ) },
     # Only the migration job reads the admin password.
     { "db-admin-url" = [module.accounts.emails.migrate] },
-    { for name in local.vendor_secrets : name => [module.accounts.emails.web, module.accounts.emails.worker] },
+    { for name in local.vendor_secrets : name => concat(
+      [module.accounts.emails.web, module.accounts.emails.worker],
+      # The console process loads the webhook secret with its config, and nothing else of the vendors'.
+      name == "messaging-webhook-secret" ? [module.accounts.emails.console] : [],
+    ) },
     # Read only by Terraform, into the console backend's IAP settings; no service account reads it.
     { "console-iap-client-secret" = [] },
   )
@@ -246,7 +264,7 @@ resource "google_storage_bucket_iam_member" "media" {
 
 # Image pull for the runtime accounts, image push for the deploy account, on this repository only.
 resource "google_artifact_registry_repository_iam_member" "pull" {
-  for_each   = toset(["web", "worker", "migrate"])
+  for_each   = toset(["web", "worker", "console", "migrate"])
   project    = var.project_id
   location   = var.region
   repository = module.registry.repository_id
@@ -343,7 +361,8 @@ module "sandbox" {
 
 # The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
 # and web must stay public. Ingress internal and load balancer, no allUsers invoker: team members come
-# in through the load balancer with IAP (console_ingress). It runs as the web account for now (D9).
+# in through the load balancer with IAP (console_ingress). Its own account reads only
+# its own logins' passwords (D9).
 locals {
   console_enabled = var.console_iap_client_id != null
   console_env = merge(
@@ -388,10 +407,10 @@ module "console" {
   kind                 = "service"
   image                = local.image
   command              = "console"
-  service_account      = module.accounts.emails.web
+  service_account      = module.accounts.emails.console
   subnetwork_id        = module.network.subnetwork_id
   env                  = local.console_env
-  secret_env           = local.app_secret_env
+  secret_env           = local.console_secret_env
   public               = false
   ingress              = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   cpu_always_allocated = false

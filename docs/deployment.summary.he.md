@@ -31,6 +31,7 @@
 - **`POSTLY_ENV` חובה:** תהליך בלי המשתנה לא עולה, כך ששירות פרוס לא נופל בטעות לסוד ה-webhook הציבורי.
 - **קודם dev:** אפשר להריץ רק את `infra/bootstrap` ואת `infra/environments/dev`. זה יוצר את ענף `dev`, ההגנה שלו, סביבת GitHub של dev והמשתנים שלה, בלי שום דבר של stage או prod. ההגנה על `main` וענף `stage` נוצרים רק בשורשים של prod ו-stage, ועד אז דחיפות ל-`stage` או ל-`main` מדלגות על הפריסה. השורשים לא חולקים משאבי GitHub, ולכל אחד state בתחילית משלו בדלי `<project>-tfstate` (דלי אחד לכל פרויקט). ה-apply הראשון רץ בשלושה מעברים (Cloud Run לא יוצר שירות מאימג' `bootstrap` שלא קיים); המדריך המלא: [deploy-dev-guide.md](deploy-dev-guide.md).
 
+- לקונסולה חשבון שירות משלה (`postly-<env>-console`) שקורא רק את סיסמאות ההתחברות של תהליך הקונסולה ואת סוד ה-webhook (WP-84).
 ## כניסה לקונסולה: צעדים חד-פעמיים (WP-82)
 - Terraform בונה את ה-load balancer עם IAP רק כשהמשתנה `console_iap_client_id` מוגדר; לפני כן לא נוצר דבר ולא משלמים.
 - ידנית, פעם אחת בכל פרויקט: מסך הסכמה (Branding) מסוג External, ‏OAuth client מסוג Web application עם redirect URI של IAP, הוספת הסוד ל-`postly-<env>-console-iap-client-secret`, ויצירת סוכן השירות של IAP (`gcloud beta services identity create --service=iap.googleapis.com`).

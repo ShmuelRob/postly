@@ -153,7 +153,7 @@ describe('inserts', () => {
 
 describe('without a business context', () => {
   // Each role's login itself, with no withBusiness() around it, so app.business_id is never set.
-  const raw = new Map(BUSINESS_ROLES.map((r) => [r, postgres(urls.business[r], { max: 1, onnotice: () => {} })]));
+  const raw = new Map(BUSINESS_ROLES.map((r) => [r, postgres(urls.business[r]!, { max: 1, onnotice: () => {} })]));
   afterAll(() => Promise.all([...raw.values()].map((c) => c.end())));
 
   describe.each(businessOwned)('%s', (name) => {
@@ -281,7 +281,7 @@ describe('withBusiness', () => {
 
   it('set_config(..., true), as withBusiness() uses it, ends with the transaction', async () => {
     // Inspected on the connection after commit, outside any transaction: the session holds no business.
-    const c = postgres(urls.business.workflow, { max: 1, onnotice: () => {} });
+    const c = postgres(urls.business.workflow!, { max: 1, onnotice: () => {} });
     try {
       await c.begin((tx) => tx`select set_config('app.business_id', ${a.id}, true)`);
       const [row] = await c`select coalesce(current_setting('app.business_id', true), '') as v, (select count(*)::int from business) as n`;
