@@ -18,6 +18,16 @@ describeSimulatorStoreContract('postgres', () => {
   return store;
 });
 
+it('the simulator login is no superuser, bypasses no RLS, inherits nothing and creates no roles or databases', async () => {
+  const admin = postgres(inject('simulatorStoreUrl'), { max: 1, onnotice: () => {} });
+  try {
+    const [r] = await admin`select rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolcanlogin, rolinherit from pg_roles where rolname = current_user`;
+    expect([r?.rolsuper, r?.rolbypassrls, r?.rolcreaterole, r?.rolcreatedb, r?.rolcanlogin, r?.rolinherit]).toEqual([false, false, false, false, true, false]);
+  } finally {
+    await admin.end();
+  }
+});
+
 it('the simulator login reaches no business table, and the business roles cannot reach the simulator schema', async () => {
   const simulator = postgres(inject('simulatorStoreUrl'), { max: 1, onnotice: () => {} });
   try {

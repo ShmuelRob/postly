@@ -20,6 +20,7 @@ const MATRIX = `
 | subscription |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
 | model_run |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
 | console_item |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
+| workflow_event |  | I |  |  | I | I |  | I |  |  |  |  | S |  |
 | model_task_config |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | prompt_template |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
 | system_control |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |

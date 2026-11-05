@@ -88,7 +88,7 @@ jobs:
           gcloud run deploy "$PREFIX-console" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-web" --region "$REGION" --image "$IMAGE" --quiet
       - name: Roll out the sandbox (dev only)
-        if: env.ENV_NAME == 'dev'
+        if: github.event_name == 'push' && env.ENV_NAME == 'dev'
         run: gcloud run deploy "$PREFIX-sandbox" --region "$REGION" --image "$SANDBOX_IMAGE" --quiet
       - name: Smoke check
         run: |

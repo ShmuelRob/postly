@@ -94,6 +94,7 @@ The full schema is in [database-schema.md](database-schema.md), and the state ma
 | `message` | Every inbound and outbound WhatsApp message, for deduplication, the 24-hour window, and the console |
 | `media_asset` | Owner photos, logos, voice messages, and rendered files |
 | `console_item` | Work routed to a person: failed validation, failed publishing, unknown numbers, and handoffs |
+| `workflow_event` | Audit trail: every applied and rejected workflow event, with business, machine, from and to state, event, guard result, reason, actor and correlation id. Append-only and kept after the business is deleted |
 | `model_task_config`, `prompt_template`, `system_control` | System tables: model settings per task, prompt versions, and the global pause |
 
 Every business-owned table is protected by row-level security. The publishing job accepts only a publication tied to an approved version hash.
@@ -233,7 +234,7 @@ T1, 2026-11-04. There is no trial: the owner pays at once, at ILS 300 a month (P
 
 WP-43, 2026-11-04. Each has an end-to-end test.
 
-- **Cancellation.** A business is cancelled by the team from the console (`POST /api/businesses/:id/cancel`, after the owner asks; the owner's `cancel_request` intent is handled by a person) or when the payment provider reports the subscription `cancelled` (billing's webhook). Cancellation runs in this order, and each step is idempotent, so running it again finishes a cancellation that stopped half way:
+- **Cancellation.** A business is cancelled by the team from the console (`POST /api/businesses/:id/cancel` with the business name typed as confirmation, `{ confirmName }`; a missing or different name is refused with 400 and nothing runs (security.md D2); after the owner asks; the owner's `cancel_request` intent is handled by a person) or when the payment provider reports the subscription `cancelled` (billing's webhook). Cancellation runs in this order, and each step is idempotent, so running it again finishes a cancellation that stopped half way:
   1. The business applies `CANCEL` (to `cancelled`), whose guard sets `cancelled_at` and `data_delete_after` (`cancelled_at` plus the retention period). A business already `cancelled` keeps its dates.
   2. Every channel connection that is not `revoked` is disconnected at the provider (`disconnectAccount`, when it has a `provider_account_id`) and applies `REVOKED` at once. A provider error does not stop the revoke: the channel is `revoked` in Postly (nothing publishes on it), and a `channel_disconnected` console item (reason `cancellation`) tells the team to finish the disconnect at the provider.
   3. Every `scheduled` or `retry_pending` publication applies `CANCELLED`, and every post that can still be cancelled (state-machines.md, Post) applies `CANCELLED`. The publishing guard already refuses a business that is not `active`.

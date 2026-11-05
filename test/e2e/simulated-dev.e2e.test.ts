@@ -189,8 +189,13 @@ e2eTest('the mock checkout reports a failed payment and a cancelled one', async 
   try {
     const businessId = (await other.state()).business.id;
     const { customerId } = (await other.state()).payment!;
+    // The first test moved the clock days ahead to publish, which closed the 24-hour window; the
+    // owner writes first, so Postly may answer in free text (technical-design.md, Failure handling).
+    await other.send({ kind: 'text', text: 'שאלה על התשלום' });
     expect(await other.checkout(customerId, 'fail')).toEqual({ status: 'past_due', webhookStatus: 200 });
     await expect.poll(async () => (await other.state()).messages.some((m) => m.text === BILLING_COPY.past_due), { timeout: 30_000 }).toBe(true);
+    // Exactly one payment link reached the owner (onboarding sends it once, T1).
+    expect((await other.state()).messages.filter((m) => m.text?.includes('/checkout/')).length).toBe(1);
     expect(await other.checkout(customerId, 'pay')).toEqual({ status: 'active', webhookStatus: 200 });
     expect(await other.checkout(customerId, 'cancel')).toEqual({ status: 'cancelled', webhookStatus: 200 });
     await expect
