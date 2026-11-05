@@ -33,6 +33,13 @@ const uniqueSets = (name: string) => {
   ].map((cols) => [...cols].sort().join(','));
 };
 
+describe('workflow_event', () => {
+  it('keeps business_id as a plain value, outside the business cascade (retention-checks.md)', () => {
+    expect(byName('workflow_event').foreignKeys).toEqual([]);
+    expect(byName('workflow_event').columns.find((c) => c.name === 'business_id')?.notNull).toBe(true);
+  });
+});
+
 describe('tables', () => {
   it('has exactly the tables in database-schema.md', () => {
     expect(tables.map((t) => t.name).sort()).toEqual(
@@ -51,6 +58,7 @@ describe('tables', () => {
         'subscription',
         'model_run',
         'console_item',
+        'workflow_event',
         'model_task_config',
         'prompt_template',
         'system_control',

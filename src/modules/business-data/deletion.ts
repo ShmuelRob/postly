@@ -1,6 +1,7 @@
 import { and, eq, inArray, lte } from 'drizzle-orm';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { log } from '../../shared/logger.js';
 
 // Data deletion after cancellation (WP-43; technical-design.md, Cancellation, data deletion and the
 // monthly report; database-schema.md, Least privilege). The deletion role deletes only the business
@@ -35,7 +36,7 @@ export function createDataDeletion(deps: { db: Database; storage?: DeletionStora
     });
     if (!deleted) return false;
     if (!deps.storage) {
-      console.warn(JSON.stringify({ level: 'warn', msg: 'no storage to delete business files from', businessId }));
+      log.warn('no storage to delete business files from', { businessId });
       return true;
     }
     try {
@@ -44,7 +45,7 @@ export function createDataDeletion(deps: { db: Database; storage?: DeletionStora
       if (outside.length) await deps.storage.remove(outside);
     } catch (error) {
       // The rows are gone, so a later run cannot find these files; the media retention policy covers orphans.
-      console.error(JSON.stringify({ level: 'error', msg: 'business files not deleted', businessId, error: errorText(error) }));
+      log.error('business files not deleted', { businessId, error: errorText(error) });
     }
     return true;
   }
@@ -62,7 +63,7 @@ export function createDataDeletion(deps: { db: Database; storage?: DeletionStora
         try {
           if (await deleteBusiness(id, now)) deleted.push(id);
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'data deletion failed', businessId: id, error: errorText(error) }));
+          log.error('data deletion failed', { businessId: id, error: errorText(error) });
         }
       }
       return deleted;

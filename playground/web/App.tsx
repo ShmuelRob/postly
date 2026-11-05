@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from '../server/api-types.ts';
+import type { ChatMessage, CheckoutOutcome, CheckoutState, FeedPost, OwnerInput, PlaygroundState } from '../server/api-types.ts';
 
 const POLL_MS = 700;
 
@@ -45,6 +45,13 @@ export function App() {
     };
   }, []);
 
+  const call = (path: string) =>
+    void fetch(path, { method: 'POST' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+
   const act = (input: OwnerInput | Promise<OwnerInput>) =>
     void Promise.resolve(input)
       .then(post)
@@ -54,7 +61,7 @@ export function App() {
     <div className="layout">
       <header className="top">
         <strong>Postly</strong>
-        <span className="tag">מגרש משחקים · סימולטורים בלבד</span>
+        <span className="tag">{state?.mode === 'sandbox' ? 'ארגז חול dev · סימולטורים בלבד' : 'מגרש משחקים · סימולטורים בלבד'}</span>
         {!state && <span className="tag">מפעיל את מסד הנתונים…</span>}
         {state && error && <span className="error">{error}</span>}
       </header>
@@ -62,20 +69,9 @@ export function App() {
       <Feed feed={state?.feed} />
       <StatePanel
         state={state}
-        onPublishDue={() =>
-          void fetch('/api/publish-due', { method: 'POST' })
-            .then(async (res) => {
-              if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
-            })
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-        }
-        onConnect={() =>
-          void fetch('/api/connect', { method: 'POST' })
-            .then(async (res) => {
-              if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
-            })
-            .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-        }
+        onPublishDue={() => call('/api/publish-due')}
+        onConnect={() => call('/api/connect')}
+        onSignUp={() => call('/api/sign-up')}
       />
     </div>
   );
@@ -184,7 +180,17 @@ function Feed({ feed }: { feed: PlaygroundState['feed'] | undefined }) {
   );
 }
 
-function StatePanel({ state, onConnect, onPublishDue }: { state: PlaygroundState | null; onConnect: () => void; onPublishDue: () => void }) {
+function StatePanel({
+  state,
+  onConnect,
+  onPublishDue,
+  onSignUp,
+}: {
+  state: PlaygroundState | null;
+  onConnect: () => void;
+  onPublishDue: () => void;
+  onSignUp: () => void;
+}) {
   if (!state) {
     return (
       <aside className="state" data-testid="state">
@@ -232,7 +238,24 @@ function StatePanel({ state, onConnect, onPublishDue }: { state: PlaygroundState
           </li>
         ))}
       </ul>
-      {state.posts.some((p) => p.status === 'scheduled') && (
+      {state.mode === 'sandbox' && (
+        <button type="button" className="connect" data-testid="sign-up" onClick={onSignUp}>
+          הרשמה חדשה מהמספר הזה
+        </button>
+      )}
+      {state.payment && (
+        <>
+          <h3>תשלום</h3>
+          <dl>
+            <dt>מצב</dt>
+            <dd className="code" data-testid="payment-status">{state.payment.status}</dd>
+          </dl>
+          <a className="connect" data-testid="open-checkout" href={`/checkout/${state.payment.customerId}`} target="_blank" rel="noreferrer">
+            לדף התשלום המדומה
+          </a>
+        </>
+      )}
+      {state.mode !== 'sandbox' && state.posts.some((p) => p.status === 'scheduled') && (
         <button type="button" className="connect" data-testid="publish-due" onClick={onPublishDue}>
           קפיצה בזמן ופרסום המתוזמנים
         </button>
@@ -249,5 +272,49 @@ function StatePanel({ state, onConnect, onPublishDue }: { state: PlaygroundState
         ))}
       </ul>
     </aside>
+  );
+}
+
+/** The dev sandbox's mock checkout for a payment link (WP-51): the provider's page, simulated. */
+export function Checkout({ customerId }: { customerId: string }) {
+  const [current, setCurrent] = useState<CheckoutState | null>(null);
+  const [result, setResult] = useState<string>('');
+  useEffect(() => {
+    void fetch(`/api/checkout/${encodeURIComponent(customerId)}`)
+      .then(async (res) => (res.ok ? setCurrent((await res.json()) as CheckoutState) : setResult((await res.json()).error ?? res.statusText)))
+      .catch((e: unknown) => setResult(String(e)));
+  }, [customerId]);
+  const act = (outcome: CheckoutOutcome) =>
+    void fetch(`/api/checkout/${encodeURIComponent(customerId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ outcome }),
+    })
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? res.statusText);
+        setResult(`${body.status} (webhook ${body.webhookStatus})`);
+        setCurrent((c) => c && { ...c, status: body.status });
+      })
+      .catch((e: unknown) => setResult(e instanceof Error ? e.message : String(e)));
+  return (
+    <main className="checkout" dir="ltr">
+      <h1>Mock checkout</h1>
+      <p>Simulated payment provider, dev only. No card, no money.</p>
+      <dl>
+        <dt>Plan</dt>
+        <dd>Postly basic</dd>
+        <dt>Customer</dt>
+        <dd className="code">{customerId}</dd>
+        <dt>Status</dt>
+        <dd className="code" data-testid="checkout-status">{current?.status ?? '…'}</dd>
+      </dl>
+      <div className="actions">
+        <button type="button" onClick={() => act('pay')}>Pay</button>
+        <button type="button" onClick={() => act('fail')}>Fail</button>
+        <button type="button" onClick={() => act('cancel')}>Cancel</button>
+      </div>
+      <p data-testid="checkout-result">{result}</p>
+    </main>
   );
 }
