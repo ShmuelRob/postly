@@ -45,6 +45,22 @@ describe('console process', () => {
     await server.close();
   });
 
+  it('cancel needs the business name typed as confirmation (D2, WP-83)', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    const cancelled: string[] = [];
+    const named = new Proxy({}, { get: (_t, key) => async () => (key === 'businesses' ? [{ id, name: 'מאפיית רחל' }] : []) }) as unknown as ConsoleService;
+    const server = buildConsoleServer({ console: named, auth: { mode: 'dev-bypass' }, cancelBusiness: async (b) => cancelled.push(b) });
+    const cancel = (payload?: object) => server.inject({ method: 'POST', url: `/console/api/businesses/${id}/cancel`, remoteAddress: '127.0.0.1', ...(payload ? { payload } : {}) });
+    expect((await cancel({})).statusCode).toBe(400);
+    expect((await cancel({ confirmName: 'מאפיה אחרת' })).statusCode).toBe(400);
+    expect(cancelled).toEqual([]);
+    const unknown = await server.inject({ method: 'POST', url: '/console/api/businesses/00000000-0000-4000-8000-000000000002/cancel', remoteAddress: '127.0.0.1', payload: { confirmName: 'מאפיית רחל' } });
+    expect(unknown.statusCode).toBe(404);
+    expect((await cancel({ confirmName: ' מאפיית רחל ' })).statusCode).toBe(200);
+    expect(cancelled).toEqual([id]);
+    await server.close();
+  });
+
   describe('CSRF and DNS rebinding (D3, WP-80)', () => {
     const post = (server: ReturnType<typeof buildConsoleServer>, headers: Record<string, string>) =>
       server.inject({ method: 'POST', url: '/console/api/system/resume', remoteAddress: '127.0.0.1', headers, payload: JSON.stringify({ by: 'team' }) });
@@ -145,9 +161,11 @@ describe('console process', () => {
 
     it('passes the actor to the cancellation', async () => {
       const cancelled: unknown[][] = [];
-      const server = buildConsoleServer({ console: stubConsole, auth: { mode: 'iap', verifier }, log: () => {}, cancelBusiness: async (...args) => void cancelled.push(args) });
       const id = '0b7c4a52-8d0e-4b8e-9d7a-1f2a3b4c5d6e';
-      const res = await server.inject({ method: 'POST', url: `/console/api/businesses/${id}/cancel`, headers: { ...json, [IAP_HEADER]: iap.assertion('dana@postly.test') }, payload: '{}' });
+      const named = new Proxy({}, { get: (_t, key) => async () => (key === 'businesses' ? [{ id, name: 'מאפיית רחל' }] : []) }) as unknown as ConsoleService;
+      const server = buildConsoleServer({ console: named, auth: { mode: 'iap', verifier }, log: () => {}, cancelBusiness: async (...args) => void cancelled.push(args) });
+      const payload = JSON.stringify({ confirmName: 'מאפיית רחל' });
+      const res = await server.inject({ method: 'POST', url: `/console/api/businesses/${id}/cancel`, headers: { ...json, [IAP_HEADER]: iap.assertion('dana@postly.test') }, payload });
       expect(res.statusCode).toBe(200);
       expect(cancelled).toEqual([[id, 'dana@postly.test']]);
       await server.close();

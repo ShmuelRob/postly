@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { trustHops } from './trust-proxy.js';
 import { registerConsoleRoutes, type ConsoleRouteOptions } from './modules/console/index.js';
 
 /**
@@ -7,8 +8,9 @@ import { registerConsoleRoutes, type ConsoleRouteOptions } from './modules/conso
  * service and the web service must stay public for the provider webhooks. `/healthz` needs no
  * sign-in, so Cloud Run's probes reach it.
  */
-export function buildConsoleServer(options: ConsoleRouteOptions): FastifyInstance {
-  const app = Fastify({ logger: false });
+export function buildConsoleServer(options: ConsoleRouteOptions & { trustProxyHops?: number }): FastifyInstance {
+  // Cloud Run's front end is one hop (docs/security.md, D8); unset locally.
+  const app = Fastify({ logger: false, ...trustHops(options.trustProxyHops) });
   app.get('/healthz', async () => ({ ok: true }));
   registerConsoleRoutes(app, options);
   return app;

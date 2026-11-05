@@ -9,7 +9,7 @@ import type { EventResult, Workflow } from '../workflow/index.js';
 /** A refused console action: 404 when the row is missing, 409 when its state does not allow it. */
 export class ConsoleActionError extends Error {
   constructor(
-    readonly status: 404 | 409,
+    readonly status: 400 | 404 | 409,
     readonly reason: string,
     readonly detail?: string,
   ) {
@@ -43,13 +43,13 @@ export interface ConsoleService {
   system(): Promise<{ publishingPaused: boolean; pausedReason: string | null; pausedAt: Date | null; pausedBy: string | null }>;
   resolveItem(id: string): Promise<void>;
   /** Hands the item's business to a person and resolves the item. */
-  routeItem(id: string): Promise<void>;
-  startHandoff(businessId: string): Promise<void>;
+  routeItem(id: string, actor?: string): Promise<void>;
+  startHandoff(businessId: string, actor?: string): Promise<void>;
   clearHandoff(businessId: string): Promise<void>;
   /** A failed publication goes back to retry_pending; the publishing job still checks the approved hash. */
-  retryPublication(id: string): Promise<void>;
-  pauseBusiness(businessId: string): Promise<void>;
-  resumeBusiness(businessId: string): Promise<void>;
+  retryPublication(id: string, actor?: string): Promise<void>;
+  pauseBusiness(businessId: string, actor?: string): Promise<void>;
+  resumeBusiness(businessId: string, actor?: string): Promise<void>;
   setGlobalPause(paused: boolean, by: string, reason?: string): Promise<void>;
   /** The plan's current monthly price (its newest `plan_price` row, or null) and every change, newest first. */
   price(plan?: string): Promise<{ current: PlanPriceRow | null; history: PlanPriceRow[] }>;
@@ -65,6 +65,9 @@ const DEFAULT_PLAN = 'basic';
 const refused = (result: EventResult): void => {
   if (!result.ok) throw new ConsoleActionError(result.reason === 'not_found' ? 404 : 409, result.reason, result.detail ?? result.from);
 };
+
+/** The workflow audit trail's actor for a console action (WP-46): `team:<signed-in email>`. */
+const auditActor = (actor: string | undefined) => (actor ? { actor: `team:${actor}` } : {});
 
 export function createConsole(db: Database, workflow: Workflow): ConsoleService {
   const sys = <T>(fn: (tx: Tx) => Promise<T>) => db.withSystem('console', fn);
@@ -150,17 +153,17 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
       await resolve(eq(schema.consoleItem.id, id));
     },
 
-    async routeItem(id) {
+    async routeItem(id, actor) {
       const row = await item(id);
       if (row.status !== 'open') throw new ConsoleActionError(409, 'resolved');
       if (!row.businessId) throw new ConsoleActionError(409, 'no_business', 'an item without a business can only be resolved');
-      await workflow.startHandoff(row.businessId, { routedFrom: row.id, kind: row.kind });
+      await workflow.startHandoff(row.businessId, { routedFrom: row.id, kind: row.kind, ...(actor ? { by: actor } : {}) });
       await resolve(eq(schema.consoleItem.id, id));
     },
 
-    async startHandoff(businessId) {
+    async startHandoff(businessId, actor) {
       await businessExists(businessId);
-      await workflow.startHandoff(businessId, { source: 'console' });
+      await workflow.startHandoff(businessId, { source: 'console', ...(actor ? { by: actor } : {}) });
     },
 
     async clearHandoff(businessId) {
@@ -168,28 +171,29 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
       await workflow.clearHandoff(businessId);
     },
 
-    async retryPublication(id) {
+    async retryPublication(id, actor) {
       const [pub] = await sys((tx) => tx.select().from(schema.publication).where(eq(schema.publication.id, id)));
       if (!pub) throw new ConsoleActionError(404, 'not_found');
-      refused(await workflow.apply(pub.businessId, { machine: 'publication', id, event: 'RETRY_REQUESTED', source: 'console' }));
+      refused(await workflow.apply(pub.businessId, { machine: 'publication', id, event: 'RETRY_REQUESTED', source: 'console', ...auditActor(actor) }));
       const [post] = await sys((tx) => tx.select({ status: schema.post.status }).from(schema.post).where(eq(schema.post.id, pub.postId)));
       if (post?.status === 'failed') {
-        refused(await workflow.apply(pub.businessId, { machine: 'post', id: pub.postId, event: 'PUBLISHING_STARTED', source: 'console' }));
+        refused(await workflow.apply(pub.businessId, { machine: 'post', id: pub.postId, event: 'PUBLISHING_STARTED', source: 'console', ...auditActor(actor) }));
       }
       await resolve(and(eq(schema.consoleItem.kind, 'publication_failed'), eq(schema.consoleItem.referenceId, id))!);
     },
 
-    async pauseBusiness(businessId) {
-      refused(await workflow.apply(businessId, { machine: 'business', id: businessId, event: 'PAUSE', source: 'console' }));
+    async pauseBusiness(businessId, actor) {
+      refused(await workflow.apply(businessId, { machine: 'business', id: businessId, event: 'PAUSE', source: 'console', ...auditActor(actor) }));
     },
 
-    async resumeBusiness(businessId) {
+    async resumeBusiness(businessId, actor) {
       refused(
         await workflow.apply(businessId, {
           machine: 'business',
           id: businessId,
           event: 'RESUME',
           source: 'console',
+          ...auditActor(actor),
           // state-machines.md: at least one channel connection is verified.
           guard: async (tx) => {
             const c = schema.channelConnection;

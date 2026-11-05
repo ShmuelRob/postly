@@ -27,6 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint:conflicts
       - run: npm run lint:links
       - run: npm run lint:boundaries
 

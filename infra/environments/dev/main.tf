@@ -1,5 +1,5 @@
-# Dev: always-on and cheap, simulators or test accounts only; deployable without a reviewer, from
-# the dev branch only (docs/deployment.md, Environments). Not applied by any
+# Dev: always-on and cheap, on the simulators (simulated mode, WP-51) until test accounts exist; deployable
+# without a reviewer, from the dev branch only (docs/deployment.md, Environments). Not applied by any
 # agent: the human runs the apply (docs/deployment.md, gate H8).
 
 terraform {
@@ -54,6 +54,9 @@ module "postly" {
   media_coldline_after_days = 180
   sql_retained_backups      = 3
   log_retention_days        = 7
+  # Simulated mode (WP-51): the stack runs dev on the simulators; the sandbox has no public invoker.
+  sandbox_enabled  = true
+  sandbox_invokers = var.sandbox_invokers
 }
 
 module "github" {

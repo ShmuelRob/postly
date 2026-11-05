@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ConsoleActionError, type ConsoleService } from './console.js';
 import { IAP_HEADER, IapAssertionError, type IapVerifier } from './iap.js';
+import { log } from '../../shared/logger.js';
 import { renderConsolePage } from './page.js';
 
 export const CONSOLE_PATH = '/console';
@@ -28,7 +29,7 @@ export interface ConsoleRouteOptions {
    * default is the loopback names; deployed, it is the console's domain (`CONSOLE_HOST`).
    */
   allowedHosts?: readonly string[];
-  /** One line per console action (actor, method, path, status); defaults to a JSON line on stdout. */
+  /** One line per console action (actor, method, path, status); defaults to the shared logger. */
   log?(line: Record<string, unknown>): void;
 }
 
@@ -53,6 +54,8 @@ function withNote(reason: string | undefined, by: string | undefined, actor: str
 
 const Id = z.object({ id: z.uuid() });
 const PauseBody = z.object({ by: z.string().min(1).optional(), reason: z.string().optional() });
+/** D2 (docs/security.md): the business name, typed by the team member, confirms a cancellation. */
+const CancelBody = z.object({ confirmName: z.string().trim().min(1) });
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
 const PriceQuery = z.object({ plan: z.string().min(1).optional() });
 const PriceBody = z.object({
@@ -75,11 +78,15 @@ export function consoleActor(request: FastifyRequest): string {
 export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRouteOptions): void {
   const c = options.console;
   const auth = options.auth ?? { mode: 'dev-bypass' };
-  const log = options.log ?? ((line) => console.log(JSON.stringify({ level: 'info', ...line })));
+  const logAction =
+    options.log ??
+    (({ msg, ...fields }) => log.info(String(msg), Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, typeof v === 'number' ? v : String(v)]))));
   app.register(
     async (scope) => {
       scope.addHook('onRequest', async (request, reply) => {
-        if (auth.mode === 'dev-bypass' && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        // The socket peer, never `request.ip`: with trustProxy set, `request.ip` comes from X-Forwarded-For,
+        // which a caller can spoof (docs/security.md, D8).
+        if (auth.mode === 'dev-bypass' && !LOOPBACK.has(request.raw.socket.remoteAddress ?? '')) return reply.code(403).send({ error: 'console is local only' });
         // CSRF and DNS rebinding (docs/security.md, D3): a known Host, and for any POST a JSON body
         // (which a cross-origin page cannot send without a CORS preflight) and no foreign Origin.
         const host = request.headers.host ?? '';
@@ -112,7 +119,7 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.addHook('onResponse', async (request, reply) => {
         const actor = actors.get(request);
         if (actor && request.method === 'POST') {
-          log({ msg: 'console action', actor, method: request.method, path: request.url.split('?')[0], status: reply.statusCode });
+          logAction({ msg: 'console action', actor, method: request.method, path: request.url.split('?')[0], status: reply.statusCode });
         }
       });
 
@@ -142,16 +149,25 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.get('/api/system', (_q, reply) => run(reply, () => c.system()));
 
       scope.post('/api/items/:id/resolve', (q, reply) => run(reply, () => c.resolveItem(id(q.params))));
-      scope.post('/api/items/:id/route', (q, reply) => run(reply, () => c.routeItem(id(q.params))));
-      scope.post('/api/businesses/:id/handoff', (q, reply) => run(reply, () => c.startHandoff(id(q.params))));
+      scope.post('/api/items/:id/route', (q, reply) => run(reply, () => c.routeItem(id(q.params), consoleActor(q))));
+      scope.post('/api/businesses/:id/handoff', (q, reply) => run(reply, () => c.startHandoff(id(q.params), consoleActor(q))));
       scope.post('/api/businesses/:id/handoff/clear', (q, reply) => run(reply, () => c.clearHandoff(id(q.params))));
       if (options.cancelBusiness) {
         const cancelBusiness = options.cancelBusiness;
-        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params), consoleActor(q))));
+        scope.post('/api/businesses/:id/cancel', (q, reply) =>
+          run(reply, async () => {
+            const businessId = id(q.params);
+            const { confirmName } = CancelBody.parse(q.body ?? {});
+            const target = (await c.businesses()).find((b) => b.id === businessId);
+            if (!target) throw new ConsoleActionError(404, 'not_found');
+            if (target.name.trim() !== confirmName) throw new ConsoleActionError(400, 'confirmation_mismatch', 'type the business name to confirm');
+            return cancelBusiness(businessId, consoleActor(q));
+          }),
+        );
       }
-      scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params))));
-      scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params))));
-      scope.post('/api/publications/:id/retry', (q, reply) => run(reply, () => c.retryPublication(id(q.params))));
+      scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params), consoleActor(q))));
+      scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params), consoleActor(q))));
+      scope.post('/api/publications/:id/retry', (q, reply) => run(reply, () => c.retryPublication(id(q.params), consoleActor(q))));
       scope.post('/api/system/pause', (q, reply) =>
         run(reply, () => {
           const actor = consoleActor(q);

@@ -28,6 +28,10 @@ export interface EventRequest {
    * `SCHEDULED`). The handoff check runs only as the workflow role.
    */
   role?: BusinessRole;
+  /** Who raised the event, for the audit trail; defaults to `owner` for inbound, else the source. */
+  actor?: string;
+  /** Ties the audit row to its cause, for example the inbound message id. */
+  correlationId?: string;
 }
 
 export type RejectionReason = 'not_found' | 'invalid_transition' | 'guard_failed' | 'handoff';
@@ -37,6 +41,8 @@ export type EventResult =
   | { ok: false; reason: RejectionReason; from?: string; detail?: string };
 
 /** A rejected event, written to the structured log. */
+import { log } from '../../shared/logger.js';
+
 export interface RejectionLog {
   businessId: string;
   machine: MachineName;
@@ -53,7 +59,8 @@ export interface WorkflowLogger {
 }
 
 export const consoleLogger: WorkflowLogger = {
-  rejected: (entry) => console.warn(JSON.stringify({ level: 'warn', msg: 'workflow event rejected', ...entry })),
+  // `from` would be redacted as a sender field (docs/observability.md), so the state goes as `fromState`.
+  rejected: ({ from, ...entry }) => log.warn('workflow event rejected', { ...entry, fromState: from }),
 };
 
 export interface Workflow {
@@ -88,15 +95,38 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
       const role = request.role ?? store.role;
       const checkHandoff = request.source === 'inbound' && role === 'workflow';
       const result = await db.withBusiness(role, businessId, async (tx): Promise<EventResult> => {
-        if (checkHandoff && (await handoffAt(tx, businessId))) return { ok: false, reason: 'handoff' };
-        const from = await store.load(tx, request.id);
-        if (from === undefined) return { ok: false, reason: 'not_found' };
-        const to = transitions[from]?.[request.event];
-        if (to === undefined) return { ok: false, reason: 'invalid_transition', from };
-        const blocked = request.guard ? await request.guard(tx, { from, to }) : null;
-        if (blocked !== null) return { ok: false, reason: 'guard_failed', from, detail: blocked };
-        await store.save(tx, request.id, to);
-        return { ok: true, from, to };
+        let guard: 'passed' | 'blocked' | null = null;
+        const decide = async (): Promise<EventResult> => {
+          if (checkHandoff && (await handoffAt(tx, businessId))) return { ok: false, reason: 'handoff' };
+          const from = await store.load(tx, request.id);
+          if (from === undefined) return { ok: false, reason: 'not_found' };
+          const to = transitions[from]?.[request.event];
+          if (to === undefined) return { ok: false, reason: 'invalid_transition', from };
+          const blocked = request.guard ? await request.guard(tx, { from, to }) : null;
+          if (request.guard) guard = blocked === null ? 'passed' : 'blocked';
+          if (blocked !== null) return { ok: false, reason: 'guard_failed', from, detail: blocked };
+          await store.save(tx, request.id, to);
+          return { ok: true, from, to };
+        };
+        const outcome = await decide();
+        // The audit row (WP-46) commits or rolls back with the transition.
+        await tx.insert(schema.workflowEvent).values({
+          businessId,
+          machine: request.machine,
+          rowId: request.id,
+          event: request.event,
+          source: request.source,
+          role,
+          actor: request.actor ?? (request.source === 'inbound' ? 'owner' : request.source),
+          outcome: outcome.ok ? 'applied' : 'rejected',
+          fromState: outcome.from ?? null,
+          toState: outcome.ok ? outcome.to : null,
+          guard,
+          reason: outcome.ok ? null : outcome.reason,
+          detail: outcome.ok ? null : (outcome.detail ?? null),
+          correlationId: request.correlationId ?? null,
+        });
+        return outcome;
       });
       if (!result.ok) {
         const { machine, id, event, source } = request;

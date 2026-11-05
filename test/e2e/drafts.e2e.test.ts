@@ -203,8 +203,8 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   expect(draft1.text).toContain(`${draftsCopy.NETWORK_NAMES.facebook}:\n${v1Captions.facebook.text}`);
   expect(draft1.image?.src).toMatch(/^data:image\/jpeg/);
   expect(draft1.buttons?.map((b) => [b.title, decodeButtonId(b.id)])).toEqual([
-    [draftsCopy.APPROVE_TITLE, { action: 'approve', postId: dough!.id, versionHash: v1!.contentHash }],
-    [draftsCopy.CHANGE_TITLE, { action: 'change', postId: dough!.id, versionHash: v1!.contentHash }],
+    [draftsCopy.APPROVE_TITLE, { action: 'approve', postId: dough!.id, versionId: v1!.id, versionHash: v1!.contentHash }],
+    [draftsCopy.CHANGE_TITLE, { action: 'change', postId: dough!.id, versionId: v1!.id, versionHash: v1!.contentHash }],
   ]);
   expect(await step(businessId)).toBe('reviewing_drafts');
 
