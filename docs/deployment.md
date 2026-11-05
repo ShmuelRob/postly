@@ -13,6 +13,7 @@ GitHub Actions (manual, approval-guarded) ── WIF ──> deploy service acco
 Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 instance, webhooks + /healthz
                              Cloud Run: worker (pg-boss)   internal, 1 or 2 instances, /healthz only
                              Cloud Run: sandbox (dev only)  own image, no public invoker (WP-51)
+                             Cloud Run: console            internal only, no public invoker (docs/security.md)
                              Cloud Run job: migrate        runs before each rollout
                                      │ direct VPC egress (private ranges)
                                      v
@@ -22,8 +23,9 @@ Cloud Storage: customer media bucket (private, versioned, lifecycle)
 Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 ```
 
-- **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, or `migrate` (`src/main.ts`).
+- **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, `console`, or `migrate` (`src/main.ts`).
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
+- **console** serves only the internal console and `/healthz`, as its own service with internal-only ingress and no public invoker, because ingress is set per service ([security.md](security.md#console-exposure)). It is not a sign-in.
 - **worker** runs pg-boss jobs. Its first job is the weekly tick: `WeeklyUpdates.tick` every hour on the hour (UTC cron `0 * * * *`), on a pg-boss queue with the `singleton` policy, so with several worker instances only one tick is active at a time and each hourly job is created once (`src/worker.ts`). A failed tick fails the job and pg-boss retries it (3 retries). The worker serves only `/healthz`, because Cloud Run services need a port to probe.
 - **migrate** is a Cloud Run job (`src/db/provision.ts`), run as the Cloud SQL admin user before each rollout. It applies the Drizzle migrations in `drizzle/`, which create one login per role of [database-schema.md](database-schema.md#least-privilege); sets each login's password from Secret Manager; creates the pg-boss login `app_jobs` and its schema `pgboss`, owned by that login; and lets pg-boss create its tables as `app_jobs`. Terraform never creates database roles. **Keep `log_statement` off.** The `ALTER ROLE ... PASSWORD` statements carry the login passwords in clear text, so Cloud SQL's `log_statement` flag must stay `none` (Terraform sets it explicitly in `infra/modules/cloud_sql`); never turn on `ddl`, `mod` or `all`, or pgAudit statement logging, on this instance. `log_min_duration_statement` stays at 1 s for slow queries; the password statements run in milliseconds.
 - **Providers.** Until the vendor adapters land (WP-41), only `dev` (and `local` and `test`) can run, on the simulators; `stage` and `prod` refuse to start until WP-41 ([Simulated mode](#simulated-mode-dev-wp-51)). WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
@@ -35,7 +37,7 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 | `POSTLY_ENV` | Terraform, docker-compose | Required, with no default: `dev`, `stage` or `prod` on Cloud Run, `local` or `test` elsewhere. A process without it refuses to start, so a deployed service never falls back to the public webhook secret |
 | `POSTLY_PROVIDERS` | Terraform | `simulators` (allowed only when `POSTLY_ENV` is `local`, `test` or `dev`) or `vendors` (refused until WP-41). Terraform sets `simulators` on dev and `vendors` on stage and prod, so stage and prod refuse to start until WP-41 |
 | `SIMULATOR_STORE` | Terraform | `memory` (the default; `local` and `test` only) or `postgres`. `dev` requires `postgres`: the simulators' state and the media live in the `simulator` schema, shared by web, worker and the sandbox and kept across restarts |
-| `POSTLY_MODELS` | Terraform | `simulator` (the default) or `vertex` (Gemini through Vertex AI, T5; refused until T5 lands its adapter). Dev moves to `vertex` once T5 lands and may switch back to `simulator` |
+| `POSTLY_MODELS` | Terraform | `simulator` (the default) or `vertex` (Gemini through Vertex AI, T5; refused until the T5 adapter is wired into the simulated composition, a follow-up). Dev then moves to `vertex` and may switch back to `simulator` |
 | `DB_PASSWORD_APP_SIMULATOR` | Secret Manager `postly-dev-db-password-app-simulator` | Dev only, with `SIMULATOR_STORE=postgres`: the login that owns the `simulator` schema |
 | `MESSAGING_WEBHOOK_SECRET` | Secret Manager `postly-<env>-messaging-webhook-secret` | Verifies inbound messaging webhooks. In `dev`, `stage` and `prod` the processes refuse to start when it is missing or equals the simulator default, which is public in the repository (`src/config.ts`); `local` and `test` fall back to that default |
 | `DATABASE_URL` | Terraform | `postgres://<private ip>:5432/postly?sslmode=require`, with no user: each login's URL is built from it |
@@ -61,26 +63,34 @@ Terraform does everything that needs no human decision:
 
 | | dev | stage | prod |
 | --- | --- | --- | --- |
-| Cloud SQL | `db-g1-small`, zonal, no deletion protection (`db-f1-micro` allows about 25 connections, too few for 15 logins with a pool each per process plus pg-boss) | `db-g1-small`, zonal, no deletion protection | `db-custom-2-7680`, regional (HA), deletion protection |
+| Cloud SQL | `db-custom-2-7680` (2 vCPU, 7.5 GB, `max_connections` 400), zonal, no deletion protection | the same, no deletion protection | the same, deletion protection |
+| Cloud SQL replicas and HA | none (zonal, no read replicas) | none | none |
 | Cloud SQL backups kept | 3 | 14 | 14 |
-| Worker instances | at most 1 | at most 1 | at most 2 |
-| Media: old object versions kept | 3 days | 7 days | 30 days |
-| Media: to Coldline after | 30 days | 90 days | 180 days |
+| Web | 1 vCPU, 2 GiB, exactly 1 instance | the same | the same |
+| Worker | 2 vCPU, 4 GiB (Chromium rendering), at most 1 instance | the same, at most 1 | the same, at most 2 |
+| Media: old object versions kept | 7 days | 7 days | 7 days |
+| Media: to Coldline after | 180 days | 180 days | 180 days |
 | Log retention (`_Default` bucket) | 7 days | GCP default (30) | GCP default (30) |
 | Branch | `dev` | `stage` | `main` |
 | Deploy | automatic on push | on push, after a required reviewer | on push, after a required reviewer |
 
+**Sizing (review queue items 21, 23).** Every environment is medium-low, not the smallest, in `me-west1` (Tel Aviv), with no replicas and no HA; dev is sized like stage and prod so a release behaves the same in each. The numbers stay inside GCP's limits, checked on 2026-11-04:
+
+- *Cloud Run:* 1 vCPU allows up to 4 GiB, 2 vCPU up to 8 GiB; above 4 GiB needs at least 2 vCPU. Web (1 vCPU, 2 GiB) and worker (2 vCPU, 4 GiB) are within both.
+- *Cloud SQL (Enterprise edition, custom tier):* 1 vCPU or an even count, 0.9 to 6.5 GB of memory per vCPU in multiples of 256 MB, at least 3.75 GB. `db-custom-2-7680` is 3.75 GB per vCPU. Shared-core tiers (`db-f1-micro`, `db-g1-small`) have no SLA and too few connections. Postgres' default `max_connections` for 7.5 GB is 400; the module sets it explicitly so the check below holds.
+- *Connection budget:* each process opens at most 3 connections per login (15 logins, `createDatabase`) plus pg-boss' pool of 10, so 55 per process; the migrate job adds 11 and Cloud SQL reserves a few for its own use (budgeted as 10). Terraform refuses a plan where `(web max + worker max) × 55 + 11 + 10` exceeds `max_connections`: prod needs `3 × 55 + 21 = 186` of 400.
+
 **Branches and promotion.** Each environment has its own branch: `dev` deploys to dev, `stage` to stage, `main` to prod. Feature pull requests target `dev`. Promotion is a pull request `dev` → `stage`, then `stage` → `main`, merged with a merge commit (not squashed) so the branches keep one history. All three branches are protected: changes only through a pull request with `check` passing. A push to a branch (that is, a merged pull request) deploys it to its environment.
 
-**Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the smallest sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
+**Environments.** `dev` is an always-on cloud environment on the simulators (later test accounts) that agents and humans may deploy freely: the sizes above, one web and one worker instance, no HA, short log retention. It has the same safety rules as `stage`: test accounts and test keys only, never real customer channels or data, and `messaging-webhook-secret` is required. `stage` mirrors prod's setup on test accounts and is where releases are checked before prod. `prod` is the only environment with real customers.
 
-The media lifecycle ages are provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
+**Media lifecycle and retention.** The Coldline age (180 days) is longer than the 30-day data retention after cancellation (technical-design.md), so the bucket never moves a live file before the data-deletion job decides on it, and it is past Coldline's 90-day minimum storage charge. The old-version age works the other way: the bucket is versioned, and `days_since_noncurrent_time` removes only versions already overwritten or deleted, so it is kept short (7 days) and media the data-deletion job removes on day 30 is gone for good by about day 37. Only `tmp/` scratch files from rendering are deleted after 1 day. A Terraform `check` in `infra/modules/storage` flags a Coldline age at or below its `retention_days` (30). The ages stay provisional until the human sets the media retention policy (technical-design.md, Still required). Region defaults to `me-west1` (Tel Aviv).
 
 ### IAM (least privilege)
 
 | Account | Gets | Never gets |
 | --- | --- | --- |
-| `postly-<env>-web` | Cloud SQL client, log, metric and trace writer; the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
+| `postly-<env>-web` | Cloud SQL client, log, metric and trace writer, Vertex AI user (`roles/aiplatform.user`, project-level, for Gemini); the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
 | `postly-<env>-worker` | the same as web | the admin URL |
 | `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
 | `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
@@ -88,6 +98,8 @@ The media lifecycle ages are provisional until the human sets the media retentio
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) and on that environment's branch (`dev`, `stage` or `main`) can act as the deploy account.
 
 **The deploy account can still reach data, indirectly.** It pushes any image and runs it as the migrate job (or as web or worker), and those accounts read the admin URL, the login passwords and the media bucket. So whoever can run the Deploy workflow can run code with database admin access; the missing direct grants do not stop that. The real gate is the GitHub environment: required reviewers on `stage` and `prod`, a deployment branch policy that allows only each environment's own branch, and branch protection that lets code reach those branches only through a reviewed pull request with `check` passing. `dev` has no required reviewer on purpose: anything merged to `dev` gets admin access to dev's database, which holds only test data. Terraform sets both (`modules/github_environment`); keep the reviewer list short.
+
+**Who merges and who approves deploys (accepted for now, review queue item 31).** Every agent runs `gh` as the human's account, which is the only required reviewer and a repository admin, so GitHub alone cannot stop an agent from approving a stage or prod deploy or merging a promotion pull request. The gate for agents is procedural: only the reviewer session merges pull requests, including the promotion pull requests (`dev` → `stage`, `stage` → `main`); every other agent opens pull requests and never merges. No agent ever approves a stage or prod deployment in the GitHub environment; only the human does. A later hardening option is a separate GitHub identity for agents with neither admin nor deployment-approval rights.
 
 ### Single web instance (review queue item 14)
 
@@ -100,7 +112,7 @@ The human has no WhatsApp, Instagram, Facebook or payment accounts yet, so the d
 - **The setting.** `POSTLY_PROVIDERS=simulators` puts web and worker on the messaging, publishing and payment simulators. It is allowed only when `POSTLY_ENV` is `local`, `test` or `dev`; in `stage` and `prod` the processes refuse to start (`src/config.ts`), so a simulator never answers for a real customer. The model provider is chosen separately: `POSTLY_MODELS=vertex` (T5) or `simulator`. In simulated mode the model simulator answers with the playground's word rules (`src/simulators/conversational/`), enough to play every flow by typing free Hebrew.
 - **A shared, durable store.** Web and worker are separate Cloud Run services, and the sandbox is a third, so in `dev` the simulators keep their state in Postgres (`SIMULATOR_STORE=postgres`), not in process memory. Each simulator's state is one JSON row in `simulator.state`, and stored files (inbound media, renders) are rows in `simulator.media`. Every simulator call runs in one transaction that locks its row, loads the state, runs the call and writes the state back (`src/simulators/persistent.ts`, `src/db/simulator-store.ts`), so calls from web, worker and sandbox are serialized. The `simulator` schema belongs to its own login `app_simulator`, which has no grant on any business table (like `app_jobs` for pg-boss). The migration job creates that login and schema only when `SIMULATOR_STORE=postgres`, so stage and prod have neither. `local` and `test` keep the in-memory store.
 - **Webhook secrets.** In simulated mode the payment simulator signs and verifies its callbacks with `MESSAGING_WEBHOOK_SECRET`, so dev needs no payment secret, and the public simulator defaults are never accepted in dev. Terraform gives dev no vendor secrets; only `messaging-webhook-secret` and the login passwords remain.
-- **Payments.** The payment link the owner gets points at the sandbox's checkout page (`<sandbox>/checkout/<customer id>`, `SANDBOX_URL`), with **Pay**, **Fail** and **Cancel**. Pay completes the payment on the simulator and sends the signed callback to the web service's payment webhook, as a provider would; Fail reports `past_due`; Cancel reports `cancelled`.
+- **Payments.** The payment link onboarding sends after activation (T1) points at the sandbox's checkout page (`<sandbox>/checkout/<customer id>`, `SANDBOX_URL`), with **Pay**, **Fail** and **Cancel**. Pay completes the payment on the simulator and sends the signed callback to the web service's payment webhook, as a provider would; Fail reports `past_due`; Cancel reports `cancelled`.
 
 ### The sandbox
 
@@ -124,7 +136,7 @@ Posts go live at their real scheduled time (the worker's publishing job), since 
 
 - `.github/workflows/ci.yml`: `npm run check` on every PR and on every push to `dev`, `stage` and `main`.
 - `.github/workflows/infra.yml`: on every PR and on every push to `dev`, `stage` and `main`, builds the image (never pushed), checks it runs as non-root with no test or playground code, starts the local stack on the simulators with `docker compose` and checks `/healthz` and the singleton weekly schedule, and runs `terraform fmt -check` and `terraform validate` for the three environments and `infra/bootstrap`. It never authenticates to Google Cloud.
-- `.github/workflows/deploy.yml` (CD): runs on every push to `dev`, `stage` or `main` and deploys to the matching environment (dev, stage, prod); stage and prod wait for the environment's required reviewer, which is the approval gate. `workflow_dispatch` redeploys an existing image tag (a rollback), run from the environment's own branch. Every action is pinned by commit SHA. It authenticates through Workload Identity Federation (no key file), builds the image once per run and pushes it tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. Without the environment variables below it stops at its first step.
+- `.github/workflows/deploy.yml` (CD): runs on every push to `dev`, `stage` or `main` and deploys to the matching environment (dev, stage, prod); stage and prod wait for the environment's required reviewer, which is the approval gate. `workflow_dispatch` redeploys an existing image tag (a rollback), run from the environment's own branch. Every action is pinned by commit SHA, here and in `infra.yml`. It authenticates through Workload Identity Federation (no key file), builds the image once per run and pushes it tagged with the commit, runs the migration job and waits for it, rolls out the worker and then the web, and checks `/healthz`. It never runs Terraform. The job is skipped (not failed) until Terraform has set the repository variable `POSTLY_DEPLOY_<ENV>` (`DEV`, `STAGE`, `PROD`) for that environment; a job-level `if` cannot read the environment's own variables such as `GCP_PROJECT_ID`, so this flag stands in for the `vars.GCP_PROJECT_ID != ''` check. If the environment variables are still missing, it stops at its first step.
 
 ## Local run
 
@@ -138,11 +150,26 @@ All of this costs money or creates cloud resources, so agents never do it. Per e
 2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Environments and Variables write on the repository).
 3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
-5. **First deploy.** The apply creates the `dev` and `stage` branches; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
+5. **First deploy.** The dev apply creates the `dev` branch and the stage apply the `stage` branch; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
 
 To reach the dev sandbox, set `sandbox_invokers = ["user:<your email>"]` in dev's `terraform.tfvars` before the apply ([The sandbox](#the-sandbox)).
 
-Later: **vendor accounts** (WP-41: WhatsApp, publishing, Google AI, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+**Dev first.** Applying only bootstrap and `infra/environments/dev` works on its own: the dev root creates the `dev` branch from `main`, its protection, the `dev` GitHub environment with its variables and `POSTLY_DEPLOY_DEV`, and nothing of stage or prod. The `main` branch protection, the `stage` branch and their environments are created only by the prod and stage roots, so until those run, pushes to `stage` or `main` skip the deploy job cleanly (no `POSTLY_DEPLOY_STAGE` or `POSTLY_DEPLOY_PROD`). The roots share no GitHub resource (each manages its own branch, environment and flag, and only reads the repository), so a later stage or prod apply does not fight dev. Each root's state sits under its own prefix (`postly/dev`, `postly/stage`, `postly/prod`) in `<project>-tfstate`; with one project per environment, run bootstrap once in each project.
+
+```bash
+export GITHUB_TOKEN=<token>
+gcloud auth application-default login
+terraform -chdir=infra/bootstrap init
+terraform -chdir=infra/bootstrap apply -var project_id=<dev-project>
+cp infra/environments/dev/terraform.tfvars.example infra/environments/dev/terraform.tfvars   # fill in the three values
+terraform -chdir=infra/environments/dev init -backend-config="bucket=<dev-project>-tfstate"
+terraform -chdir=infra/environments/dev plan -out=dev.tfplan
+terraform -chdir=infra/environments/dev apply dev.tfplan
+```
+
+Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+
+Gemini needs no vendor account or key: Terraform enables `aiplatform.googleapis.com` and grants `roles/aiplatform.user` to the web and worker service accounts, which call Vertex AI with their own credentials (Application Default Credentials).
 
 ## Migrations and rollback
 

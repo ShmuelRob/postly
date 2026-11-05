@@ -115,13 +115,12 @@ e2eTest('dev on the simulators: onboarding, payment, drafts, approval and publis
   await expect.poll(lastReply, timeout).toMatch(/^מצוין! הצעד האחרון: חיבור הרשתות/);
   await sandbox.connect();
   await write('חיברתי');
-  await expect.poll(lastReply, timeout).toContain(copy.activated);
+  await expect.poll(async () => (await replies()).some((r) => r.text?.includes(copy.activated)), timeout).toBe(true);
   expect((await sandbox.state()).business.status).toBe('active');
 
-  // 2. Payment: the link opens the sandbox's checkout; Pay sends the signed callback to web.
-  // Until T1 wires the link into onboarding, the test asks web's billing for it.
-  await web.app.billing!.sendPaymentLink(businessId);
-  await expect.poll(lastReply, timeout).toContain('http://sandbox.dev.test/checkout/');
+  // 2. Payment: onboarding sent the link after activation (T1); it opens the sandbox's checkout, and
+  // Pay sends the provider's signed callback to web.
+  await expect.poll(async () => (await replies()).some((r) => r.text?.includes('http://sandbox.dev.test/checkout/')), timeout).toBe(true);
   const checkout = (await sandbox.state()).payment;
   expect(checkout?.status).toBe('awaiting_payment');
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });

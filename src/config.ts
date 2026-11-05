@@ -62,7 +62,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   if (!SIMULATED_ENVS.includes(envName)) {
     throw new Error(`POSTLY_PROVIDERS=simulators is not allowed in ${envName}: only local, test and dev may run on the simulators`);
   }
-  if (models === 'vertex') throw new Error('POSTLY_MODELS=vertex needs the Vertex AI adapter (T5), which has not landed yet');
+  if (models === 'vertex') throw new Error('POSTLY_MODELS=vertex: the T5 Vertex AI adapter is not wired into the simulated composition yet');
   const store = parsed.data.SIMULATOR_STORE ?? 'memory';
   if (envName === 'dev' && store !== 'postgres') {
     throw new Error('dev requires SIMULATOR_STORE=postgres: web, worker and the sandbox must share the simulator state');

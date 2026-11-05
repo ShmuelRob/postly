@@ -88,7 +88,7 @@ export function describeSimulatorStoreContract(label: string, makeStore: () => P
       const web = processOn(store, scope);
       const sandbox = processOn(store, scope);
 
-      const link = await web.payment.provider.createPaymentLink({ businessId, plan: 'basic' });
+      const link = await web.payment.provider.createPaymentLink({ businessId, plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } });
       const subscriptionId = await sandbox.payment.run((sim) => sim.completePayment(link.providerCustomerId));
       const hook = await sandbox.payment.run((sim) => sim.webhook(subscriptionId));
       expect(await web.payment.provider.verifyWebhook(hook)).toMatchObject({ businessId, providerSubscriptionId: subscriptionId, status: 'active' });

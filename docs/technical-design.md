@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google for now, behind a replaceable model layer | May change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -31,7 +31,8 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Module boundaries | dependency-cruiser rules, enforced in CI | Decided |
 | CI | GitHub Actions: typecheck, unit and contract tests, end-to-end suite; a failure blocks merging | Decided |
 | Test database | Postgres in Docker through Testcontainers, so roles and RLS behave as in production | Decided |
-| Holiday calendar | `@hebcal/core` with the Israel schedule, computed in `business.timezone` | Decided |
+| Holiday calendar | Our own code (`src/modules/publishing/jewish-calendar.ts`): NOAA sunset and nightfall, Israeli yom tov dates from the Hebrew calendar rules, a city table with Hebrew names. No third-party calendar library, so no GPL/LGPL code (`@hebcal` was removed on 2026-11-04) | Decided |
+| Dependency licences | Runtime and dev dependencies must be permissively licensed (MIT, ISC, BSD, Apache-2.0, 0BSD, BlueOak, CC0, Python-2.0, Unlicense; fonts OFL). No GPL, LGPL or AGPL packages, checked on `package-lock.json` by `src/shared/licenses.test.ts`. One exception: sharp's prebuilt libvips binaries (`@img/sharp-libvips-*`, LGPL-3.0), used unmodified as a separate shared library, which LGPL permits; a modified libvips or static linking would need review | Decided |
 | Fonts | Hebrew fonts under the SIL Open Font License, stored in the repository; see [design-styles.md](design-styles.md) | Decided |
 | End-to-end reports | A static HTML report per run: WhatsApp transcript, rendered images, publishing simulator log, and pass or fail | Decided |
 
@@ -48,7 +49,7 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Design | Renders posts from style templates and produces a file for each network |
 | Publishing | Connects channels, publishes, and checks status |
 | Business data | Profiles, preferences, post history, and media library |
-| Billing | Payment links, subscription status, and the placeholder provider |
+| Billing | Payment links, subscription status, the plan price, and the placeholder provider |
 | Console | Conversations, drafts, errors, manual intervention, and the global pause |
 
 ## Task routing
@@ -124,7 +125,7 @@ These are defaults stored in configuration, so they can change without a code ch
 | Data deletion | Daily at 03:00 UTC: every cancelled business past `data_delete_after` (WP-43) |
 | Monthly report | 06:00 UTC on the first of each month, for the previous calendar month in `business.timezone` (WP-43) |
 | Publishing tick | Every minute: publications due by `scheduled_for`, retries by the retry spacing |
-| No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, by the business's city when `@hebcal/core` knows it, otherwise Jerusalem |
+| No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, candle lighting at sunset minus 40 minutes in Jerusalem, 30 in Haifa and Zikhron Ya'akov, 20 elsewhere; havdalah at nightfall (sun 8.5° below the horizon); by the business's city when the city table knows its English or Hebrew name, otherwise Jerusalem |
 
 ## Onboarding flow
 
@@ -162,11 +163,11 @@ Built in WP-32 (2026-11-03); the copy and the `caption_writing` version-2 prompt
 - **Caption.** `caption_writing` gets the plan, the facts the plan names, a short business context, the active preference rules, the post's networks (the profile's channels, or the networks of the current version after a channel change), the languages, the tone, the fixed hashtags, and on a redraft the change instructions (`changes`). Code runs the fact check below as `RunOptions.check`, so a mismatch is a failed attempt: the model retries, and when every attempt fails the post moves to `needs_review` (`DRAFT_FAILED`; the model layer's console item exists) and nothing is sent for it. The optional `fact_check` model task is not used in Phase 1.
 - **Fact check (code).** Every `usedFactIds` entry must be a fact the plan named. Then each detail in every caption's text and hashtags is matched against sources of its own kind (review of PR #43): a phone (by its digits, `+972` read as `0`) against a phone fact or the profile's contact details; a price (a number next to ₪, ש"ח or שקל) against a price fact or a number shown as a price in a source; a discount (a number with %) against a discount fact or a percentage in a source; a time (`H:MM`) against a time fact or a time in a source such as the hours; a date (`D/M` or `D.M`) against a date fact or a date in a source; a weekday name (יום ראשון to שבת) against the sources. Any other number (a house number, a quantity) may match any number in the sources. So "12 ₪" fails even when the address has 12. The sources are the used facts (value and quote) and the profile's address, city, hours, contact details, and differentiator. A testimonial is written only from a fact the owner typed (checked at extraction). The used facts are stored on the version as `fact_sources`.
 - **Hebrew details in words (T8, 2026-11-04).** Before matching, code reads the written Hebrew forms of these details in both the caption and the sources, so the same rules apply to them:
-  - a number in words (אחד to תשעים ותשעה, מאה, מאתיים, X מאות, אלף, אלפיים, X אלפים, with ו between parts and an optional ב/ל/מ/ה prefix) counts only next to a factual marker: before ₪, ש"ח or שקל (a price), before אחוז (a discount), or before a month (a date). A number word with no marker ("פעם אחת", "אחד הטעמים") is not a detail, so ordinary prose is never blocked;
+  - a number in words (אחד to תשעים ותשעה, מאה, מאתיים, X מאות, אלף, אלפיים, X אלפים, with ו between parts and an optional ו, כ, ב, ל, מ or ה prefix, or ו with one of the others) counts only next to a factual marker: before ₪, ש"ח or שקל (a price), before אחוז (a discount), or before a month (a date). A number word with no marker ("פעם אחת", "אחד הטעמים") is not a detail, so ordinary prose is never blocked;
   - a date is `D/M`, `D.M`, or a day and a month name (`15 בנובמבר`, `חמישה עשר בנובמבר`, `הראשון בדצמבר`, with an optional year); dates compare as day and month, so `15.11`, `15/11` and `15 בנובמבר` are the same date, and a caption date with no year matches a source date with one;
   - a time is `H:MM` or `בשעה` with a number in digits or words, with an optional וחצי or ורבע and an optional part of day (בבוקר, בצהריים, אחה"צ, בערב, בלילה, which adds 12 from noon on); `08:00` and `8:00` are the same time, and a bare hour with no part of day ("בשעה שמונה") matches either 8:00 or 20:00;
   - a weekday is יום ראשון to שבת, יום א׳ to יום ו׳, or the forms בשלישי, ברביעי, בחמישי, בשישי, בשבת (בשני and בראשון are left out, since they also mean "in two" and the city ראשון לציון); a range of days in a source, such as א׳-ה׳ or ראשון עד חמישי, vouches for every day in it;
-  - `20 אחוז` is a discount like `20%`; `100%` (and מאה אחוז) is emphasis, not a discount, and is not checked.
+  - `20 אחוז` is a discount like `20%`; `100%` (and מאה אחוז) is emphasis and is not checked, unless הנחה follows it or comes right before it ("100% הנחה", "הנחה של 100%"), where it is a discount like any other.
   A price, discount, or date written in words with no marker, and a time written without בשעה ("בשמונה בערב"), are not read; the owner still sees every caption before approving it. Asking the `caption_writing` prompt to write factual details in digits is a possible follow-up (a customer-facing prompt change, H7).
 - **Rendering.** The design module renders the post in the business's style with the plan's photos (all of them for a carousel, the first for a single post). A post with no photo uses the business's latest owner photo from the media library, or the bundled sample photo when there is none. The overlay text is the plan's `topic`; the logo and brand colors come from the profile; the networks are the post's networks. Every rendered file is stored as a `media_asset` (`rendered`, source `render`) by the design role, and `rendered_media` maps each network to its asset ids in slide order. A render error is handled like a failed draft: `DRAFT_FAILED` and a `draft_failed` console item.
 - **Version.** A new `post_version` (the next `version_number`) holds the captions, `rendered_media`, `fact_sources`, `fact_check_passed` (always true: a draft that fails the check is never written), and `content_hash`: SHA-256 (lowercase hex) of the canonical JSON (keys sorted) of `{ format, captions, renderedMedia }`. `post.current_version_id` points at it, in the same transaction.
@@ -189,7 +190,7 @@ Built in WP-33 (2026-11-04), queued for the human (approval code). The approval 
 
 Built in WP-34 (2026-11-04), queued for the human (publishing code, provisional Hebrew copy and template text, the channel test contract). The publishing module owns the time proposals, the publications and the publishing job; the workflow module runs the conversation. No model is involved.
 
-- **Time proposals** (`proposeTimes`, pure code). One time per approved post, in `position` order, each on a different day. Days are the profile's `schedule.days`, or Sunday to Thursday when empty; the hour is the profile's `schedule.hours` in turn, or 10:00 when empty, in `business.timezone`. A time is at least one hour from now. Unless `publishOnShabbatAndHolidays`, a time inside the no-publishing window (Configuration defaults: Shabbat and Israeli yom tov from 30 minutes before candle lighting to 30 minutes after havdalah, by `@hebcal/core`, at the profile's city when it knows the name, otherwise Jerusalem) moves to the next allowed day. The search looks 21 days ahead.
+- **Time proposals** (`proposeTimes`, pure code). One time per approved post, in `position` order, each on a different day. Days are the profile's `schedule.days`, or Sunday to Thursday when empty; the hour is the profile's `schedule.hours` in turn, or 10:00 when empty, in `business.timezone`. A time is at least one hour from now. Unless `publishOnShabbatAndHolidays`, a time inside the no-publishing window (Configuration defaults: Shabbat and Israeli yom tov from 30 minutes before candle lighting to 30 minutes after havdalah, by `jewish-calendar.ts`, at the profile's city when its English or Hebrew name is in the city table, otherwise Jerusalem; yom tov days are Rosh Hashana (two days), Yom Kippur, Sukkot I, Shemini Atzeret, Pesach I and VII, and Shavuot, with neighbouring rest days merged into one window) moves to the next allowed day. The search looks 21 days ahead.
 - **Proposing.** After each approval, when the conversation is in `reviewing_drafts` and every post of the week is `approved` or `cancelled` with at least one `approved`, the conversation applies `ALL_DRAFTS_RESOLVED` (to `confirming_schedule`) with the open question `schedule_confirmation`, whose `proposals` hold each post id and its proposed time, and the owner gets one message listing each post's topic and time and how to confirm.
 - **Confirming.** In `confirming_schedule`, a short confirming text (`SCHEDULE_CONFIRM_WORDS`) creates the publications of every proposed post that is still `approved`, at its proposed time ([scheduling](#approval-flow)), then applies `SCHEDULE_CONFIRMED` (to `idle`), and the owner gets a confirmation listing the times. This text accepts times only; a post is approved only by its button. A post whose network has no verified connection is not scheduled: the owner is told which channel needs reconnecting, a `channel_disconnected` console item opens, and the conversation is handed to a person. Any other text in `confirming_schedule` is a schedule change: in Phase 1 the conversation is handed to a person (a `handoff` console item with the owner's text) and the owner is told someone will set the times; reading requested times from text is a follow-up. An Approve tap keeps its usual path. A Change tap reopens the drafts: `CHANGE_REQUESTED` (to `processing_update`, dropping the proposal) and `DRAFTS_SENT` (back to `reviewing_drafts`), then the drafts flow takes the tap, and once every draft is resolved again the times are proposed again. Any other message here is a schedule change. A change to a scheduled post after the times were confirmed (conversation `idle`) is not routed to drafts yet; that is a follow-up.
 - **The publishing job** (`createPublishingJob`, publishing role) implements `PublishingJob` from [contracts.md](contracts.md#approval-and-publishing). `runPublication` runs the [publishing guard](state-machines.md#publishing-guard) in one transaction that locks the publication, and on a pass applies `STARTED` (`attempts` + 1) and, for the post's first publication, the post's `PUBLISHING_STARTED`. The handoff check comes from the workflow module (the publishing role cannot read `conversation_state`). Then, outside the transaction and inside one error handler (WP-35): the job loads the approved version and applies the post's `PUBLISHING_STARTED`; a publication that already holds a `provider_post_id` asks `getPublicationStatus` first, and `scheduled` or `published` there ends as `already_published` with no new `publish`, while `failed` there counts as a failed attempt and clears the stored id; otherwise `publish` gets the publication id as idempotency key, the channel's account, the approved version's caption for that network (the text, then the hashtags on a new line), the version's rendered media for that network as URLs, its format, and `scheduled_for`. The provider id is stored in its own write as soon as `publish` returns, before `SUCCEEDED`, so a crash or error after that point leaves a retry that checks the provider first (WP-35).
@@ -218,6 +219,16 @@ How each case is handled (WP-35, 2026-11-04; each has an end-to-end test):
 - **A post the provider drops after accepting it.** A publication that is `published` (the provider held it) and that the provider later reports `failed` gets `last_error` and counts as failed for its post: the post applies `PARTIALLY_PUBLISHED` or `ALL_FAILED` and the owner gets `publication_failed`, so the post never stays in `publishing` (review of PR #52, item b). `publication_failed` console items are idempotent: one is inserted only when no open one exists for the same publication, checked while the publication row is locked, so sibling publications finishing in parallel do not add duplicates.
 - **Failed model validation.** The model layer retries within the task's limit and then opens a `model_validation_failed` console item (WP-21); each flow then hands the conversation to a person or marks the draft failed, as its section says.
 
+## Billing
+
+T1, 2026-11-04. There is no trial: the owner pays at once, at ILS 300 a month (PRD, Payment).
+
+- **Price.** One setting, the `plan_price` table (database-schema.md): append-only, so every change is kept with who made it; the current price is the newest row. The team changes it from the console. Billing reads it each time it creates a link and passes it to `createPaymentLink`.
+- **Payment link in onboarding.** When onboarding activates the business (`ONBOARDING_COMPLETED`), the owner gets the activation message and then billing's `sendPaymentLink`: the provider link is created with the current price, the `subscription` row is stored `pending`, and the link goes to the approver in WhatsApp (the owner just wrote, so the window is open). A send that fails is logged and opens a `payment_link_failed` console item (details: the error); the business stays active and the team resends the link. Without a payment provider wired, no link is sent.
+- **Status.** The provider's callback moves the row (`pending` to `active` on payment; state-machines.md, Subscription). The owner is told on every change.
+- **`past_due` (proposed, not built).** 7 days of grace from the moment the row became `past_due`, with template reminders on days 1, 3 and 6; then the publishing guard holds the business's publications until payment. Nothing is cancelled or deleted. Waiting for the human (review queue).
+- Local runs and tests use the payment simulator; the vendor (PayPlus or Grow) is still open.
+
 ## Cancellation, data deletion and the monthly report
 
 WP-43, 2026-11-04. Each has an end-to-end test.
@@ -244,9 +255,10 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Retry a failed publication | Publication `RETRY_REQUESTED`, and the post `PUBLISHING_STARTED` when it is `failed`; the publishing job still checks the approved hash before anything goes live; resolves the matching `publication_failed` items |
 | Pause or resume a business | Business `PAUSE` / `RESUME` (resume needs a `verified` channel connection) |
 | Pause or resume all publishing | `system_control` through `setGlobalPause` |
+| See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, `by`, optional `reason`) inserts a `plan_price` row. A new price applies to payment links sent afterwards |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
 
-Authentication is not defined yet, so the routes answer only requests from the loopback address; anything else gets 403. Team sign-in must be decided before the console is deployed.
+Authentication is not defined yet. The console runs as its own process (`main.js console`) and its own Cloud Run service with internal-only ingress and no public invoker; the public web service never serves it. Locally the routes answer only the loopback address (anything else gets 403); deployed, the gate is the ingress and IAM. Neither is a sign-in, which must exist before any wider access ([security.md](security.md#console-exposure)).
 
 ## Security
 
@@ -255,6 +267,7 @@ Authentication is not defined yet, so the routes answer only requests from the l
 - Webhooks are verified before processing.
 - Media URLs stay stable until publishing, and retention follows a defined policy.
 - Payment card details are never stored.
+- The console exposure and the ranked security debts are in [security.md](security.md).
 
 ## Environments
 

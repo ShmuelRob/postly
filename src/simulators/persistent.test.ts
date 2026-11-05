@@ -26,13 +26,13 @@ describe('simulator state export and import', () => {
     expect(await pubCopy.getConnectionStatus({ businessId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', network: 'facebook' })).toEqual({ status: 'pending' });
 
     const payment = new PaymentSimulator();
-    const link = await payment.createPaymentLink({ businessId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', plan: 'basic' });
+    const link = await payment.createPaymentLink({ businessId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } });
     const sub = payment.completePayment(link.providerCustomerId);
     const payCopy = new PaymentSimulator();
     payCopy.importState(JSON.parse(JSON.stringify(payment.exportState())));
     expect(await payCopy.getSubscriptionStatus(sub)).toEqual({ status: 'active' });
     // Ids keep counting from where the other process stopped.
-    expect((await payCopy.createPaymentLink({ businessId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', plan: 'basic' })).providerCustomerId).not.toBe(
+    expect((await payCopy.createPaymentLink({ businessId: '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } })).providerCustomerId).not.toBe(
       link.providerCustomerId,
     );
   });

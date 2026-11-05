@@ -1,12 +1,14 @@
 import Fastify from 'fastify';
 import { loadConfig } from './config.js';
 import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
+import { buildConsoleServer } from './console-server.js';
+import { createConsole } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 
-// The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|migrate`, compiled
+// The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
 // land (WP-41) the composition uses the simulators (simulated mode, WP-51), so no run reaches a vendor;
 // stage and prod refuse to start (src/config.ts).
@@ -24,12 +26,12 @@ async function main(command: string | undefined) {
     console.log(JSON.stringify({ level: 'info', msg: 'migrations applied and logins provisioned' }));
     return;
   }
-  if (command !== 'web' && command !== 'worker') throw new Error('usage: node dist/src/main.js web|worker|migrate');
+  if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
   const config = loadConfig(process.env);
   // Simulated mode (docs/deployment.md, "Simulated mode"): config allows it only in local, test and dev.
   const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
-  const { app, close } = await createSimulatedApp({
+  const { app, db, close } = await createSimulatedApp({
     store,
     databaseUrls: config.databaseUrls,
     webhookSecret: config.webhookSecret,
@@ -42,6 +44,12 @@ async function main(command: string | undefined) {
   if (command === 'web') {
     const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl });
     stops.push(app.start(), () => server.close());
+    await server.listen({ host: '0.0.0.0', port: config.port });
+  } else if (command === 'console') {
+    // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
+    const access = config.env === 'local' || config.env === 'test' ? 'loopback' : 'private-ingress';
+    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access });
+    stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
     const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });

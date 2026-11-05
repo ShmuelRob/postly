@@ -42,6 +42,11 @@ variable "business_number" {
 }
 variable "sql_tier" { type = string }
 variable "sql_high_availability" { type = bool }
+variable "sql_max_connections" {
+  description = "Cloud SQL max_connections; 400 is Postgres' default for db-custom-2-7680 (7.5 GB)."
+  type        = number
+  default     = 400
+}
 variable "deletion_protection" { type = bool }
 variable "web_max_instances" {
   description = "Must stay 1 until bursts are durable (review queue item 14); see docs/deployment.md."
@@ -123,11 +128,11 @@ locals {
     "app_sys_console", "app_sys_example_set", "app_jobs",
   ]
   # The simulator store's login (src/db/simulator-store.ts) exists only where the simulators run.
-  logins = concat(local.base_logins, local.simulated ? ["app_simulator"] : [])
+  logins        = concat(local.base_logins, local.simulated ? ["app_simulator"] : [])
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
   # Dev on the simulators has no vendor secrets; the simulators sign with messaging-webhook-secret.
-  vendor_secrets = concat(["messaging-webhook-secret"], local.simulated ? [] : ["messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"])
+  vendor_secrets = concat(["messaging-webhook-secret"], local.simulated ? [] : ["messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"])
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
   app_env = merge({
     POSTLY_ENV       = var.env_name
@@ -193,6 +198,7 @@ module "sql" {
   private_services_connection = module.network.private_services_connection
   tier                        = var.sql_tier
   high_availability           = var.sql_high_availability
+  max_connections             = var.sql_max_connections
   deletion_protection         = var.deletion_protection
   retained_backups            = var.sql_retained_backups
 }
@@ -234,6 +240,23 @@ resource "google_artifact_registry_repository_iam_member" "push" {
   member     = "serviceAccount:${module.accounts.emails.deploy}"
 }
 
+# Connection budget (docs/deployment.md, Sizing): each login x 3 (createDatabase) + pg-boss 10 per
+# process, plus the migrate job (11) and connections Cloud SQL reserves for itself (10).
+locals {
+  connections_per_process = length(local.logins) * 3 + 10
+  connections_needed      = (var.web_max_instances + var.worker_max_instances) * local.connections_per_process + 11 + 10
+}
+
+resource "terraform_data" "connection_budget" {
+  input = local.connections_needed
+  lifecycle {
+    precondition {
+      condition     = local.connections_needed <= var.sql_max_connections
+      error_message = "The process pools need more connections than Cloud SQL max_connections allows (docs/deployment.md, Sizing)."
+    }
+  }
+}
+
 module "web" {
   source          = "../cloud_run"
   project_id      = var.project_id
@@ -249,6 +272,7 @@ module "web" {
   public          = true
   min_instances   = 1
   max_instances   = var.web_max_instances
+  cpu             = "1"
   memory          = "2Gi"
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -268,7 +292,8 @@ module "worker" {
   public          = false
   min_instances   = 1
   max_instances   = var.worker_max_instances
-  memory          = "2Gi"
+  cpu             = "2"
+  memory          = "4Gi"
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
@@ -290,6 +315,26 @@ module "sandbox" {
   secret_env           = local.app_secret_env
   public               = false
   external_ingress     = true
+  cpu_always_allocated = false
+  depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+}
+
+# The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
+# and web must stay public. Internal-only ingress and no allUsers invoker; reached with
+# an identity token from inside the VPC (docs/security.md); not from a laptop. It runs as the web account for now (D9).
+module "console" {
+  source               = "../cloud_run"
+  project_id           = var.project_id
+  region               = var.region
+  name                 = "${local.prefix}-console"
+  kind                 = "service"
+  image                = local.image
+  command              = "console"
+  service_account      = module.accounts.emails.web
+  subnetwork_id        = module.network.subnetwork_id
+  env                  = local.app_env
+  secret_env           = local.app_secret_env
+  public               = false
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -332,6 +377,7 @@ module "monitoring" {
 output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
 output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
+output "console_service" { value = module.console.name }
 output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }
