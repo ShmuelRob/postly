@@ -45,4 +45,20 @@ describe('console process', () => {
     expect((await server.inject({ method: 'POST', url: '/webhooks/messaging' })).statusCode).toBe(404);
     await server.close();
   });
+
+  it('cancel needs the business name typed as confirmation (D2, WP-83)', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    const cancelled: string[] = [];
+    const named = new Proxy({}, { get: (_t, key) => async () => (key === 'businesses' ? [{ id, name: 'מאפיית רחל' }] : []) }) as unknown as ConsoleService;
+    const server = buildConsoleServer({ console: named, access: 'loopback', cancelBusiness: async (b) => cancelled.push(b) });
+    const cancel = (payload?: object) => server.inject({ method: 'POST', url: `/console/api/businesses/${id}/cancel`, remoteAddress: '127.0.0.1', ...(payload ? { payload } : {}) });
+    expect((await cancel()).statusCode).toBe(400);
+    expect((await cancel({ confirmName: 'מאפיה אחרת' })).statusCode).toBe(400);
+    expect(cancelled).toEqual([]);
+    const unknown = await server.inject({ method: 'POST', url: '/console/api/businesses/00000000-0000-4000-8000-000000000002/cancel', remoteAddress: '127.0.0.1', payload: { confirmName: 'מאפיית רחל' } });
+    expect(unknown.statusCode).toBe(404);
+    expect((await cancel({ confirmName: ' מאפיית רחל ' })).statusCode).toBe(200);
+    expect(cancelled).toEqual([id]);
+    await server.close();
+  });
 });

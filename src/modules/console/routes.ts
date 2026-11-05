@@ -22,6 +22,8 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 const Id = z.object({ id: z.uuid() });
 const PauseBody = z.object({ by: z.string().min(1), reason: z.string().optional() });
+/** D2 (docs/security.md): the business name, typed by the team member, confirms a cancellation. */
+const CancelBody = z.object({ confirmName: z.string().trim().min(1) });
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
 const PriceQuery = z.object({ plan: z.string().min(1).optional() });
 const PriceBody = z.object({
@@ -72,7 +74,16 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.post('/api/businesses/:id/handoff/clear', (q, reply) => run(reply, () => c.clearHandoff(id(q.params))));
       if (options.cancelBusiness) {
         const cancelBusiness = options.cancelBusiness;
-        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params))));
+        scope.post('/api/businesses/:id/cancel', (q, reply) =>
+          run(reply, async () => {
+            const businessId = id(q.params);
+            const { confirmName } = CancelBody.parse(q.body ?? {});
+            const target = (await c.businesses()).find((b) => b.id === businessId);
+            if (!target) throw new ConsoleActionError(404, 'not_found');
+            if (target.name.trim() !== confirmName) throw new ConsoleActionError(400, 'confirmation_mismatch', 'type the business name to confirm');
+            return cancelBusiness(businessId);
+          }),
+        );
       }
       scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params))));
       scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params))));
