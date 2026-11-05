@@ -18,9 +18,14 @@ variable "alert_email" {
   default = null
 }
 variable "sandbox_invokers" {
-  description = "Who may open the dev sandbox through gcloud run services proxy, for example [\"user:you@example.com\"]."
+  description = "Who may open the dev sandbox (in a browser with sandbox_iap_client_id, or through gcloud run services proxy), for example [\"user:you@example.com\"]."
   type        = list(string)
   default     = []
+}
+variable "sandbox_iap_client_id" {
+  description = "The OAuth client id made by hand (the console's works); set, the sandbox opens at sandbox_url in a browser through IAP (docs/deployment.md)."
+  type        = string
+  default     = null
 }
 variable "region" {
   type    = string

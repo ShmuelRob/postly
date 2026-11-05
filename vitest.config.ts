@@ -33,7 +33,7 @@ export default defineConfig({
           // Against a real Postgres, started once per run by test/db/global-setup.ts.
           name: 'db',
           // Also the H5 human-owned approval and publishing tests.
-          include: ['src/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
+          include: ['src/**/*.db.test.ts', 'playground/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
           // The H5 worlds run one at a time (a database lock, test/h5/subject.ts), so an H5 case

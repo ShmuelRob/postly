@@ -58,6 +58,11 @@ variable "external_ingress" {
   type        = bool
   default     = false
 }
+variable "iap_enabled" {
+  description = "Cloud Run's built-in IAP on the service (the dev sandbox's browser path); the caller grants the access."
+  type        = bool
+  default     = false
+}
 variable "cpu_always_allocated" {
   description = "Keep CPU between requests (the worker polls pg-boss; the web runs the inbound sweep)."
   type        = bool
@@ -70,6 +75,7 @@ resource "google_cloud_run_v2_service" "this" {
   name                = var.name
   location            = var.region
   ingress             = coalesce(var.ingress, var.public || var.external_ingress ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY")
+  iap_enabled         = var.iap_enabled
   deletion_protection = false
 
   template {

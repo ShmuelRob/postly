@@ -13,6 +13,7 @@ import type { SimulatorStore } from '../../src/simulators/index.js';
 import type { PublishingEntry, TranscriptEntry } from '../../test/e2e/harness/record.js';
 import type { CheckoutOutcome, CheckoutState, OwnerInput, PlaygroundState } from '../server/api-types.js';
 import { allowed, chatMessages, feedPosts, MEDIA_TYPES, NETWORKS } from '../server/views.js';
+import { crossSiteWrite } from './origin.js';
 
 // The dev sandbox (WP-51, docs/deployment.md "The sandbox"): the playground's chat, mock feed and a
 // mock checkout, for the deployed dev on the simulated providers. Unlike the playground it runs no app
@@ -39,7 +40,7 @@ export interface Sandbox {
   readonly webUrl: string;
   /** Connect-style middleware for `/api/*`; anything else goes to `next`. */
   handle(req: IncomingMessage, res: ServerResponse, next: () => void): void;
-  /** A new sign-up for the owner's number: a business in onboarding (an earlier one keeps its data). */
+  /** A new sign-up for the owner's number: a business in onboarding with an empty chat (an earlier one keeps its data). */
   signUp(): Promise<string>;
   send(input: OwnerInput): Promise<void>;
   /** The owner finishes the connection link on the publishing simulator. */
@@ -115,7 +116,9 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     await db.withSystem('console', (tx) =>
       tx.update(schema.business).set({ approverPhone: `+97250${randomInt(1_000_000, 10_000_000)}` }).where(eq(schema.business.approverPhone, owner)),
     );
+    // The new sign-up's chat starts empty: neither side of the earlier conversation stays.
     await log((l) => void (l.inbound = []));
+    await world.messaging.run((sim) => sim.forgetSentTo(owner));
     return app.onboarding.createBusiness({ approverPhone: owner });
   };
 
@@ -161,7 +164,13 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     const [{ inbound }, sent, posts, connectionLinkSent] = await Promise.all([
       log((l) => l),
       world.messaging.run((sim) => sim.sentTo(owner)),
-      world.publishing.run((sim) => sim.posts),
+      // Only this sign-up's posts: those on the accounts its business connected.
+      world.publishing.run(async (sim) => {
+        if (!b) return [];
+        const statuses = await Promise.all(NETWORKS.map((network) => sim.getConnectionStatus({ businessId: b.id, network })));
+        const accounts = new Set(statuses.flatMap((s) => (s.providerAccountId ? [s.providerAccountId] : [])));
+        return sim.posts.filter((p) => accounts.has(p.request.providerAccountId));
+      }),
       world.publishing.run((sim) => !!b && sim.connectionLinks.some((l) => l.request.businessId === b.id)),
     ]);
     const c = rows.conversation[0];
@@ -221,6 +230,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     handle(req, res, next) {
       const url = new URL(req.url ?? '/', 'http://sandbox.local');
       if (!url.pathname.startsWith('/api/')) return next();
+      if (crossSiteWrite(req)) return json(res, 403, { error: 'cross-site request' });
       route(req, res, url).catch((error: unknown) => json(res, 500, { error: error instanceof Error ? error.message : String(error) }));
     },
     signUp,

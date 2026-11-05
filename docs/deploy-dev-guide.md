@@ -245,6 +245,29 @@ returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no pu
 
 This adds about 18 USD a month.
 
+**The sandbox.** `postly-dev-sandbox` lets you use dev by hand: you play the owner in a WhatsApp-style chat, see the mock Instagram and Facebook feed, and pay on the mock checkout page ([deployment.md](deployment.md#the-sandbox)). Put your account in `sandbox_invokers = ["user:<your-google-account>@gmail.com"]` in `terraform.tfvars`. Then either:
+
+- **From a browser or a phone (no port forward).** Do steps 1 to 4 of the console's OAuth setup ([deployment.md](deployment.md#console-sign-in-one-time-steps); the same OAuth client serves both, and the console's load balancer is not needed), then add
+
+  ```hcl
+  sandbox_iap_client_id = "<CLIENT_ID>.apps.googleusercontent.com"
+  ```
+
+  plan, review and apply, and open the `sandbox_url` output:
+
+  ```powershell
+  terraform -chdir=infra/environments/dev output -raw sandbox_url
+  ```
+
+  Sign in with that Google account. Any other account gets IAP's "You don't have access" page. This costs nothing extra. If the apply fails on the IAP service agent's `run.invoker` grant, run `gcloud beta services identity create --service=iap.googleapis.com --project $PROJECT` and apply again.
+- **Through the proxy (works either way).**
+
+  ```powershell
+  gcloud run services proxy postly-dev-sandbox --region me-west1 --port 8081
+  ```
+
+  and open `http://localhost:8081`.
+
 **Logs.** Console → Logging → Logs Explorer, or:
 
 ```powershell
@@ -254,7 +277,7 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 Dev keeps logs 7 days.
 
-**WhatsApp, Instagram, Facebook and payments are not real on dev.** The image accepts only `POSTLY_PROVIDERS=simulators` (`src/config.ts`) until the vendor adapters (WP-41), and media lives in process memory. So no WhatsApp number answers, nothing is posted to Instagram or Facebook, and no payment is taken. The dev sandbox (WP-51, being built in a separate session) is meant to let you use dev by hand on top of the simulators, for example a sandbox chat page where you talk to Postly as the owner and see what would be posted; its scope is set in its own package, not here.
+**WhatsApp, Instagram, Facebook and payments are not real on dev.** The image accepts only `POSTLY_PROVIDERS=simulators` (`src/config.ts`) until the vendor adapters (WP-41), and media lives in process memory. So no WhatsApp number answers, nothing is posted to Instagram or Facebook, and no payment is taken. The dev sandbox (above) lets you use dev by hand on top of the simulators.
 
 **Alerts** go to `alert_email` (Cloud Monitoring, notification channel "Postly dev on-call"; you get a confirmation email first):
 
