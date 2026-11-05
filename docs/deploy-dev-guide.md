@@ -195,7 +195,7 @@ gh workflow run Deploy --repo ShmuelRob/postly --ref dev -f image_tag=bootstrap
 gh run watch --repo ShmuelRob/postly
 ```
 
-What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/healthz`. About **10 to 15 minutes** for a push (most of it the image build), 3 to 5 for a manual redeploy.
+What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/health`. About **10 to 15 minutes** for a push (most of it the image build), 3 to 5 for a manual redeploy.
 
 ### 6a. Turn on the alerts on the app's own metrics
 
@@ -220,10 +220,10 @@ gcloud run services list --region me-west1
 
 The public one is `postly-dev-web`, at `https://postly-dev-web-<hash>.me-west1.run.app` (output `web_url`). Worker and console have run.app URLs too, but their ingress refuses requests from the internet; the console is reached only through its load balancer.
 
-**`/healthz`.**
+**`/health`.**
 
 ```powershell
-curl.exe -s "$(gcloud run services describe postly-dev-web --region me-west1 --format 'value(status.url)')/healthz"
+curl.exe -s "$(gcloud run services describe postly-dev-web --region me-west1 --format 'value(status.url)')/health"
 ```
 
 returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no public page.
@@ -258,7 +258,7 @@ Dev keeps logs 7 days.
 
 **Alerts** go to `alert_email` (Cloud Monitoring, notification channel "Postly dev on-call"; you get a confirmation email first):
 
-- web health check failing (the uptime check on `/healthz`);
+- web health check failing (the uptime check on `/health`);
 - web 5xx responses (more than 5);
 - error log lines from any `postly-dev-*` service or job (more than 10);
 - Cloud SQL CPU above 80% or disk above 85%.
@@ -267,7 +267,7 @@ Before the first deploy and during the three-pass apply, the uptime alert may fi
 
 ## 8. How to tell it worked, and common errors
 
-It worked when: the last Deploy run is green, `/healthz` returns `{"ok":true}`, `gcloud run services list` shows web, worker and console ready, the last `postly-dev-migrate` execution succeeded, and no alert is open.
+It worked when: the last Deploy run is green, `/health` returns `{"ok":true}`, `gcloud run services list` shows web, worker and console ready, the last `postly-dev-migrate` execution succeeded, and no alert is open.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -287,6 +287,7 @@ It worked when: the last Deploy run is green, `/healthz` returns `{"ok":true}`, 
 | `Cannot find metric(s) that match type = "workload.googleapis.com/postly…"` | `app_metric_alerts = true` before the app wrote its metrics | leave it `false` until after the first deploy (step 6a) |
 | `evaluation_missing_data must have a non-zero duration` | an older checkout of the monitoring module | update to `main` and apply again |
 | Deploy fails at `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | `github_repository` in `terraform.tfvars` differs from the repository's exact name, for example in letter case (`shmuelrob/postly`) | delete the line (the default is `ShmuelRob/postly`) or fix the case, apply again, then re-run Deploy |
+| Deploy fails at **Smoke check** with `curl: (22) ... 404` on `/healthz` | Cloud Run's front end reserves paths ending in `z` and answers them 404 before the app | update to `dev`: the smoke and uptime checks use `/health` (the probes inside Cloud Run keep `/healthz`) |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 

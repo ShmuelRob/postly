@@ -29,7 +29,10 @@ export interface ServerOptions {
 export function buildServer(options: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: false, ...trustHops(options.trustProxyHops) });
   observeRequests(app);
+  // /healthz for Cloud Run's probes (straight to the container); /health for callers outside it,
+  // since Cloud Run's front end reserves paths ending in "z" and answers them 404 itself.
   app.get('/healthz', async () => ({ ok: true }));
+  app.get('/health', async () => ({ ok: true }));
   registerMessagingRoutes(app, options);
   const sweepEveryMs = options.sweepEveryMs;
   if (sweepEveryMs !== undefined) {

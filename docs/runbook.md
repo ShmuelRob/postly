@@ -31,7 +31,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Web health check failing
 
-**Alert:** "Postly ENV: web health check failing" (uptime check `postly-ENV-web-healthz`, `/healthz` over HTTPS every 60 s; fires after 5 minutes of failures).
+**Alert:** "Postly ENV: web health check failing" (uptime check `postly-ENV-web-healthz`, `/health` over HTTPS every 60 s; fires after 5 minutes of failures).
 
 **Means:** the public web service, which takes the WhatsApp and payment webhooks, is down or not answering. Inbound messages are missed or retried by the vendor while this lasts.
 
