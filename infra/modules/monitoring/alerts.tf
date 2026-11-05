@@ -64,7 +64,7 @@ resource "google_monitoring_alert_policy" "webhook_errors" {
   conditions {
     display_name = "at least 5 non-2xx webhook responses in 10 min"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.webhook_errors.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.webhook_errors.name}\" AND resource.type=\"cloud_run_revision\""
       comparison      = "COMPARISON_GT"
       threshold_value = 4
       duration        = "0s"
@@ -153,7 +153,7 @@ resource "google_monitoring_alert_policy" "channel_disconnected" {
   conditions {
     display_name = "a business channel disconnected"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.channel_disconnected.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.channel_disconnected.name}\" AND resource.type=one_of(\"cloud_run_revision\", \"cloud_run_job\")"
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "0s"

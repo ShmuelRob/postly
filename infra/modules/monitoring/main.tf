@@ -141,7 +141,7 @@ resource "google_monitoring_alert_policy" "errors" {
   conditions {
     display_name = "errors logged"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.errors.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.errors.name}\" AND resource.type=one_of(\"cloud_run_revision\", \"cloud_run_job\")"
       comparison      = "COMPARISON_GT"
       threshold_value = 10
       duration        = "0s"
