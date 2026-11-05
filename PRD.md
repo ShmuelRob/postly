@@ -30,10 +30,20 @@ flowchart TD
   H -- approved --> I[Schedule and publish to connected channels]
 ```
 
+## How the agent works
+
+Decided by the human on 2026-11-05; the design and the human's decisions on it are in [docs/agent.md](docs/agent.md).
+
+Postly is a **hybrid agent**. A language-model agent runs the conversation's thinking: it gathers the business's details, asks follow-up questions when an answer is vague or a detail is missing, asks for a photo, and creates and fixes the posts. It acts only through a fixed set of checked actions (tools). Code decides everything that must never go wrong: which message is actually sent and when, the 24-hour window and templates, the fact check, approval, scheduling, rendering and publishing. The agent never sends a message or publishes by itself, and nothing it writes counts as an approval.
+
+- **Persona.** The agent introduces herself as "Postly" ("פוסטלי" in Hebrew), your AI social agent, as in the demo (decided 2026-11-05). The name is global; the team can set another name for a single business. In Hebrew she always speaks in the feminine. Her name never appears in a post.
+- **Limits.** Each agent run has a step limit, a cost limit per run and per business per day, an overall daily cost limit, and a time limit; they are settings the team can change (the starting values are in [docs/agent.md](docs/agent.md#limits)). When a limit is hit, or the agent is unsure, a person from the Postly team takes over and the owner is told so.
+- **Gradual rollout.** Each flow (onboarding, weekly update, drafts) switches to the agent separately, globally or per business, so the earlier fixed flow stays as the fallback until the agent proves itself.
+
 ## WhatsApp onboarding
 
 1. Opening: the agent introduces itself and explains how the service works and how long onboarding will take.
-2. Introduction: plain-language questions, one or two per message, fill the required profile fields. The owner can answer by text or voice message.
+2. Introduction: the agent asks plain-language questions, one at a time, to fill the required profile fields, follows up on a vague answer (for example "where exactly?" or "until what time?"), and closes by asking whether there is anything else customers should know. The owner can answer by text or voice message. Code decides when enough is known to move on.
 3. Brand assets: the agent collects the logo, photos of the business and products, and any existing colors or design language.
 4. Style selection: the agent sends a sample post about the business in each of the three styles, and the owner chooses one.
 5. Profile summary and approval: the agent sends a short summary of what it understood, and the owner corrects or approves it.
@@ -98,11 +108,13 @@ This is the last onboarding step, right before the first post.
 
 Once a week, the owner sends the agent what is new in WhatsApp, for example new flowers or a promotion on dates, by text or voice message, along with photos.
 
+- The agent reads the update, notes each fact with the owner's exact words as its source, and asks one focused question at a time when a detail a post needs is missing (for example when the promotion ends) or when no photo came.
 - The agent splits the update into the number of posts set in the profile, and writes a caption and hashtags for each, adapted to each channel.
-- The agent edits the photos visually: cropping, frames, captions, and logo, using the style's template. The design is the same on both channels, with light adjustments to caption and size.
+- Each post is built on the owner's own photo, with a fixed set of edits: cropping, straightening, brightness and contrast, a title band in the business's style, an optional badge (such as "-15%" or "New"), and the logo. A badge with a number must match a detail the owner gave. There is no image generation. The design is the same on both channels, with light adjustments to caption and size.
+- A post can be a carousel of 2 to 10 slides; the agent chooses the order and the cover.
 - If material is missing, the agent uses photos from the library or asks one focused question.
 - If the owner sends several photos for what the plan makes a single post, the agent asks which they want: a carousel, one photo (the others are dropped), or a separate post per photo.
-- Drafts are sent to the owner in WhatsApp, and the owner can request changes in plain words until satisfied.
+- Drafts are sent to the owner in WhatsApp, and the owner can request changes in plain words until satisfied: the agent applies each fix (caption, title, badge, photo edits, slide order, or one channel only) and sends the new version.
 - One update a week is the norm. A second update while the drafts are still being prepared gets a reply that the agent is still working on the first; while drafts are open it is a change to them; after the week's update was already handled it counts for next week.
 
 ### Content safeguards
@@ -118,9 +130,10 @@ Once a week, the owner sends the agent what is new in WhatsApp, for example new 
 - Nothing goes live without the owner's explicit approval.
 - Each draft has WhatsApp buttons: "Approve" and "Change". Each tap is tied to an exact post version, and any change invalidates an earlier approval.
 - A free-text message such as "sounds good" does not count as approval. The agent resends the draft with the buttons.
+- A free-text message that approves and asks for a fix at once, such as "perfect, just add the hours", is a change: the agent applies the fix and sends the new version with its buttons, and the owner taps Approve once more. Every new or changed version needs its own tap.
 - One tap approves the post for all connected channels. A request to publish on only one channel is handled as a change.
 - In Phase 1, each business has one approver, and approval is accepted only from that number. Number changes are done manually by the Postly team.
-- After approval, the agent proposes publishing times based on the days and hours in the profile, and the owner approves or changes them.
+- After approval, and only then, the agent proposes publishing times based on the days and hours in the profile, and the owner approves or changes them. Without performance data the proposal says the time is the owner's usual slot; recommending the hours when followers are most active needs past results and comes later (WP-72).
 - The agent schedules the posts, and they go live through the unified API on the connected channels at the set time.
 - After publishing, the agent sends a short WhatsApp confirmation using an approved template, because the 24-hour window has usually closed. If publishing failed on a channel, it tells the owner and the Postly team which channel failed.
 
@@ -196,10 +209,11 @@ flowchart TD
 
 ### Can do in Phase 1
 
-- Run an onboarding conversation in WhatsApp and fill in a business profile.
+- Run an onboarding conversation in WhatsApp and fill in a business profile, with follow-up questions on vague answers.
+- Ask one focused follow-up question about a missing detail or a missing photo in the weekly update.
 - Understand text, voice messages, and images from the owner.
 - Write captions and hashtags in the chosen language and tone, using only verified factual details.
-- Edit existing photos according to one of the three styles.
+- Edit the owner's photos with a fixed set of operations (crop, straighten, brightness and contrast, title band, an optional badge, carousel order) according to one of the three styles.
 - Send drafts with approval buttons, receive changes, and save them immediately as rules.
 - Schedule approved posts to connected channels and report success or failure.
 - Send a weekly reminder and a simple monthly report.
@@ -211,7 +225,7 @@ flowchart TD
 - Suggest content on its own initiative.
 - Accept approvals from more than one number per business.
 - Learn a style from the business's existing Instagram or Facebook presence.
-- Generate images from scratch or create videos.
+- Generate images from scratch, change what a photo shows, or create videos.
 - Publish on networks other than Instagram and Facebook.
 - Reply to comments or direct messages on Instagram and Facebook.
 - Manage paid advertising.
@@ -222,6 +236,8 @@ flowchart TD
 | Three defined styles with examples | Phase 1 |
 | Connecting at least one channel at the end of onboarding | Phase 1 |
 | Weekly update, drafts, changes, and button approval | Phase 1 |
+| Hybrid agent for onboarding, weekly data gathering, drafts and fixes, behind checked tools | Phase 1 |
+| Photo edits from a fixed set, the badge element, and carousels | Phase 1 |
 | Safeguards for factual details and customer testimonials | Phase 1 |
 | Scheduling and publishing to Instagram and Facebook | Phase 1 |
 | Weekly reminder and publishing confirmations through approved templates | Phase 1 |
@@ -245,6 +261,7 @@ flowchart TD
 
 ### Open questions
 
+- Whether Gemini Flash Lite and 20 messages of history are enough for the agent; revisited if the manual eval or dev use shows it is too weak ([docs/agent.md](docs/agent.md#decisions)).
 - Payment provider: PayPlus and Grow are the candidates, with a placeholder implementation for now.
 - What ILS 300 includes, and the billing hold copy (H6).
 - Pilot support hours, and the data deletion period after cancellation (30 days provisionally).

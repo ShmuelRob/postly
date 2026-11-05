@@ -168,3 +168,15 @@ describe('process configuration', () => {
     });
   });
 });
+
+describe('BUSINESS_NUMBER', () => {
+  it('refuses a value that is not E.164, naming the variable', () => {
+    for (const bad of ['+0000000000', '0500000000', 'not-a-number', '+972 50 000 0000']) {
+      expect(() => loadConfig({ ...base, BUSINESS_NUMBER: bad })).toThrow(/BUSINESS_NUMBER/);
+    }
+  });
+
+  it('accepts a made-up E.164 number', () => {
+    expect(loadConfig({ ...base, BUSINESS_NUMBER: '+15550000001' }).businessNumber).toBe('+15550000001');
+  });
+});

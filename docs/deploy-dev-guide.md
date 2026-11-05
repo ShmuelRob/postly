@@ -100,7 +100,7 @@ notepad infra/environments/dev/terraform.tfvars
 | Value | What to put | Where it comes from |
 | --- | --- | --- |
 | `project_id` | `postly-dev-xyz` | the project from step 2 |
-| `business_number` | a made-up number in `+` format, for example `+15550000001` | **You do not need a real WhatsApp number.** Dev runs only on the simulators, so this is just a label (any non-empty string passes `src/config.ts`). Replace it with a real test number only when WP-41 connects WhatsApp |
+| `business_number` | a made-up number in `+` format, for example `+15550000001` | **You do not need a real WhatsApp number.** Dev runs only on the simulators, so this is just a label (it must still be valid E.164, `+` then 7 to 15 digits not starting with 0, so `+0000000000` is refused). Replace it with a real test number only when WP-41 connects WhatsApp |
 | `alert_email` | your email | where the alerts in step 7 go |
 
 Leave the rest out: `region` defaults to `me-west1`, `public_base_url` to the web service's `run.app` URL, `github_repository` to `ShmuelRob/postly`. The file is git-ignored.
@@ -245,6 +245,29 @@ returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no pu
 
 This adds about 18 USD a month.
 
+**The sandbox.** `postly-dev-sandbox` lets you use dev by hand: you play the owner in a WhatsApp-style chat, see the mock Instagram and Facebook feed, and pay on the mock checkout page ([deployment.md](deployment.md#the-sandbox)). Put your account in `sandbox_invokers = ["user:<your-google-account>@gmail.com"]` in `terraform.tfvars`. Then either:
+
+- **From a browser or a phone (no port forward).** Do steps 1 to 4 of the console's OAuth setup ([deployment.md](deployment.md#console-sign-in-one-time-steps); the same OAuth client serves both, and the console's load balancer is not needed), then add
+
+  ```hcl
+  sandbox_iap_client_id = "<CLIENT_ID>.apps.googleusercontent.com"
+  ```
+
+  plan, review and apply, and open the `sandbox_url` output:
+
+  ```powershell
+  terraform -chdir=infra/environments/dev output -raw sandbox_url
+  ```
+
+  Sign in with that Google account. Any other account gets IAP's "You don't have access" page. This costs nothing extra. If the apply fails on the IAP service agent's `run.invoker` grant, run `gcloud beta services identity create --service=iap.googleapis.com --project $PROJECT` and apply again.
+- **Through the proxy (works either way).**
+
+  ```powershell
+  gcloud run services proxy postly-dev-sandbox --region me-west1 --port 8081
+  ```
+
+  and open `http://localhost:8081`.
+
 **Logs.** Console → Logging → Logs Explorer, or:
 
 ```powershell
@@ -254,7 +277,7 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 Dev keeps logs 7 days.
 
-**WhatsApp, Instagram, Facebook and payments are not real on dev.** The image accepts only `POSTLY_PROVIDERS=simulators` (`src/config.ts`) until the vendor adapters (WP-41), and media lives in process memory. So no WhatsApp number answers, nothing is posted to Instagram or Facebook, and no payment is taken. The dev sandbox (WP-51, being built in a separate session) is meant to let you use dev by hand on top of the simulators, for example a sandbox chat page where you talk to Postly as the owner and see what would be posted; its scope is set in its own package, not here.
+**WhatsApp, Instagram, Facebook and payments are not real on dev.** The image accepts only `POSTLY_PROVIDERS=simulators` (`src/config.ts`) until the vendor adapters (WP-41), and media lives in process memory. So no WhatsApp number answers, nothing is posted to Instagram or Facebook, and no payment is taken. The dev sandbox (above) lets you use dev by hand on top of the simulators.
 
 **Alerts** go to `alert_email` (Cloud Monitoring, notification channel "Postly dev on-call"; you get a confirmation email first):
 
@@ -288,6 +311,7 @@ It worked when: the last Deploy run is green, `/health` returns `{"ok":true}`, `
 | `evaluation_missing_data must have a non-zero duration` | an older checkout of the monitoring module | update to `main` and apply again |
 | Deploy fails at `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | `github_repository` in `terraform.tfvars` differs from the repository's exact name, for example in letter case (`shmuelrob/postly`) | delete the line (the default is `ShmuelRob/postly`) or fix the case, apply again, then re-run Deploy |
 | Deploy fails at **Smoke check** with `curl: (22) ... 404` on `/healthz` | Cloud Run's front end reserves paths ending in `z` and answers them 404 before the app | update to `dev`: the smoke and uptime checks use `/health` (the probes inside Cloud Run keep `/healthz`) |
+| Every sandbox message returns 500 with `Invalid E.164 number` (path `to`), or Terraform refuses `business_number` | `business_number` is not E.164, for example `+0000000000` from an older example file | set a made-up valid number such as `+15550000001` in `terraform.tfvars`, apply again |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 

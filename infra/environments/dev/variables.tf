@@ -8,15 +8,24 @@ variable "project_id" {
 variable "business_number" {
   description = "Postly's WhatsApp number for this environment (any made-up number on the simulators; a test number after WP-41)."
   type        = string
+  validation {
+    condition     = can(regex("^\\+[1-9][0-9]{6,14}$", var.business_number))
+    error_message = "business_number must be an E.164 number such as +15550000001 (a made-up one is fine on the simulators)."
+  }
 }
 variable "alert_email" {
   type    = string
   default = null
 }
 variable "sandbox_invokers" {
-  description = "Who may open the dev sandbox through gcloud run services proxy, for example [\"user:you@example.com\"]."
+  description = "Who may open the dev sandbox (in a browser with sandbox_iap_client_id, or through gcloud run services proxy), for example [\"user:you@example.com\"]."
   type        = list(string)
   default     = []
+}
+variable "sandbox_iap_client_id" {
+  description = "The OAuth client id made by hand (the console's works); set, the sandbox opens at sandbox_url in a browser through IAP (docs/deployment.md)."
+  type        = string
+  default     = null
 }
 variable "region" {
   type    = string

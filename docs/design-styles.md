@@ -10,7 +10,7 @@ Each style is a set of strict rules applied by code to fixed HTML templates. Not
 | --- | --- |
 | Canvas | 1080 x 1350 (4:5) for every network and every carousel slide. The renderer still returns one file set per network, so sizes can diverge later without a contract change |
 | File | JPEG, quality 90, sRGB, no metadata |
-| Carousel | 2 to 10 slides; slide 1 is the cover with the overlay text, the rest are photos with the frame and logo only |
+| Carousel | 2 to 10 slides; slide 1 is the cover with the overlay text (and the badge, when there is one), the rest are photos with the frame and logo only; the `numbered` layout adds only a small slide counter to them ([Photo edits and badge](#photo-edits-and-badge)) |
 | Direction | `rtl` for Hebrew and Arabic, `ltr` for English and Russian; a mix follows the first language in `languages` |
 | Fonts | Self-hosted from the repository under the SIL Open Font License; no network access during rendering |
 | Overlay text | At most 2 lines and 40 characters. Text is shrunk down to the style's minimum size; if it still does not fit, rendering fails and the caller shortens it |
@@ -40,6 +40,32 @@ Sources:
 - Meta's statement that images with under 20% text generally perform better, after the hard limit was removed in 2021, as reported by [Xanthos Digital](https://www.e-xanthos.co.uk/facebook-officially-removes-20-text-limit-in-ad-images) and [Bronco](https://www.bronco.co.uk/our-ideas/?p=6427). Meta's own current help page was not checked directly; worth confirming.
 - Instagram size guides on the 4:5 feed size and the 3:4 profile-grid crop: [Inro](https://www.inro.social/blog/instagram-post-size), [SocialBu](https://socialbu.com/blog/instagram-post-aspect-ratio). Vendor blogs; they disagree on which edges the grid trims, and the 64 px safe area covers both readings.
 - Claude skills: `frontend-design` and `artifact-design` cover web UI, not social posts, and add nothing beyond the hierarchy and contrast rules above. The community `hebrew-rtl-best-practices` skill (skills-il) also says not to track Hebrew.
+
+## Photo edits and badge
+
+Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#photo-edits)), queued for the human under H2. The drafts agent chooses these values in a `DesignSpec`; the engine applies them and refuses anything outside the ranges. Nothing here creates or alters what a photo shows.
+
+| Operation | Rule |
+| --- | --- |
+| Order | Rotate, then crop, then tone, then the style template |
+| Crop | A normalized rectangle (`x`, `y`, `w`, `h` in 0..1) used as the focus of the 4:5 cover crop, in place of the `image_review` crop; it must keep at least 720 source pixels across |
+| Straighten | -10 to 10 degrees in 0.5 steps; the engine crops the corners so no empty edge shows |
+| Brightness and contrast | -0.3 to 0.3 each, 0 unchanged, applied linearly; no filters or color grading |
+| Title | The overlay text above, unchanged rules |
+| Carousel layout | `standard`: the rule in Output. `numbered`: the same, plus a slide counter (such as `2/5`) on every slide after the cover, in the style's secondary font at 32 px, in the bottom start corner inside the safe area, on a small panel of the style's background at 4.5:1; it is the only text on those slides |
+
+### Badge
+
+| Rule | Value |
+| --- | --- |
+| Kinds | `discount` (such as `-15%`), `price` (such as `₪29.90`), and the fixed-word stickers `new` (חדש), `sale` (מבצע), `holiday` (חג שמח) per language |
+| Text | At most 8 characters, one line, Latin digits, the % sign after the number |
+| Facts | Checked in code before rendering: `discount` and `price` equal a recorded fact; `sale` needs a promotion or discount fact; `holiday` needs a holiday in the post's week ([agent.md](agent.md#badge-element)) |
+| Shape | Clean: a square-cornered accent tag. Warm: a round stamp in the accent color with the card's paper tone. Dynamic: a circle in the secondary color rotated by -8 degrees with the shadow offset edge |
+| Size and place | A 220 px circle or an equivalent box, cover slide only, the top corner opposite the logo, inside the safe area, never over the title panel or the logo |
+| Contrast | Text 4.5:1 against the badge; the badge 3:1 against what it sits on (the graphic-contrast rule above) |
+| Text area | The title panel and the badge together stay within the 20% text-to-image rule |
+| Count | At most one badge per post |
 
 ## Brand colors and logo
 
