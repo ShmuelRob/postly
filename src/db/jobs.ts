@@ -1,12 +1,29 @@
 import { PgBoss } from 'pg-boss';
-import { withLogContext } from '../shared/logger.js';
-import { log } from '../shared/logger.js';
+import { log, withLogContext } from '../shared/logger.js';
+import { currentMeter, metrics, withSpan } from '../shared/telemetry.js';
 
 // Background jobs (technical-design.md: pg-boss). pg-boss opens its own connections, so it lives in
 // src/db/ with the other drivers. Handlers are registered by name; the queue behind them is an
 // interface, so tests run the same registrations in memory.
 
 export type JobHandler<T = unknown> = (data: T) => Promise<void>;
+
+/** One job run: its log context, its span, and its duration and failure metrics (docs/observability.md). */
+export async function runJob(name: string, jobId: string, run: () => Promise<void>): Promise<void> {
+  await withLogContext({ jobId, jobName: name }, () =>
+    withSpan(`job ${name}`, { job: name, jobId }, async () => {
+      const started = performance.now();
+      try {
+        await run();
+        metrics.record('postly.jobs.duration', performance.now() - started, { job: name, outcome: 'ok' });
+      } catch (error) {
+        metrics.record('postly.jobs.duration', performance.now() - started, { job: name, outcome: 'failed' });
+        metrics.count('postly.jobs.failures.count', { job: name });
+        throw error;
+      }
+    }),
+  );
+}
 
 export interface JobQueue {
   /** `policy: 'short'` keeps at most one waiting job per `singletonKey` (the inbound-burst job). */
@@ -39,6 +56,8 @@ export interface PgBossQueueOptions {
   migrate?: boolean;
   /** With `migrate`, whether pg-boss also creates its schema (default: same as `migrate`). The migration job creates it first, owned by the job login. */
   createSchema?: boolean;
+  /** Reports `postly.queue.depth` (the worker only, so the series is not doubled by web). */
+  observeDepth?: boolean;
 }
 
 /** pg-boss's own pool in every process, on the `app_jobs` login; the connection budget counts it (docs/security.md, D7). */
@@ -54,12 +73,25 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
   const boss = new PgBoss(pgBossConstructorOptions(options));
   boss.on('error', (error) => log.error('pg-boss error', { error: String(error) }));
   await boss.start();
+  // Queue depth (docs/observability.md, Metrics), read from pg-boss at each export.
+  const depth = options.observeDepth ? currentMeter()?.createObservableGauge('postly.queue.depth', { description: 'pg-boss jobs waiting or running' }) : undefined;
+  depth?.addCallback(async (result) => {
+    try {
+      for (const q of await boss.getQueues()) {
+        if (!/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(q.name)) continue;
+        result.observe(q.queuedCount, { queue: q.name, state: 'queued' });
+        result.observe(q.activeCount, { queue: q.name, state: 'active' });
+      }
+    } catch (error) {
+      log.warn('queue depth not read', { error: String(error) });
+    }
+  });
   return {
     async register(name, handler, opts) {
       // The policy is fixed when the queue is created; a sender may have created it first.
       if (!(await boss.getQueue(name))) await boss.createQueue(name, opts?.policy ? { policy: opts.policy } : {});
       await boss.work(name, async (jobs) => {
-        for (const job of jobs) await withLogContext({ jobId: job.id, jobName: name }, () => handler(job.data as never));
+        for (const job of jobs) await runJob(name, job.id, () => handler(job.data as never));
       });
     },
     async send(name, data, opts) {
@@ -74,7 +106,7 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
       // The policy is fixed when the queue is created, so a scheduled queue is created here.
       if (!(await boss.getQueue(name))) await boss.createQueue(name, { policy: 'singleton', retryLimit: 3 });
       await boss.work(name, async (jobs) => {
-        for (const job of jobs) await withLogContext({ jobId: job.id, jobName: name }, () => handler(null));
+        for (const job of jobs) await runJob(name, job.id, () => handler(null));
       });
       await boss.schedule(name, cron, null, { tz: 'UTC' });
     },
@@ -116,7 +148,7 @@ export function createMemoryQueue(): JobQueue & {
     async drain() {
       let ran = 0;
       for (let job = pending.shift(); job; job = pending.shift()) {
-        await withLogContext({ jobId: `memory-${ran + 1}`, jobName: job.name }, () => handlers.get(job.name)!(job.data as never));
+        await runJob(job.name, `memory-${ran + 1}`, () => handlers.get(job.name)!(job.data as never));
         ran++;
       }
       return ran;

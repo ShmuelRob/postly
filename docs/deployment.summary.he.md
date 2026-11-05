@@ -2,7 +2,7 @@
 
 תקציר של [deployment.md](deployment.md). שום דבר עוד לא נפרס: סוכנים כותבים ומאמתים את הקוד בלבד, ויצירת משאבים בענן, הוצאת כסף ופריסה ממתינים לאדם (נקודת אישור H8).
 
-- **אימג' אחד:** Node 26 עם Chromium של Playwright ו-sharp, רץ כמשתמש שאינו root. הפקודה בוחרת תהליך: `web` (Fastify, ה-webhooks), `worker` (pg-boss), `console` (הקונסולה הפנימית, שירות נפרד עם ingress פנימי בלבד ובלי גישה ציבורית, ראו [security.summary.he.md](security.summary.he.md)) או `migrate` (משימת המיגרציה). קוד הבדיקות וה-playground לא נכנסים לאימג'.
+- **אימג' אחד:** Node 26 עם Chromium של Playwright ו-sharp, רץ כמשתמש שאינו root. הפקודה בוחרת תהליך: `web` (Fastify, ה-webhooks), `worker` (pg-boss), `console` (הקונסולה הפנימית, שירות נפרד עם ingress פנימי ו-load balancer, בלי גישה ציבורית; הצוות נכנס דרך load balancer עם IAP, ראו [security.summary.he.md](security.summary.he.md)) או `migrate` (משימת המיגרציה). קוד הבדיקות וה-playground לא נכנסים לאימג'.
 - **ה-worker:** מריץ את `WeeklyUpdates.tick` כל שעה עגולה, בתור pg-boss במדיניות singleton, כך שגם עם כמה מופעים רץ רק tick אחד בכל רגע.
 - **משימת המיגרציה:** מריצה את המיגרציות (שיוצרות משתמש מסד נתונים לכל תפקיד), קובעת את הסיסמאות מ-Secret Manager, ויוצרת משתמש נפרד ל-pg-boss. Terraform לא יוצר תפקידים במסד.
 - **Terraform:** מודולים לרשת פרטית, Artifact Registry, חשבונות שירות בהרשאות מינימליות, Secret Manager (שמות בלבד, בלי ערכים), Cloud SQL עם כתובת פרטית בלבד, דלי מדיה פרטי עם מחזור חיים, Cloud Run ל-web ול-worker, וניטור: התראות, מדדים מבוססי לוגים, SLO לזמינות ה-web ושלושה לוחות מחוונים (observability.md). שלוש סביבות: dev (זולה, תמיד פעילה, על סימולטורים או חשבונות בדיקה, פריסה אוטומטית בלי מאשר מענף `dev`, מופע אחד, אותם גדלים כמו stage ו-prod, לוגים נשמרים 7 ימים, וזה חל על כל הפרויקט, לכן ל-dev פרויקט משלו), stage (בדיקה לפני prod על חשבונות בדיקה) ו-prod; Terraform גם מפעיל את ה-APIs, מייצר סיסמאות אקראיות לכל משתמשי המסד, לסוד ה-webhook ולמשתמש ה-postgres (וכותב מהם את כתובת המנהל), יוצר את סביבות GitHub עם המשתנים, ושורש `infra/bootstrap` יוצר דלי state פרטי עם גרסאות. הסודות שנוצרו נמצאים ב-state, וזה מקובל רק כי הדלי פרטי ועם גרסאות.
@@ -27,9 +27,16 @@
 - **השער האמיתי לפריסה:** לחשבון הפריסה אין הרשאה ישירה לנתונים, אבל הוא יכול להריץ כל אימג' כמשימת המיגרציה, שיש לה גישת מנהל למסד. לכן השער האמיתי הוא סביבת GitHub: מאשרים נדרשים ב-stage וב-prod, ומדיניות שמתירה לכל סביבה פריסה רק מהענף שלה (`dev`, `stage`, או `main` ל-prod). הפעולות בתהליך הפריסה נעוצות לפי SHA.
 - **בלי לוג של פקודות SQL:** הדגל `log_statement` של Cloud SQL חייב להישאר `none`, כי פקודות ALTER ROLE של משימת המיגרציה מכילות את הסיסמאות. Terraform קובע אותו במפורש.
 - **לוגים:** כל תהליך כותב שורת JSON אחת לכל אירוע ל-stdout בפורמט של Cloud Logging, עם מזהי בקשה, עסק, הודעה ו-job, בלי תוכן לקוח, טלפונים או סודות. פירוט ב-[observability.summary.he.md](observability.summary.he.md).
+- **מדדים, traces ושגיאות (WP-48):** web, worker ו-console שולחים מדדי OpenTelemetry ל-Cloud Monitoring (`workload.googleapis.com/postly.*`) ו-spans ל-Cloud Trace; כל שורת `ERROR` מגיעה ל-Error Reporting. השליחה פעילה רק ב-dev, stage ו-prod. ה-APIs נוספו ב-Terraform; לחשבונות השירות כבר יש הרשאות כתיבת מדדים ו-traces. שמות המדדים וה-labels (בשביל WP-49) ב-observability.md.
 - **`POSTLY_ENV` חובה:** תהליך בלי המשתנה לא עולה, כך ששירות פרוס לא נופל בטעות לסוד ה-webhook הציבורי.
 - **קודם dev:** אפשר להריץ רק את `infra/bootstrap` ואת `infra/environments/dev`. זה יוצר את ענף `dev`, ההגנה שלו, סביבת GitHub של dev והמשתנים שלה, בלי שום דבר של stage או prod. ההגנה על `main` וענף `stage` נוצרים רק בשורשים של prod ו-stage, ועד אז דחיפות ל-`stage` או ל-`main` מדלגות על הפריסה. השורשים לא חולקים משאבי GitHub, ולכל אחד state בתחילית משלו בדלי `<project>-tfstate` (דלי אחד לכל פרויקט). ה-apply הראשון רץ בשלושה מעברים (Cloud Run לא יוצר שירות מאימג' `bootstrap` שלא קיים); המדריך המלא: [deploy-dev-guide.md](deploy-dev-guide.md).
 
 - לקונסולה חשבון שירות משלה (`postly-<env>-console`) שקורא רק את סיסמאות ההתחברות של תהליך הקונסולה ואת סוד ה-webhook (WP-84).
 
 - תקציב החיבורים ל-Cloud SQL כולל גם את שירות הקונסולה (מופע אחד); `DB_POOL_MAX` נקבע ב-Terraform (WP-87).
+## כניסה לקונסולה: צעדים חד-פעמיים (WP-82)
+- Terraform בונה את ה-load balancer עם IAP רק כשהמשתנה `console_iap_client_id` מוגדר; לפני כן לא נוצר דבר ולא משלמים.
+- ידנית, פעם אחת בכל פרויקט: מסך הסכמה (Branding) מסוג External, ‏OAuth client מסוג Web application עם redirect URI של IAP, הוספת הסוד ל-`postly-<env>-console-iap-client-secret`, ויצירת סוכן השירות של IAP (`gcloud beta services identity create --service=iap.googleapis.com`).
+- ב-`terraform.tfvars`: ‏`console_iap_client_id`, ‏`console_members` (ריק כברירת מחדל) ו-`console_domain` (או בלי דומיין: `sslip.io`, רק ל-dev). אחר כך רשומת `A` לכתובת `console_ip`; התעודה המנוהלת פעילה תוך כשעה.
+- משתני סביבה חדשים: `CONSOLE_AUTH`, ‏`CONSOLE_IAP_AUDIENCE`, ‏`CONSOLE_HOST`, ‏`CONSOLE_DEV_ACTOR`.
+- עלות: כ-18 דולר בחודש לכל סביבה.

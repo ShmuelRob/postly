@@ -41,6 +41,10 @@ module "postly" {
   business_number   = var.business_number
   github_repository = var.github_repository
   alert_email       = var.alert_email
+  # Console sign-in (docs/deployment.md, Console sign-in: one-time steps).
+  console_iap_client_id = var.console_iap_client_id
+  console_domain        = var.console_domain
+  console_members       = var.console_members
   # Sizes: docs/deployment.md, Sizing (same in every environment).
   sql_tier                  = "db-custom-2-7680"
   sql_high_availability     = false

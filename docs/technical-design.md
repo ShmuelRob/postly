@@ -227,7 +227,11 @@ T1, 2026-11-04. There is no trial: the owner pays at once, at ILS 300 a month (P
 - **Price.** One setting, the `plan_price` table (database-schema.md): append-only, so every change is kept with who made it; the current price is the newest row. The team changes it from the console. Billing reads it each time it creates a link and passes it to `createPaymentLink`.
 - **Payment link in onboarding.** When onboarding activates the business (`ONBOARDING_COMPLETED`), the owner gets the activation message and then billing's `sendPaymentLink`: the provider link is created with the current price, the `subscription` row is stored `pending`, and the link goes to the approver in WhatsApp (the owner just wrote, so the window is open). A send that fails is logged and opens a `payment_link_failed` console item (details: the error); the business stays active and the team resends the link. Without a payment provider wired, no link is sent.
 - **Status.** The provider's callback moves the row (`pending` to `active` on payment; state-machines.md, Subscription). The owner is told on every change.
-- **`past_due` (proposed, not built).** 7 days of grace from the moment the row became `past_due`, with template reminders on days 1, 3 and 6; then the publishing guard holds the business's publications until payment. Nothing is cancelled or deleted. Waiting for the human (review queue).
+- **Billing hold (T16, 2026-11-05).** An unpaid subscription pauses publishing after a grace period; nothing is cancelled or deleted.
+  - *Grace start.* `subscription.grace_started_at` is set when the row is first stored `pending` (the first payment link; a resent link does not restart it) and when the row becomes `past_due` (`PAYMENT_FAILED`). `PAYMENT_SUCCEEDED` clears it, with `reminders_sent` and `held_at`.
+  - *The daily tick* (`billing-hold`, 05:00 UTC, worker) takes every `active` business (scheduler role) and, under the billing role, its subscription when it is `pending` or `past_due`. Day *n* is the whole days since `grace_started_at`. On days 1, 3 and 6 it sends one reminder template (`reminders_sent` counts them; a missed tick sends only the latest due reminder, never two at once): `payment_reminder` with a fresh payment link for `pending` (as `sendPaymentLink` does, which replaces `provider_customer_id`), `payment_failed` for `past_due` (no new link, which would detach the provider subscription; the owner replies and the team helps). From day 7, when `held_at` is empty, it sets `held_at`, applies the business `PAUSE` (source `system`) and sends `publishing_on_hold`. A business that is not `active` (team-paused, onboarding, cancelled) is skipped, so the hold never overrides or doubles a team pause.
+  - *The pause* is the existing business pause, not a new path: the publishing job defers every publication of a `paused` business (`business_pause`) and re-checks right before the provider call; approvals answer `wrong_state`, as for a team pause. Posts, versions, approvals, publications and data are untouched.
+  - *Payment.* When the callback applies `PAYMENT_SUCCEEDED`, billing clears the hold columns, tells the owner (`BILLING_COPY.active`), and, only if `held_at` was set, applies the business `RESUME`. Deferred publications then publish on the next publishing tick, late if their time passed. A `RESUME` refused by its guard (no `verified` channel) is logged and leaves the business to the team.
 - Local runs and tests use the payment simulator; the vendor (PayPlus or Grow) is still open.
 
 ## Cancellation, data deletion and the monthly report
@@ -255,14 +259,15 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Start or clear a handoff | `startHandoff` / `clearHandoff` of the workflow module |
 | Retry a failed publication | Publication `RETRY_REQUESTED`, and the post `PUBLISHING_STARTED` when it is `failed`; the publishing job still checks the approved hash before anything goes live; resolves the matching `publication_failed` items |
 | Pause or resume a business | Business `PAUSE` / `RESUME` (resume needs a `verified` channel connection) |
-| Pause or resume all publishing | `system_control` through `setGlobalPause` |
-| See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, `by`, optional `reason`) inserts a `plan_price` row. A new price applies to payment links sent afterwards |
+| Pause or resume all publishing | `system_control` through `setGlobalPause`, with the signed-in team member as `paused_by` |
+| See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, optional `reason`) inserts a `plan_price` row with the signed-in team member as `changed_by`. A new price applies to payment links sent afterwards |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
 
-Authentication is not defined yet. The console runs as its own process (`main.js console`) and its own Cloud Run service with internal-only ingress and no public invoker; the public web service never serves it. Locally the routes answer only the loopback address (anything else gets 403); deployed, the gate is the ingress and IAM. Neither is a sign-in, which must exist before any wider access ([security.md](security.md#console-exposure)).
+**Sign-in (WP-82).** The console runs as its own process (`main.js console`) and its own Cloud Run service; the public web service never serves it. Team members sign in with their Google accounts through Identity-Aware Proxy on an external HTTPS load balancer in front of the console service (ingress internal and load balancer, no public invoker). The console verifies IAP's signed header `x-goog-iap-jwt-assertion` on every request (signature, audience, expiry) and refuses a request without a valid one (401). The verified email is the actor of every action: the global pause's `paused_by`, the price's `changed_by`, the cancellation, and a log line per action; a `by` in a request body is only a note. Locally and in tests a dev-only bypass (`CONSOLE_AUTH=dev-bypass`) answers only loopback addresses with a fixed actor, and refuses to start in stage or prod. Details: [security.md](security.md#console-exposure).
 
 ## Security
 
+- **Request limits** (security.md D12): webhook bodies up to 256 KiB (413 before any signature check), console bodies up to 64 KiB; the console alone has a per-process limit per minute (300, provisional; 429). The webhooks are never rate-limited in the app, so unsigned floods cannot refuse genuine events; Cloud Armor is the planned flood guard.
 - Row-level security on all business data, and each model call receives only that business's context.
 - Provider tokens and secrets stay in a secret manager.
 - Webhooks are verified before processing.
@@ -270,6 +275,7 @@ Authentication is not defined yet. The console runs as its own process (`main.js
 - Payment card details are never stored.
 - The console exposure and the ranked security debts are in [security.md](security.md).
 - Logs are structured JSON from one shared logger, carry request, business, message and job ids, and never carry customer content, phone numbers or secrets; the logger redacts them in code ([observability.md](observability.md)).
+- Metrics go to Cloud Monitoring and traces to Cloud Trace through OpenTelemetry, and every error log line is a Cloud Error Reporting event. Each metric is declared once with fixed label values, and span attributes are limited to ids and code words, so no customer content and no business id reach a label or an attribute ([observability.md](observability.md#metrics-wp-48)).
 
 ## Environments
 
@@ -284,4 +290,4 @@ Authentication is not defined yet. The console runs as its own process (`main.js
 - Final style spec and a real Hebrew example set, replacing the provisional ones in [design-styles.md](design-styles.md).
 - Conversation copy, WhatsApp template text, and channel connection guidance.
 - Success metrics and acceptance criteria.
-- Console sign-in for the team, monitoring choice, and media retention policy.
+- Monitoring choice and media retention policy. (Console sign-in was decided in WP-82: Google IAP.)

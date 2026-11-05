@@ -16,6 +16,11 @@ const BANNED: { name: string; pattern: RegExp }[] = [
   { name: 'set_config', pattern: /\bset_config\s*\(/i },
   { name: 'create temp', pattern: /\bcreate\s+(temp|temporary)\b/i },
   { name: 'discard', pattern: /\bdiscard\s+(all|plans|sequences|temp|temporary)\b/i },
+  // Dynamic SQL is how a banned statement would slip past this text check (docs/security.md, D10; WP-86).
+  // `sql.raw(...)`, the driver's `.unsafe(...)`, and Drizzle's `.execute('<string>')`, which runs a plain
+  // string as SQL. A string held in a variable and passed to `.execute(name)` is not caught: the guard
+  // narrows the gap, it does not close it.
+  { name: 'dynamic sql', pattern: /\bsql\.raw\s*\(|\.unsafe\s*\(|\.execute\s*\(\s*['"`]/ },
 ];
 
 function sourceFiles(dir: string): string[] {
@@ -26,7 +31,7 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Banned statements in files under root/src, root/test and root/playground, outside src/db/ and test/fixtures/. */
+/** Banned statements in files under root/src, root/test and root/playground, outside src/db/, test/db/ (the superuser test setup) and test/fixtures/. */
 function scan(root: string): { file: string; rule: string }[] {
   const files = ['src', 'test', 'playground'].flatMap((top) => {
     try {
@@ -37,7 +42,7 @@ function scan(root: string): { file: string; rule: string }[] {
   });
   return files
     .map((file) => relative(root, file).split(sep).join('/'))
-    .filter((file) => !file.startsWith('src/db/') && !file.startsWith('test/fixtures/'))
+    .filter((file) => !file.startsWith('src/db/') && !file.startsWith('test/db/') && !file.startsWith('test/fixtures/'))
     .flatMap((file) => {
       const text = readFileSync(join(root, file), 'utf8');
       return BANNED.filter((b) => b.pattern.test(text)).map((b) => ({ file, rule: b.name }));
@@ -52,6 +57,9 @@ describe('raw SQL guard', () => {
     expect(found).toEqual([
       'src/modules/x/create-temp.ts: create temp',
       'src/modules/x/discard.ts: discard',
+      'src/modules/x/dynamic.ts: dynamic sql',
+      'src/modules/x/execute-string.ts: dynamic sql',
+      'src/modules/x/reset.ts: dynamic sql',
       'src/modules/x/reset.ts: reset',
       'src/modules/x/set-app.ts: set app.*',
       'src/modules/x/set-config.ts: set_config',

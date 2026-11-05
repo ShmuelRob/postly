@@ -5,6 +5,7 @@ import type { PublishingProvider } from '../../contracts/providers/publishing.js
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { log } from '../../shared/logger.js';
+import { metrics, withSpan } from '../../shared/telemetry.js';
 
 // The publishing job (state-machines.md, Publishing guard and Publication; technical-design.md,
 // Scheduling and publishing flow). Code only: a publication reaches the provider only when it is tied
@@ -233,7 +234,23 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     }
   }
 
+  /** One run, in a span and counted by outcome and network (docs/observability.md, Metrics and Tracing). */
   async function runPublication(publicationId: string): Promise<PublishOutcome> {
+    const seen: { network?: Network } = {};
+    return withSpan('publication run', { publicationId }, async (span) => {
+      let outcome: PublishOutcome['outcome'] = 'failed';
+      try {
+        const result = await runPublicationOnce(publicationId, seen);
+        outcome = result.outcome;
+        return result;
+      } finally {
+        span.set({ outcome, network: seen.network });
+        metrics.count('postly.publications.count', { outcome, network: seen.network ?? 'none' });
+      }
+    });
+  }
+
+  async function runPublicationOnce(publicationId: string, seen: { network?: Network }): Promise<PublishOutcome> {
     const businessId = await businessOf(publicationId);
     if (!businessId) return { outcome: 'refused', reason: 'wrong_state' };
     const handoff = !(await deps.mayAutoReply(businessId));
@@ -250,6 +267,7 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     let stage: 'internal' | 'provider' = 'internal';
     try {
       const { pub, request } = await load(businessId, publicationId);
+      seen.network = pub.network;
       postId = pub.postId;
       // The post's first publication moves it to publishing; for later ones the post is already there.
       await event(businessId, 'post', pub.postId, 'PUBLISHING_STARTED');

@@ -13,6 +13,7 @@ import {
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { log, withLogContext } from '../../shared/logger.js';
+import { metrics, withSpan } from '../../shared/telemetry.js';
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -273,7 +274,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
       }
       const ids = step.burst.messages.map((x) => x.id);
       try {
-        await withLogContext({ businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id }, () => handler.handleInbound(step.burst));
+        const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
+        await withLogContext(context, () => withSpan('inbound burst', context, () => handler.handleInbound(step.burst)));
       } catch (error) {
         // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
         await db.withBusiness('messaging', businessId, (tx) =>
@@ -313,6 +315,13 @@ export function createMessaging(options: MessagingOptions): Messaging {
 
   async function receive(input: InboundMessage): Promise<ReceiveOutcome> {
     const message = InboundMessage.parse(input);
+    const outcome = await receiveParsed(message);
+    // docs/observability.md, Metrics: once per provider message (a retried webhook is `duplicate`).
+    metrics.count('postly.messages.count', { direction: 'in', kind: message.content.kind, outcome });
+    return outcome;
+  }
+
+  async function receiveParsed(message: InboundMessage): Promise<ReceiveOutcome> {
     const businessId = await lookupBusiness(message.from);
 
     if (!businessId) {
@@ -380,6 +389,18 @@ export function createMessaging(options: MessagingOptions): Messaging {
     throw new WindowClosedError(to, await lastInboundAt(businessId, to));
   }
 
+  /** One provider send, counted as `sent` or `failed` (docs/observability.md, Metrics). */
+  async function sent(kind: 'text' | 'buttons' | 'template', send: () => Promise<SendResult>): Promise<SendResult> {
+    try {
+      const result = await send();
+      metrics.count('postly.messages.count', { direction: 'out', kind, outcome: 'sent' });
+      return result;
+    } catch (error) {
+      metrics.count('postly.messages.count', { direction: 'out', kind, outcome: 'failed' });
+      throw error;
+    }
+  }
+
   async function recordOutbound(
     businessId: string,
     kind: 'text' | 'buttons' | 'template',
@@ -435,15 +456,15 @@ export function createMessaging(options: MessagingOptions): Messaging {
     async sendText(businessId, request) {
       await requireOpenWindow(businessId, request.to);
       const payload = request.mediaUrl ? { mediaUrl: request.mediaUrl } : null;
-      return recordOutbound(businessId, 'text', request.to, request.text, payload, await provider.sendText(request));
+      return recordOutbound(businessId, 'text', request.to, request.text, payload, await sent('text', () => provider.sendText(request)));
     },
     async sendButtons(businessId, request) {
       await requireOpenWindow(businessId, request.to);
-      const result = await provider.sendButtons(request);
+      const result = await sent('buttons', () => provider.sendButtons(request));
       return recordOutbound(businessId, 'buttons', request.to, request.text, { buttons: request.buttons, mediaUrl: request.mediaUrl }, result);
     },
     async sendTemplate(businessId, request) {
-      const result = await provider.sendTemplate(request);
+      const result = await sent('template', () => provider.sendTemplate(request));
       return recordOutbound(businessId, 'template', request.to, null, { templateName: request.templateName, language: request.language, variables: request.variables }, result);
     },
     windowClosesAt,

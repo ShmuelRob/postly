@@ -5,6 +5,7 @@ import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTas
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
 import type { Database } from '../../db/index.js';
 import { consoleItem, modelRun, modelTaskConfig, promptTemplate } from '../../db/schema.js';
+import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** Resolves a business's media asset to a URL the model provider can fetch (voice notes, photos). */
 export type MediaUrlResolver = (businessId: string, mediaAssetId: string) => Promise<string>;
@@ -58,6 +59,8 @@ export class ModelTaskFailedError extends Error {
 type Config = typeof modelTaskConfig.$inferSelect;
 type Target = { provider: string; model: string };
 type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string };
+
+const attemptOutcome = (a: Attempt) => (a.valid ? 'valid' : a.result ? 'invalid' : 'provider_error');
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -132,10 +135,18 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
 
       for (let n = 1; n <= config.maxRetries + 1; n++) {
         const started = performance.now();
-        const outcome = await attempt(businessId, task, parsedInput, config, template.template, target);
-        const rejected = outcome.valid && options.check ? options.check(outcome.output as never) : null;
-        if (rejected !== null) Object.assign(outcome, { valid: false, error: `code check: ${rejected}` });
+        const outcome = await withSpan(`model ${task}`, { task, attempt: n, businessId }, async (span) => {
+          const result = await attempt(businessId, task, parsedInput, config, template.template, target);
+          const rejected = result.valid && options.check ? options.check(result.output as never) : null;
+          if (rejected !== null) Object.assign(result, { valid: false, error: `code check: ${rejected}` });
+          span.set({ outcome: attemptOutcome(result) });
+          return result;
+        });
         const durationMs = Math.round(performance.now() - started);
+        // docs/observability.md, Metrics: one call, its latency and its cost, by task.
+        metrics.count('postly.model.calls.count', { task, outcome: attemptOutcome(outcome) });
+        metrics.record('postly.model.latency', durationMs, { task, outcome: attemptOutcome(outcome) });
+        if (outcome.result) metrics.count('postly.model.cost_usd', { task }, outcome.result.costUsd);
         const rows = await deps.db.withBusiness('model', businessId, (tx) =>
           tx
             .insert(modelRun)

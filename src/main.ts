@@ -3,12 +3,13 @@ import { loadConfig } from './config.js';
 import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
 import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
-import { createConsole } from './modules/console/index.js';
+import { createConsole, createIapVerifier, type ConsoleAuth } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 import { log, setLogLabels } from './shared/logger.js';
+import { startTelemetry } from './shared/telemetry-gcp.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
@@ -32,11 +33,19 @@ async function main(command: string | undefined) {
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
   const config = loadConfig(process.env, command);
+  // Metrics and traces (docs/observability.md, WP-48): exported only in dev, stage and prod.
+  const stopTelemetry = startTelemetry({
+    service: command,
+    env: config.env,
+    exportMode: process.env.TELEMETRY_EXPORT,
+    project: process.env.GOOGLE_CLOUD_PROJECT,
+    sampleRatio: process.env.TRACE_SAMPLE_RATIO,
+  });
   log.info('database pools', { poolMax: config.dbPoolMax, maxConnections: config.maxConnections });
   // Simulated mode (docs/deployment.md, "Simulated mode"): config allows it only in local, test and dev.
   const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
   // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
-  const queue = await createPgBossQueue({ connectionString: config.jobsUrl });
+  const queue = await createPgBossQueue({ connectionString: config.jobsUrl, observeDepth: command === 'worker' });
   const { app, db, close } = await createSimulatedApp({
     store,
     burstWake: jobBurstWake(queue),
@@ -57,13 +66,23 @@ async function main(command: string | undefined) {
     stops.push(app.start(), () => server.close(), () => queue.stop());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else if (command === 'console') {
-    // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
-    const access = deployed ? 'private-ingress' : 'loopback';
-    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access, ...(deployed ? { trustProxyHops: 1 } : {}) });
+    // Behind a load balancer with IAP (docs/security.md, "Console exposure"); the dev bypass only locally.
+    const c = config.console;
+    if (c.auth === 'iap' && !c.iapAudience) log.warn('console sign-in is not configured (CONSOLE_IAP_AUDIENCE); every console request is refused');
+    const auth: ConsoleAuth =
+      c.auth === 'dev-bypass' ? { mode: 'dev-bypass', actor: c.devActor } : { mode: 'iap', ...(c.iapAudience ? { verifier: createIapVerifier({ audience: c.iapAudience }) } : {}) };
+    const server = buildConsoleServer({
+      console: createConsole(db, app.workflow),
+      // The cancellation keeps its reason; the actor is in the console action log line (WP-46 audit rows later).
+      cancelBusiness: (id) => app.cancellation.cancel(id, 'console'),
+      auth,
+      ...(deployed ? { trustProxyHops: 1 } : {}),
+      ...(c.auth === 'iap' && c.host ? { allowedHosts: [c.host] } : {}),
+    });
     stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
-    await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });
+    await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport, ...(app.billingHold ? { billingHold: app.billingHold } : {}) });
     // Cloud Run services need a port to probe; the worker serves only its health check.
     const health = Fastify({ logger: false });
     health.get('/healthz', async () => ({ ok: true }));
@@ -77,6 +96,7 @@ async function main(command: string | undefined) {
     for (const stop of stops) await stop();
     await close();
     if ('close' in store) await store.close();
+    await stopTelemetry();
     process.exit(0);
   });
 }

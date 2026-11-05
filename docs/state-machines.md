@@ -20,7 +20,7 @@ Stored in `business.status`.
 | From | Event | To | Guard |
 | --- | --- | --- | --- |
 | `onboarding` | `ONBOARDING_COMPLETED` | `active` | Profile complete and approved; at least one channel connection is `verified` |
-| `active` | `PAUSE` | `paused` | Team action from the console |
+| `active` | `PAUSE` | `paused` | Team action from the console, or the billing hold (source `system`, technical-design.md, Billing) |
 | `paused` | `RESUME` | `active` | At least one channel connection is `verified` |
 | `onboarding` | `CANCEL` | `cancelled` | |
 | `active` | `CANCEL` | `cancelled` | |
@@ -186,5 +186,7 @@ Stored in `subscription.status`. The payment provider is a placeholder in Phase 
 | `past_due` | `CANCELLED` | `cancelled` | |
 
 `cancelled` is terminal. There is no trial (decided 2026-11-04, replacing `trialing` and `TRIAL_ENDED`): the row is created `pending` when onboarding sends the payment link, and `pending` means the link was sent and nothing is paid yet. A `pending` subscription never becomes `past_due`; it stays `pending` until the owner pays or the business is cancelled.
+
+The billing hold (T16) adds no state: an unpaid `pending` or `past_due` row has a grace period of 7 days from `grace_started_at`, and after it billing applies the business `PAUSE`. `PAYMENT_SUCCEEDED` clears the hold and applies `RESUME` only when billing set the pause (`held_at`). See technical-design.md, Billing.
 
 **`past_due` (proposed, waiting for the human; not implemented yet).** The grace period is not a state: it is measured from the moment the row became `past_due`. For 7 days nothing is blocked and the owner gets a reminder (a template, since the window may be closed) on days 1, 3 and 6. After the 7 days the publishing job holds the business's publications (they stay `scheduled`, nothing is cancelled or deleted) until `PAYMENT_SUCCEEDED`; drafts, approvals and the conversation keep working. `past_due` never cancels the subscription or deletes data by itself; cancelling stays a team or provider action.
