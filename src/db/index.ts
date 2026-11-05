@@ -59,6 +59,17 @@ export const PROCESS_LOGINS: Record<'web' | 'worker' | 'console', readonly strin
   console: ['app_sys_console', 'app_workflow', 'app_publishing', 'app_billing', 'app_messaging', JOBS_LOGIN],
 };
 
+/** pg-boss's own pool in every process (src/db/jobs.ts), on the `app_jobs` login. */
+export const JOBS_POOL = 10;
+
+/**
+ * The most connections a process opens (docs/security.md, D7): poolMax per database login it uses,
+ * plus pg-boss's pool for `app_jobs`. The Terraform budget in infra/modules/stack/main.tf uses the same sum.
+ */
+export function poolConnections(logins: readonly string[], poolMax: number): number {
+  return logins.filter((l) => l !== JOBS_LOGIN).length * poolMax + (logins.includes(JOBS_LOGIN) ? JOBS_POOL : 0);
+}
+
 export interface DatabaseUrls {
   /**
    * One connection string per business role, logging in as `loginFor(role)`. A process lists only the

@@ -110,6 +110,7 @@ locals {
     PUBLIC_BASE_URL  = local.public_base_url
     BUSINESS_NUMBER  = var.business_number
     MEDIA_BUCKET     = module.storage.name
+    DB_POOL_MAX      = tostring(local.pool_max)
   }
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
@@ -217,11 +218,16 @@ resource "google_artifact_registry_repository_iam_member" "push" {
   member     = "serviceAccount:${module.accounts.emails.deploy}"
 }
 
-# Connection budget (docs/deployment.md, Sizing): each login x 3 (createDatabase) + pg-boss 10 per
-# process, plus the migrate job (11) and connections Cloud SQL reserves for itself (10).
+# Connection budget (docs/deployment.md, Sizing; docs/security.md, D7): per instance, pool_max per
+# database login the process uses (createDatabase) + pg-boss 10 (poolConnections in src/db/index.ts);
+# web and worker use every login, the console only console_logins (one instance); plus the migrate job
+# (11) and connections Cloud SQL reserves for itself (10).
 locals {
-  connections_per_process = length(local.logins) * 3 + 10
-  connections_needed      = (var.web_max_instances + var.worker_max_instances) * local.connections_per_process + 11 + 10
+  pool_max                = 3
+  connections_per_process = (length(local.logins) - 1) * local.pool_max + 10
+  connections_console     = (length(local.console_logins) - 1) * local.pool_max + 10
+  connections_needed      = (var.web_max_instances + var.worker_max_instances) * local.connections_per_process + local.console_max_instances * local.connections_console + 11 + 10
+  console_max_instances   = 1
 }
 
 resource "terraform_data" "connection_budget" {
@@ -291,6 +297,7 @@ module "console" {
   env                  = local.app_env
   secret_env           = local.console_secret_env
   public               = false
+  max_instances        = local.console_max_instances
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }

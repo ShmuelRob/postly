@@ -28,3 +28,5 @@
 - **קודם dev:** אפשר להריץ רק את `infra/bootstrap` ואת `infra/environments/dev`. זה יוצר את ענף `dev`, ההגנה שלו, סביבת GitHub של dev והמשתנים שלה, בלי שום דבר של stage או prod. ההגנה על `main` וענף `stage` נוצרים רק בשורשים של prod ו-stage, ועד אז דחיפות ל-`stage` או ל-`main` מדלגות על הפריסה. השורשים לא חולקים משאבי GitHub, ולכל אחד state בתחילית משלו בדלי `<project>-tfstate` (דלי אחד לכל פרויקט). ה-apply הראשון רץ בשלושה מעברים (Cloud Run לא יוצר שירות מאימג' `bootstrap` שלא קיים); המדריך המלא: [deploy-dev-guide.md](deploy-dev-guide.md).
 
 - לקונסולה חשבון שירות משלה (`postly-<env>-console`) שקורא רק את סיסמאות ההתחברות של תהליך הקונסולה ואת סוד ה-webhook (WP-84).
+
+- תקציב החיבורים ל-Cloud SQL כולל גם את שירות הקונסולה (מופע אחד); `DB_POOL_MAX` נקבע ב-Terraform (WP-87).

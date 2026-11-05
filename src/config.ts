@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, PROCESS_LOGINS } from './db/index.js';
+import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS } from './db/index.js';
 
 export { PROCESS_LOGINS };
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
@@ -22,6 +22,8 @@ const Env = z.object({
   PUBLIC_BASE_URL: z.url(),
   BUSINESS_NUMBER: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(8080),
+  /** Connections per database login in this process (docs/security.md, D7); Terraform sets it from its budget. */
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(10).default(3),
 });
 
 export interface Config {
@@ -32,6 +34,9 @@ export interface Config {
   publicBaseUrl: string;
   businessNumber: string;
   port: number;
+  dbPoolMax: number;
+  /** The most connections this process opens (poolConnections), logged at startup. */
+  maxConnections: number;
 }
 
 export const passwordVar = (login: string) => `DB_PASSWORD_${login.toUpperCase()}`;
@@ -61,5 +66,7 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
     publicBaseUrl: parsed.data.PUBLIC_BASE_URL,
     businessNumber: parsed.data.BUSINESS_NUMBER,
     port: parsed.data.PORT,
+    dbPoolMax: parsed.data.DB_POOL_MAX,
+    maxConnections: poolConnections(logins, parsed.data.DB_POOL_MAX),
   };
 }
