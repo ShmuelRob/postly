@@ -10,6 +10,7 @@ import { createConsole } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
+import { log, setLogLabels } from './shared/logger.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
@@ -41,11 +42,12 @@ function memoryMedia(publicBaseUrl: string): MediaStorage & DeletionStorage & { 
 }
 
 async function main(command: string | undefined) {
+  setLogLabels({ process: command ?? 'unknown' });
   if (command === 'migrate') {
     const adminUrl = process.env.MIGRATE_ADMIN_URL;
     if (!adminUrl) throw new Error('MIGRATE_ADMIN_URL is required for migrate');
     await provisionDatabase({ adminUrl, passwordFor: (login) => process.env[`DB_PASSWORD_${login.toUpperCase()}`] });
-    console.log(JSON.stringify({ level: 'info', msg: 'migrations applied and logins provisioned' }));
+    log.info('migrations applied and logins provisioned');
     return;
   }
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
@@ -95,7 +97,7 @@ async function main(command: string | undefined) {
     stops.push(() => health.close(), () => queue.stop());
     await health.listen({ host: '0.0.0.0', port: config.port });
   }
-  console.log(JSON.stringify({ level: 'info', msg: `${command} started` }));
+  log.info(`${command} started`);
 
   // Cloud Run sends SIGTERM and allows 10 seconds before SIGKILL.
   process.once('SIGTERM', async () => {
@@ -106,6 +108,6 @@ async function main(command: string | undefined) {
 }
 
 main(process.argv[2]).catch((error: unknown) => {
-  console.error(JSON.stringify({ level: 'error', msg: 'startup failed', error: String(error) }));
+  log.error('startup failed', { error: String(error) });
   process.exit(1);
 });

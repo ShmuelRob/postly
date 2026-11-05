@@ -41,6 +41,8 @@ export type EventResult =
   | { ok: false; reason: RejectionReason; from?: string; detail?: string };
 
 /** A rejected event, written to the structured log. */
+import { log } from '../../shared/logger.js';
+
 export interface RejectionLog {
   businessId: string;
   machine: MachineName;
@@ -57,7 +59,8 @@ export interface WorkflowLogger {
 }
 
 export const consoleLogger: WorkflowLogger = {
-  rejected: (entry) => console.warn(JSON.stringify({ level: 'warn', msg: 'workflow event rejected', ...entry })),
+  // `from` would be redacted as a sender field (docs/observability.md), so the state goes as `fromState`.
+  rejected: ({ from, ...entry }) => log.warn('workflow event rejected', { ...entry, fromState: from }),
 };
 
 export interface Workflow {

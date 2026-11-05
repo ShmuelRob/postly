@@ -43,6 +43,7 @@ import {
   type Workflow,
   type WorkflowLogger,
 } from './modules/workflow/index.js';
+import { log } from './shared/logger.js';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
@@ -233,7 +234,7 @@ export function createApp(options: AppOptions): App {
             variables: { networks: scheduleCopy.networks(lost) },
           });
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: errorText(error) }));
+          log.error('channel health check failed', { businessId: id, error: errorText(error) });
         }
       }
     },
@@ -297,7 +298,7 @@ export function createApp(options: AppOptions): App {
           });
           sent.push(id);
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'monthly report failed', businessId: id, error: errorText(error) }));
+          log.error('monthly report failed', { businessId: id, error: errorText(error) });
         }
       }
       return { sent };
