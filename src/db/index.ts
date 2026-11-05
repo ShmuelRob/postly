@@ -6,6 +6,7 @@ import * as schema from './schema.js';
 
 export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
 export { passwordStatements, provisionDatabase, quoteLiteral, type ProvisionOptions } from './provision.js';
+export { createPostgresSimulatorStore, provisionSimulatorStore, SIMULATOR_LOGIN, SIMULATOR_SCHEMA } from './simulator-store.js';
 
 // The only way into the database from outside src/db/ (see src/modules/README.md). Each role in
 // database-schema.md, "Least privilege", is its own login with its own pool, opened on first use.

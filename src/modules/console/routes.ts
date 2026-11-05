@@ -11,7 +11,7 @@ export interface ConsoleRouteOptions {
   cancelBusiness?(businessId: string): Promise<unknown>;
   /**
    * How requests are gated until team sign-in exists (docs/security.md, "Console exposure").
-   * `loopback` (default, local runs): only loopback addresses. `private-ingress` (deployed): the
+   * `loopback` (default, local runs): only loopback socket addresses (never X-Forwarded-For). `private-ingress` (deployed): the
    * console runs as its own Cloud Run service with internal-only ingress and no public invoker, so the
    * gate is the network and IAM, not the request's address. Neither is a sign-in.
    */
@@ -38,6 +38,8 @@ function hostName(value: string): string | undefined {
 
 const Id = z.object({ id: z.uuid() });
 const PauseBody = z.object({ by: z.string().min(1), reason: z.string().optional() });
+/** D2 (docs/security.md): the business name, typed by the team member, confirms a cancellation. */
+const CancelBody = z.object({ confirmName: z.string().trim().min(1) });
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
 const PriceQuery = z.object({ plan: z.string().min(1).optional() });
 const PriceBody = z.object({
@@ -54,7 +56,9 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
     async (scope) => {
       const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
-        if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        // The socket peer, never `request.ip`: with trustProxy set, `request.ip` comes from X-Forwarded-For,
+        // which a caller can spoof (docs/security.md, D8).
+        if (loopbackOnly && !LOOPBACK.has(request.raw.socket.remoteAddress ?? '')) return reply.code(403).send({ error: 'console is local only' });
         // CSRF and DNS rebinding (docs/security.md, D3): a known Host, and for any POST a JSON body
         // (which a cross-origin page cannot send without a CORS preflight) and no foreign Origin.
         const host = request.headers.host ?? '';
@@ -102,7 +106,16 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.post('/api/businesses/:id/handoff/clear', (q, reply) => run(reply, () => c.clearHandoff(id(q.params))));
       if (options.cancelBusiness) {
         const cancelBusiness = options.cancelBusiness;
-        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params))));
+        scope.post('/api/businesses/:id/cancel', (q, reply) =>
+          run(reply, async () => {
+            const businessId = id(q.params);
+            const { confirmName } = CancelBody.parse(q.body ?? {});
+            const target = (await c.businesses()).find((b) => b.id === businessId);
+            if (!target) throw new ConsoleActionError(404, 'not_found');
+            if (target.name.trim() !== confirmName) throw new ConsoleActionError(400, 'confirmation_mismatch', 'type the business name to confirm');
+            return cancelBusiness(businessId);
+          }),
+        );
       }
       scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params))));
       scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params))));

@@ -2,12 +2,15 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import postgres from 'postgres';
 import { BUSINESS_ROLES, type DatabaseUrls, databaseUrls, loginFor, SYSTEM_PURPOSES } from '../../src/db/index.js';
 import { runMigrations } from '../../src/db/migrate.js';
+import { provisionSimulatorStore, SIMULATOR_LOGIN } from '../../src/db/simulator-store.js';
 
 const PASSWORD = 'test-only';
 
 export interface TestDatabase {
   /** One login per role in database-schema.md; callers never use the migration superuser. */
   urls: DatabaseUrls;
+  /** The `app_simulator` login's URL: the simulated-mode store (WP-51). */
+  simulatorStoreUrl: string;
   stop(): Promise<void>;
 }
 
@@ -32,8 +35,13 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   } finally {
     await admin.end();
   }
+  await provisionSimulatorStore({ adminUrl: url, password: PASSWORD });
+  const simulatorStoreUrl = new URL(url);
+  simulatorStoreUrl.username = SIMULATOR_LOGIN;
+  simulatorStoreUrl.password = PASSWORD;
   return {
     urls: databaseUrls(url, () => PASSWORD),
+    simulatorStoreUrl: simulatorStoreUrl.toString(),
     stop: async () => {
       await container?.stop();
     },

@@ -55,6 +55,7 @@ jobs:
           done
           echo "PREFIX=postly-$ENV_NAME" >> "$GITHUB_ENV"
           echo "IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/postly-$ENV_NAME/postly:$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "SANDBOX_IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/postly-$ENV_NAME/postly-sandbox:$IMAGE_TAG" >> "$GITHUB_ENV"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         if: github.event_name == 'push'
       - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
@@ -68,6 +69,12 @@ jobs:
           gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
+      # The dev sandbox (WP-51) has its own image and exists only in dev; stage and prod never build it.
+      - name: Build and push the sandbox image (dev only)
+        if: github.event_name == 'push' && env.ENV_NAME == 'dev'
+        run: |
+          docker build -f Dockerfile.sandbox -t "$SANDBOX_IMAGE" .
+          docker push "$SANDBOX_IMAGE"
       - name: Check the image to redeploy exists
         if: github.event_name == 'workflow_dispatch'
         run: gcloud artifacts docker images describe "$IMAGE" --quiet > /dev/null
@@ -80,6 +87,9 @@ jobs:
           gcloud run deploy "$PREFIX-worker" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-console" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-web" --region "$REGION" --image "$IMAGE" --quiet
+      - name: Roll out the sandbox (dev only)
+        if: github.event_name == 'push' && env.ENV_NAME == 'dev'
+        run: gcloud run deploy "$PREFIX-sandbox" --region "$REGION" --image "$SANDBOX_IMAGE" --quiet
       - name: Smoke check
         run: |
           URL="$(gcloud run services describe "$PREFIX-web" --region "$REGION" --format 'value(status.url)')"

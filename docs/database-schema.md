@@ -65,6 +65,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
 | `model_run` |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
 | `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
+| `workflow_event` |  | I |  |  | I | I |  | I |  |  |  |  | S |  |
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
 | `system_control` |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
@@ -72,6 +73,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
+- **Audit trail:** `workflow_event` is append-only. The roles that apply workflow events (`workflow`, `approval`, `publishing`, `billing`) may only insert into it, in the same transaction as the event; no role may update or delete it, and only `console` reads it.
 - **Console updates by column:** the `console` login bypasses RLS, so on business-owned tables it gets `UPDATE` on every column except `id` and `business_id` (on `business`, except `id`). A console write, a bug or a crafted call cannot move a row to another business or re-key it; Postgres refuses the statement (T11, security.md D5). `model_task_config` and `system_control` hold no business data and keep a table-wide `UPDATE`. A new column on these tables needs its own console grant in the migration that adds it.
 - **Role attributes:** each migration that creates a login with `CREATE ROLE ... IF NOT EXISTS` is followed by an `ALTER ROLE` that sets its attributes again: `LOGIN NOINHERIT NOCREATEROLE NOCREATEDB`, plus `BYPASSRLS` for the system logins and `NOBYPASSRLS` for the rest. A login that already existed (made by hand or by an older migration) cannot keep stronger attributes (T11, security.md D6). `SUPERUSER` and `REPLICATION` are not named: only a real superuser may set them, which the Cloud SQL admin is not, and that admin cannot grant them either.
 - **Deletes:** `business_data` deletes only preference rules and media. The `deletion` role deletes only `business` rows, and its code deletes only a `cancelled` business past `data_delete_after` (the condition is in the `delete` itself). Every business-owned table references `business` with `on delete cascade`, and the cascade runs with the table owner's rights, so it also removes `post_version` and `approval` rows, which no role may delete directly (WP-43).
@@ -332,6 +334,29 @@ Work routed to a person: failed validation, failed publishing, unknown numbers, 
 | `reference_id` | uuid | Row the item is about |
 | `details` | jsonb | |
 | `resolved_at` | timestamptz | |
+
+### `workflow_event`
+
+The workflow audit trail (WP-46): one row for every event the workflow runtime applies or rejects, written in the same transaction as the transition (or the rejection). Append-only: kept for now, never updated or deleted.
+
+`business_id` is **not** a foreign key: the row keeps its business id as a plain value and stays after the business is deleted (decided 2026-11-05, [retention-checks.md](retention-checks.md)). RLS is forced with the same `tenant_isolation` policy, so a business role still writes only its own business's rows. The row holds no customer content: no phone numbers, message text or captions, only ids, names of states and events, and short reason codes.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `business_id` | uuid | Not null; no foreign key |
+| `machine` | text | Machine name from [state-machines.md](state-machines.md) |
+| `row_id` | uuid | Row the event targets (the business id for business, onboarding, and conversation) |
+| `event` | text | |
+| `source` | text | `inbound`, `system`, or `console` |
+| `role` | text | Business role the transaction ran as |
+| `actor` | text | Who raised it: `owner` for inbound, `system`, or `console` (or a console user id) |
+| `outcome` | text | `applied` or `rejected` |
+| `from_state` | text | Null when the row was not found or the event was refused before loading (handoff) |
+| `to_state` | text | Null when rejected |
+| `guard` | text | `passed`, `blocked`, or null when the event had no guard or the guard did not run |
+| `reason` | text | Rejection reason (`not_found`, `invalid_transition`, `guard_failed`, `handoff`); null when applied |
+| `detail` | text | The guard's reason code when blocked |
+| `correlation_id` | text | For example the inbound message id; null when none |
 
 ### System tables
 

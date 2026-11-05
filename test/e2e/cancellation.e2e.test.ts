@@ -109,7 +109,14 @@ e2eTest('the team cancels a business from the console: channels are disconnected
     // The team's console action (loopback only).
     const server = Fastify({ logger: false });
     registerConsoleRoutes(server, { console: createConsole(ctx.db.db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console') });
-    const response = await server.inject({ method: 'POST', url: `/console/api/businesses/${businessId}/cancel`, payload: {} });
+    // D2 (WP-83): without the business name typed as confirmation, nothing happens.
+    const url = `/console/api/businesses/${businessId}/cancel`;
+    const refused = await server.inject({ method: 'POST', url, payload: { confirmName: 'not the name' } });
+    expect(refused.statusCode).toBe(400);
+    expect((await channels(db, businessId)).map((c) => c.status)).toEqual(['verified', 'verified']);
+    expect((await business(db, businessId))?.status).toBe('active');
+    const name = (await business(db, businessId))!.name;
+    const response = await server.inject({ method: 'POST', url, payload: { confirmName: name } });
     await server.close();
     expect(response.statusCode).toBe(200);
 

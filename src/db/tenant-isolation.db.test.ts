@@ -51,20 +51,21 @@ describe.each(businessOwned)('%s', (name) => {
   const key = sql.identifier(keyOf(name));
   const touch = sql.identifier(touchColumn(name));
   const owner = sql.identifier(name === 'business' ? 'id' : 'business_id');
-  const reader = roleFor(name, 'SELECT')!;
+  // workflow_event is insert-only for business roles (only console reads it), so it has no reader here.
+  const reader = roleFor(name, 'SELECT');
   const updater = roleFor(name, 'UPDATE');
   const deleter = roleFor(name, 'DELETE');
 
-  it('shows a business only its own rows', async () => {
-    const owners = await db.withBusiness(reader, a.id, async (tx) =>
+  it.skipIf(!reader)('shows a business only its own rows', async () => {
+    const owners = await db.withBusiness(reader!, a.id, async (tx) =>
       (await tx.execute(sql`select ${owner} as o from ${table}`)).map((r) => r.o),
     );
     expect(owners).toContain(a.id);
     expect(new Set(owners)).toEqual(new Set([a.id]));
   });
 
-  it("cannot read another business's row", async () => {
-    const n = await db.withBusiness(reader, a.id, (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${b.keys.get(name)}`));
+  it.skipIf(!reader)("cannot read another business's row", async () => {
+    const n = await db.withBusiness(reader!, a.id, (tx) => count(tx, sql`select 1 from ${table} where ${key} = ${b.keys.get(name)}`));
     expect(n).toBe(0);
   });
 
@@ -160,7 +161,7 @@ describe('without a business context', () => {
     const deleter = roleFor(name, 'DELETE');
     const owner = name === 'business' ? 'id' : 'business_id';
 
-    it('shows no rows', async () => {
+    it.skipIf(!roleFor(name, 'SELECT'))('shows no rows', async () => {
       const c = raw.get(roleFor(name, 'SELECT')!)!;
       expect((await c`select 1 from ${c(name)}`).count).toBe(0);
     });

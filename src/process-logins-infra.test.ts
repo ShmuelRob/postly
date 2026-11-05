@@ -14,6 +14,9 @@ const list = (name: string) => {
 };
 
 describe('Terraform login lists', () => {
-  it('logins matches ALL_LOGINS', () => expect(list('logins').sort()).toEqual([...ALL_LOGINS].sort()));
-  it('console_logins matches PROCESS_LOGINS.console', () => expect(list('console_logins').sort()).toEqual([...PROCESS_LOGINS.console].sort()));
+  it('base_logins matches ALL_LOGINS', () => expect(list('base_logins').sort()).toEqual([...ALL_LOGINS].sort()));
+  it('console_base_logins matches PROCESS_LOGINS.console', () => expect(list('console_base_logins').sort()).toEqual([...PROCESS_LOGINS.console].sort()));
+  it('in simulated mode the console also gets the simulator store login (WP-51)', () => {
+    expect(stack).toMatch(/console_logins\s*=\s*concat\(local\.console_base_logins,\s*local\.simulated \? \["app_simulator"\] : \[\]\)/);
+  });
 });
