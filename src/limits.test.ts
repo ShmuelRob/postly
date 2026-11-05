@@ -37,7 +37,7 @@ describe('request limits (D12)', { timeout: 30_000 }, () => {
   });
 
   it('limits the console API body size and rate', async () => {
-    const server = buildConsoleServer({ console: stubConsole, access: 'loopback', limits: { consolePerMinute: 1 } });
+    const server = buildConsoleServer({ console: stubConsole, limits: { consolePerMinute: 1 } });
     const big = await server.inject({ method: 'POST', url: '/console/api/system/pause', remoteAddress: '127.0.0.1', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ by: 'a'.repeat(100 * 1024) }) });
     expect(big.statusCode).toBe(413);
     const second = await server.inject({ method: 'GET', url: '/console/api/businesses', remoteAddress: '127.0.0.1' });

@@ -32,3 +32,18 @@ variable "deploy_reviewers" {
   type        = list(string)
   default     = ["ShmuelRob"]
 }
+variable "console_iap_client_id" {
+  description = "The OAuth client id made by hand for IAP; null creates no console load balancer (docs/deployment.md)."
+  type        = string
+  default     = null
+}
+variable "console_domain" {
+  description = "The console's domain: a real domain (stage and prod must not use sslip.io)."
+  type        = string
+  default     = null
+}
+variable "console_members" {
+  description = "Who may sign in to the console, e.g. [\"user:you@gmail.com\"]. Empty by default: nobody."
+  type        = list(string)
+  default     = []
+}

@@ -2,3 +2,7 @@
 project_id      = "REPLACE_WITH_PROJECT_ID"
 business_number = "+0000000000"
 alert_email     = "REPLACE_WITH_ALERT_EMAIL"
+# Console sign-in through IAP (optional; about 18 USD a month once set). See docs/deployment.md.
+# console_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+# console_members       = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
+# console_domain        = "console.REPLACE_WITH_YOUR_DOMAIN"

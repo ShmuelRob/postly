@@ -3,7 +3,7 @@ import { loadConfig } from './config.js';
 import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
 import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
-import { createConsole } from './modules/console/index.js';
+import { createConsole, createIapVerifier, type ConsoleAuth } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
@@ -64,9 +64,19 @@ async function main(command: string | undefined) {
     stops.push(app.start(), () => server.close(), () => queue.stop());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else if (command === 'console') {
-    // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
-    const access = deployed ? 'private-ingress' : 'loopback';
-    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access, ...(deployed ? { trustProxyHops: 1 } : {}) });
+    // Behind a load balancer with IAP (docs/security.md, "Console exposure"); the dev bypass only locally.
+    const c = config.console;
+    if (c.auth === 'iap' && !c.iapAudience) log.warn('console sign-in is not configured (CONSOLE_IAP_AUDIENCE); every console request is refused');
+    const auth: ConsoleAuth =
+      c.auth === 'dev-bypass' ? { mode: 'dev-bypass', actor: c.devActor } : { mode: 'iap', ...(c.iapAudience ? { verifier: createIapVerifier({ audience: c.iapAudience }) } : {}) };
+    const server = buildConsoleServer({
+      console: createConsole(db, app.workflow),
+      // The cancellation keeps its reason; the actor is in the console action log line (WP-46 audit rows later).
+      cancelBusiness: (id) => app.cancellation.cancel(id, 'console'),
+      auth,
+      ...(deployed ? { trustProxyHops: 1 } : {}),
+      ...(c.auth === 'iap' && c.host ? { allowedHosts: [c.host] } : {}),
+    });
     stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {

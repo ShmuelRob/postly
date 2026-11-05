@@ -48,6 +48,11 @@ variable "public" {
   type        = bool
   default     = false
 }
+variable "ingress" {
+  description = "Overrides the ingress that `public` implies (the console: INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER)."
+  type        = string
+  default     = null
+}
 variable "external_ingress" {
   description = "Accept requests from outside the VPC without a public invoker (the dev sandbox, reached through gcloud run services proxy)."
   type        = bool
@@ -64,7 +69,7 @@ resource "google_cloud_run_v2_service" "this" {
   project             = var.project_id
   name                = var.name
   location            = var.region
-  ingress             = var.public || var.external_ingress ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = coalesce(var.ingress, var.public || var.external_ingress ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY")
   deletion_protection = false
 
   template {
