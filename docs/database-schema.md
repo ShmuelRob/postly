@@ -108,6 +108,8 @@ Nullable reference columns use the default `MATCH SIMPLE`: a null reference is n
 
 Postgres cannot stop a role from changing its own custom settings, so SQL run through the transaction handle could call `set_config('app.business_id', ...)` with another business. The CI guard `src/db/raw-sql-guard.test.ts` therefore fails on `set role`, `set local`, `set session`, `set app.*`, `reset`, `set_config`, `discard`, and `create temp`/`create temporary` anywhere outside `src/db/`. Switching role is impossible regardless, since no login is a member of another role.
 
+**Re-reviewed in WP-86 (2026-11-05), proposed decision: keep the source guard.** The alternatives do not close the gap: a signed context or a `SECURITY DEFINER` setter checked against the role is callable by the same in-process code the guard protects against, since that code holds the same connection and whatever key the setter needs; a role per business is too many logins and pools (D7). What closes the realistic path is banning dynamic SQL too: the guard now also fails on `sql.raw(` and `.unsafe(` outside `src/db/` and the superuser test setup in `test/db/`, because dynamic SQL is how a banned statement would pass a text check. The `known gap` test in `src/db/tenant-isolation.db.test.ts` stays as the pin. Waiting for the human (H4, review queue).
+
 ## Enums
 
 | Enum | Values |
