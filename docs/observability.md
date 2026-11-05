@@ -44,7 +44,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 | `postly-<env>-webhook-errors` | Non-2xx responses on `/webhooks/*`, from the Cloud Run request log | `route` |
 | `postly-<env>-channel-disconnected` | Lines `channel disconnected` | `business_id` |
 
-The line `channel disconnected` (severity `WARNING`, with `businessId` and `network`) is the contract for the channel-disconnected alert; the publishing module logs it when a publish or health check finds a business's channel disconnected. Until that line exists the alert never fires. `business_id` is a label on purpose: Postly has a few hundred businesses in Phase 1, well within Cloud Monitoring's label limits; past a few thousand, move the per-business view to Log Analytics.
+The line `channel disconnected` (severity `WARNING`, with `businessId`, `channelId`, `network` and `providerStatus`) is the contract for the channel-disconnected alert; the publishing module's daily channel health check logs it once, when a verified channel becomes `disconnected` (`logChannelDisconnected` in `src/modules/publishing/channels.ts`, tested in `channels-log.test.ts`). `business_id` is a label on purpose: Postly has a few hundred businesses in Phase 1, well within Cloud Monitoring's label limits; past a few thousand, move the per-business view to Log Analytics.
 
 ### Dashboards
 

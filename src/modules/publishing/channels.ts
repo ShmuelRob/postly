@@ -3,6 +3,15 @@ import type { Network } from '../../contracts/common.js';
 import type { PublishingProvider } from '../../contracts/providers/publishing.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { log } from '../../shared/logger.js';
+
+/**
+ * The structured line the channel-disconnected alert counts (docs/observability.md, "Log-based
+ * metrics"): written once when a channel becomes `disconnected`. Ids and the network only.
+ */
+export function logChannelDisconnected(entry: { businessId: string; channelId: string; network: Network; providerStatus: string }): void {
+  log.warn('channel disconnected', entry);
+}
 
 /** The workflow's `apply`, for the channel connection machine (publishing does not import workflow). */
 export type ApplyChannelEvent = (
@@ -126,7 +135,10 @@ export function createChannels(deps: { db: Database; provider: PublishingProvide
             return null;
           },
         });
-        if (result.ok) lost.push(row.network);
+        if (result.ok) {
+          lost.push(row.network);
+          logChannelDisconnected({ businessId, channelId: row.id, network: row.network, providerStatus: status.status });
+        }
       }
       return lost;
     },
