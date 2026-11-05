@@ -1,6 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
+  AgentStepEntry,
+  AgentTurnEntry,
   ConsoleEntry,
   E2eRecord,
   ImageAttachment,
@@ -82,6 +84,7 @@ function renderTest(test: ReportTest): string {
       ? renderTranscript(r.transcript) +
         renderRenders(r.renders) +
         renderPublishing(r.publishing) +
+        renderAgentSteps(r.agentSteps ?? [], r.agentTurns ?? []) +
         renderModelCalls(r.modelCalls ?? []) +
         renderConsole(r.consoleItems ?? []) +
         renderScreenshots(r.screenshots ?? [])
@@ -160,6 +163,43 @@ function renderModelCalls(calls: ModelCallEntry[]): string {
   return `<section><h3>Model calls</h3><table>
 <thead><tr><th>At</th><th>Task</th><th>Raw output</th><th>Schema</th></tr></thead>
 <tbody>${rows}</tbody></table></section>`;
+}
+
+/** What the agent did, step by step: its tool calls and what code answered (agent.md, Tools). */
+function renderAgentSteps(steps: AgentStepEntry[], turns: AgentTurnEntry[]): string {
+  if (!steps.length && !turns.length) return '';
+  const results = (rs: AgentStepEntry['results']) =>
+    rs
+      .map((r) =>
+        r.result.status === 'ok'
+          ? `<span class="ok">${esc(r.tool)}: ok</span>`
+          : `<span class="fail">${esc(r.tool)}: refused: ${esc(r.result.reason)}</span><br><span class="meta">${esc(r.result.detail)}</span>`,
+      )
+      .join('<br>');
+  const stepRows = steps
+    .map((s) => {
+      const what = s.calls
+        ? `<pre dir="auto">${esc(JSON.stringify(s.calls, null, 2))}</pre>`
+        : s.error !== undefined
+          ? `<span class="fail">provider failure: ${esc(s.error)}</span>`
+          : `<span class="fail">invalid output</span><pre dir="auto">${esc(JSON.stringify(s.output ?? null, null, 2))}</pre>`;
+      const confidence = s.confidence === undefined ? '' : `<br><span class="meta">confidence ${s.confidence}</span>`;
+      return `<tr><td>${esc(s.at)}</td><td>${esc(s.agent)}<br><span class="meta">turn ${s.turn}, step ${s.step}</span>${confidence}</td>
+  <td>${what}</td><td>${results(s.results)}</td></tr>`;
+    })
+    .join('');
+  const turnRows = turns
+    .map((t) => `<tr><td>${esc(t.at)}</td><td>${esc(t.agent)}</td><td>${esc(t.turnId)}</td><td>${esc(t.stopReason)}</td><td>${t.steps.length}</td></tr>`)
+    .join('');
+  return `<section><h3>Agent steps</h3>${
+    stepRows
+      ? `<table><thead><tr><th>At</th><th>Agent</th><th>Tool calls</th><th>Results</th></tr></thead><tbody>${stepRows}</tbody></table>`
+      : ''
+  }${
+    turnRows
+      ? `<table><thead><tr><th>At</th><th>Agent</th><th>Turn</th><th>Stop reason</th><th>Steps</th></tr></thead><tbody>${turnRows}</tbody></table>`
+      : ''
+  }</section>`;
 }
 
 function renderConsole(items: ConsoleEntry[]): string {
