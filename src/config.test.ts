@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from './config.js';
+import { loadConfig, PROCESS_LOGINS } from './config.js';
 import { ALL_LOGINS } from './db/index.js';
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
@@ -12,6 +12,28 @@ const base: Record<string, string> = {
   BUSINESS_NUMBER: '+972500000000',
   ...passwords,
 };
+
+describe('per-process logins (D9, WP-84)', () => {
+  it('the console process needs only its own logins, and gets URLs for nothing else', () => {
+    const only = Object.fromEntries(PROCESS_LOGINS.console.map((l) => [`DB_PASSWORD_${l.toUpperCase()}`, `pw-${l}`]));
+    const withoutPasswords = Object.fromEntries(Object.entries(base).filter(([k]) => !k.startsWith('DB_PASSWORD_')));
+    const config = loadConfig({ ...withoutPasswords, ...only }, 'console');
+    expect(config.databaseUrls.system.console).toContain('app_sys_console:');
+    expect(config.databaseUrls.business.model).toBeUndefined();
+    expect(config.databaseUrls.system.example_set).toBeUndefined();
+    expect(PROCESS_LOGINS.console.length).toBeLessThan(ALL_LOGINS.length);
+  });
+
+  it('a process still refuses a missing password among its own logins', () => {
+    const { DB_PASSWORD_APP_SYS_CONSOLE: _gone, ...rest } = base;
+    expect(() => loadConfig(rest, 'console')).toThrow('DB_PASSWORD_APP_SYS_CONSOLE');
+  });
+
+  it('web and worker still load every login until they are narrowed', () => {
+    expect([...PROCESS_LOGINS.web].sort()).toEqual([...ALL_LOGINS].sort());
+    expect([...PROCESS_LOGINS.worker].sort()).toEqual([...ALL_LOGINS].sort());
+  });
+});
 
 describe('process configuration', () => {
   it('builds one URL per role login from the server URL and the per-login passwords', () => {

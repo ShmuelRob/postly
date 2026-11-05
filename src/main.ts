@@ -52,7 +52,7 @@ async function main(command: string | undefined) {
   }
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
-  const config = loadConfig(process.env);
+  const config = loadConfig(process.env, command);
   const db = createDatabase(config.databaseUrls);
   const media = memoryMedia(config.publicBaseUrl);
   const design = createDesignRenderer({

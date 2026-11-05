@@ -90,8 +90,9 @@ Terraform does everything that needs no human decision:
 | --- | --- | --- |
 | `postly-<env>-web` | Cloud SQL client, log, metric and trace writer, Vertex AI user (`roles/aiplatform.user`, project-level, for Gemini); the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
 | `postly-<env>-worker` | the same as web | the admin URL |
+| `postly-<env>-console` | Cloud SQL client, log, metric and trace writer; only the console process's login secrets (`PROCESS_LOGINS.console` in `src/db/index.ts`: `app_sys_console`, `app_workflow`, `app_publishing`, `app_billing`, `app_messaging`, `app_jobs`) and `messaging-webhook-secret`; image pull | the other logins' passwords, the admin URL, the bucket, the other vendor secrets, Vertex AI |
 | `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
-| `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
+| `postly-<env>-deploy` | `run.developer`, act as the four runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
 
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) and on that environment's branch (`dev`, `stage` or `main`) can act as the deploy account.
 

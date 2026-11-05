@@ -26,3 +26,5 @@
 - **לוגים:** כל תהליך כותב שורת JSON אחת לכל אירוע ל-stdout בפורמט של Cloud Logging, עם מזהי בקשה, עסק, הודעה ו-job, בלי תוכן לקוח, טלפונים או סודות. פירוט ב-[observability.summary.he.md](observability.summary.he.md).
 - **`POSTLY_ENV` חובה:** תהליך בלי המשתנה לא עולה, כך ששירות פרוס לא נופל בטעות לסוד ה-webhook הציבורי.
 - **קודם dev:** אפשר להריץ רק את `infra/bootstrap` ואת `infra/environments/dev`. זה יוצר את ענף `dev`, ההגנה שלו, סביבת GitHub של dev והמשתנים שלה, בלי שום דבר של stage או prod. ההגנה על `main` וענף `stage` נוצרים רק בשורשים של prod ו-stage, ועד אז דחיפות ל-`stage` או ל-`main` מדלגות על הפריסה. השורשים לא חולקים משאבי GitHub, ולכל אחד state בתחילית משלו בדלי `<project>-tfstate` (דלי אחד לכל פרויקט). ה-apply הראשון רץ בשלושה מעברים (Cloud Run לא יוצר שירות מאימג' `bootstrap` שלא קיים); המדריך המלא: [deploy-dev-guide.md](deploy-dev-guide.md).
+
+- לקונסולה חשבון שירות משלה (`postly-<env>-console`) שקורא רק את סיסמאות ההתחברות של תהליך הקונסולה ואת סוד ה-webhook (WP-84).

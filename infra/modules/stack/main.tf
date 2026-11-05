@@ -97,6 +97,9 @@ locals {
     "app_sys_console", "app_sys_example_set", "app_jobs",
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
+  # The console process's logins (docs/security.md, D9); kept in step with PROCESS_LOGINS.console in src/db/index.ts.
+  console_logins        = ["app_sys_console", "app_workflow", "app_publishing", "app_billing", "app_messaging", "app_jobs"]
+  console_login_secrets = { for login in local.console_logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
   vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"]
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
@@ -111,6 +114,11 @@ locals {
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
     # The processes refuse to start in dev, stage or prod without it (src/config.ts).
+    { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
+  )
+  # The console reads only its own logins' passwords (D9).
+  console_secret_env = merge(
+    { for secret, env in local.console_login_secrets : env => module.secrets.ids[secret] },
     { MESSAGING_WEBHOOK_SECRET = module.secrets.ids["messaging-webhook-secret"] },
   )
 }
@@ -144,10 +152,17 @@ module "secrets" {
   project_id = var.project_id
   prefix     = local.prefix
   secrets = merge(
-    { for secret, _ in local.login_secrets : secret => [module.accounts.emails.web, module.accounts.emails.worker, module.accounts.emails.migrate] },
+    { for secret, _ in local.login_secrets : secret => concat(
+      [module.accounts.emails.web, module.accounts.emails.worker, module.accounts.emails.migrate],
+      contains(keys(local.console_login_secrets), secret) ? [module.accounts.emails.console] : [],
+    ) },
     # Only the migration job reads the admin password.
     { "db-admin-url" = [module.accounts.emails.migrate] },
-    { for name in local.vendor_secrets : name => [module.accounts.emails.web, module.accounts.emails.worker] },
+    { for name in local.vendor_secrets : name => concat(
+      [module.accounts.emails.web, module.accounts.emails.worker],
+      # The console process loads the webhook secret with its config, and nothing else of the vendors'.
+      name == "messaging-webhook-secret" ? [module.accounts.emails.console] : [],
+    ) },
   )
 }
 
@@ -186,7 +201,7 @@ resource "google_storage_bucket_iam_member" "media" {
 
 # Image pull for the runtime accounts, image push for the deploy account, on this repository only.
 resource "google_artifact_registry_repository_iam_member" "pull" {
-  for_each   = toset(["web", "worker", "migrate"])
+  for_each   = toset(["web", "worker", "console", "migrate"])
   project    = var.project_id
   location   = var.region
   repository = module.registry.repository_id
@@ -261,7 +276,8 @@ module "worker" {
 
 # The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
 # and web must stay public. Internal-only ingress and no allUsers invoker; reached with
-# an identity token from inside the VPC (docs/security.md); not from a laptop. It runs as the web account for now (D9).
+# an identity token from inside the VPC (docs/security.md); not from a laptop. Its own account reads only
+# its own logins' passwords (D9).
 module "console" {
   source               = "../cloud_run"
   project_id           = var.project_id
@@ -270,10 +286,10 @@ module "console" {
   kind                 = "service"
   image                = local.image
   command              = "console"
-  service_account      = module.accounts.emails.web
+  service_account      = module.accounts.emails.console
   subnetwork_id        = module.network.subnetwork_id
   env                  = local.app_env
-  secret_env           = local.app_secret_env
+  secret_env           = local.console_secret_env
   public               = false
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]

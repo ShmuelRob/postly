@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { ALL_LOGINS, type DatabaseUrls, databaseUrls, JOBS_LOGIN } from './db/index.js';
+import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, PROCESS_LOGINS } from './db/index.js';
+
+export { PROCESS_LOGINS };
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
 
 // Process configuration from the environment (docs/deployment.md). On Cloud Run each password is a
@@ -34,7 +36,9 @@ export interface Config {
 
 export const passwordVar = (login: string) => `DB_PASSWORD_${login.toUpperCase()}`;
 
-export function loadConfig(env: Record<string, string | undefined>): Config {
+/** `process` limits the passwords read to that process's logins (docs/security.md, D9); web by default. */
+export function loadConfig(env: Record<string, string | undefined>, process: keyof typeof PROCESS_LOGINS = 'web'): Config {
+  const logins = PROCESS_LOGINS[process];
   const parsed = Env.safeParse(env);
   if (!parsed.success) throw new Error(`invalid configuration: ${z.prettifyError(parsed.error)}`);
   const secret = parsed.data.MESSAGING_WEBHOOK_SECRET;
@@ -43,7 +47,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   if (deployed && secret === SIMULATOR_WEBHOOK_SECRET) {
     throw new Error('MESSAGING_WEBHOOK_SECRET is the public simulator default; set a real secret in Secret Manager');
   }
-  const missing = ALL_LOGINS.map(passwordVar).filter((name) => !env[name]);
+  const missing = logins.map(passwordVar).filter((name) => !env[name]);
   if (missing.length) throw new Error(`missing database passwords: ${missing.join(', ')}`);
   const passwordFor = (login: string) => env[passwordVar(login)]!;
   const jobs = new URL(parsed.data.DATABASE_URL);
@@ -52,7 +56,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   return {
     env: parsed.data.POSTLY_ENV,
     webhookSecret: secret || SIMULATOR_WEBHOOK_SECRET,
-    databaseUrls: databaseUrls(parsed.data.DATABASE_URL, passwordFor),
+    databaseUrls: databaseUrls(parsed.data.DATABASE_URL, passwordFor, logins),
     jobsUrl: jobs.toString(),
     publicBaseUrl: parsed.data.PUBLIC_BASE_URL,
     businessNumber: parsed.data.BUSINESS_NUMBER,
