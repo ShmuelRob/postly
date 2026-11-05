@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import { FixedWindowLimiter, rateLimitHook } from '../../shared/rate-limit.js';
 import { InvalidWebhookSignatureError } from '../../contracts/providers/messaging.js';
 import type { Billing } from './billing.js';
 
@@ -12,17 +11,14 @@ export interface BillingRouteOptions {
   billing: Billing;
   /** The public origin the provider signs against (behind Cloud Run the request host is not it). */
   publicBaseUrl: string;
-  /** Requests admitted per minute in this process before 429 (docs/security.md, D12). */
-  perMinute?: number;
 }
 
 /** POST /webhooks/payment: verified before anything is read or stored. */
 export function registerBillingRoutes(app: FastifyInstance, options: BillingRouteOptions): void {
   const url = new URL(PAYMENT_WEBHOOK_PATH, options.publicBaseUrl).toString();
-  const limiter = new FixedWindowLimiter({ limit: options.perMinute ?? 120 });
   app.register(async (scope) => {
-    // D12: the limit and the body size are checked before the signature is.
-    scope.addHook('onRequest', rateLimitHook(limiter));
+    // D12: the body size is checked before the signature. No rate limit here: a counter before the
+    // signature check would let unsigned floods refuse genuine events; floods are for Cloud Armor.
     // The signature covers the exact bytes, so the body stays a string.
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body));

@@ -6,8 +6,8 @@ import { WEBHOOK_PATH, type Messaging } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
 import { buildServer } from './server.js';
 
-// D12 (docs/security.md, WP-85): body-size limits and a per-process rate limit on the public webhooks
-// and the console, both enforced before the HMAC check runs.
+// D12 (docs/security.md, WP-85): body-size limits on the webhooks (before the HMAC check) and the
+// console, and a per-process rate limit on the console only.
 
 let verified = 0;
 const messaging = new Proxy({}, { get: (_t, k) => (k === 'handleWebhook' ? async () => { verified++; return []; } : async () => {}) }) as unknown as Messaging;
@@ -26,16 +26,13 @@ describe('request limits (D12)', { timeout: 30_000 }, () => {
     await app.close();
   });
 
-  it('answers 429 with Retry-After once the webhook limit is spent, without verifying', async () => {
+  it('never rate-limits the webhooks: a flood of unsigned posts cannot crowd out genuine events', async () => {
     verified = 0;
-    const app = buildServer({ messaging, publicBaseUrl: 'http://x', limits: { messagingPerMinute: 2 } });
-    const hit = () => app.inject({ method: 'POST', url: WEBHOOK_PATH, payload: 'x' });
-    expect((await hit()).statusCode).toBe(200);
-    expect((await hit()).statusCode).toBe(200);
-    const limited = await hit();
-    expect(limited.statusCode).toBe(429);
-    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
-    expect(verified).toBe(2);
+    const app = buildServer({ messaging, billing, publicBaseUrl: 'http://x' });
+    for (const url of [WEBHOOK_PATH, PAYMENT_WEBHOOK_PATH]) {
+      for (let i = 0; i < 300; i++) expect((await app.inject({ method: 'POST', url, payload: 'x' })).statusCode).not.toBe(429);
+    }
+    expect(verified).toBe(600);
     await app.close();
   });
 

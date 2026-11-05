@@ -263,7 +263,7 @@ Authentication is not defined yet. The console runs as its own process (`main.js
 
 ## Security
 
-- **Request limits** (security.md D12): webhook bodies up to 256 KiB, console bodies up to 64 KiB; a per-process, per-route limit per minute (messaging 1200, payment 120, console 300; provisional) answers 429 before any signature check.
+- **Request limits** (security.md D12): webhook bodies up to 256 KiB (413 before any signature check), console bodies up to 64 KiB; the console alone has a per-process limit per minute (300, provisional; 429). The webhooks are never rate-limited in the app, so unsigned floods cannot refuse genuine events; Cloud Armor is the planned flood guard.
 - Row-level security on all business data, and each model call receives only that business's context.
 - Provider tokens and secrets stay in a secret manager.
 - Webhooks are verified before processing.

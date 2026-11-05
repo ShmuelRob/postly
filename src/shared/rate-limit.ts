@@ -1,7 +1,8 @@
 /**
- * A fixed-window request counter for one route in one process (docs/security.md, D12). It bounds the
- * CPU a flood can cost (the HMAC check runs only for admitted requests); it is not per caller, because
- * the caller's IP is not authentication. Cloud Armor can replace it in front of web.
+ * A fixed-window request counter for one route in one process (docs/security.md, D12), used only on
+ * the internal console. It is not keyed on the caller (never on a raw X-Forwarded-For), because the
+ * IP is not authentication. The public webhooks are not limited here: a counter before the signature
+ * check would let unsigned floods refuse genuine events (Cloud Armor is the planned guard).
  */
 export class FixedWindowLimiter {
   private windowStart = 0;
