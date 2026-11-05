@@ -57,7 +57,9 @@ jobs:
       - if: matrix.name == 'db' || matrix.name == 'e2e'
         run: docker pull -q postgres:17-alpine &
       - run: npm ci
-      # Chromium for the design engine (Playwright), cached by Playwright version; system libraries every time.
+      # Chromium for the design engine (Playwright), cached by Playwright version. On a cache hit the
+      # apt step is skipped (it can take minutes): the ubuntu-latest image already has Chromium's
+      # system libraries, and a missing one fails the browser tests, not hides them.
       - if: matrix.browser
         id: pw
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -69,8 +71,6 @@ jobs:
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
       - if: matrix.browser && steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
-      - if: matrix.browser && steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
       - run: npx vitest run ${{ matrix.projects }}
       # The end-to-end report (WhatsApp transcript, rendered images, publishing log), pass or fail.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
