@@ -9,7 +9,7 @@ import type { EventResult, Workflow } from '../workflow/index.js';
 /** A refused console action: 404 when the row is missing, 409 when its state does not allow it. */
 export class ConsoleActionError extends Error {
   constructor(
-    readonly status: 404 | 409,
+    readonly status: 400 | 404 | 409,
     readonly reason: string,
     readonly detail?: string,
   ) {

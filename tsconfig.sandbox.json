@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.build.json",
+  "include": ["src", "playground/sandbox/main.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/simulators/contract-suites", "src/**/fixtures", "src/**/__snapshots__"]
+}

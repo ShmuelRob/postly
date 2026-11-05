@@ -48,6 +48,11 @@ variable "public" {
   type        = bool
   default     = false
 }
+variable "external_ingress" {
+  description = "Accept requests from outside the VPC without a public invoker (the dev sandbox, reached through gcloud run services proxy)."
+  type        = bool
+  default     = false
+}
 variable "cpu_always_allocated" {
   description = "Keep CPU between requests (the worker polls pg-boss; the web runs the inbound sweep)."
   type        = bool
@@ -59,7 +64,7 @@ resource "google_cloud_run_v2_service" "this" {
   project             = var.project_id
   name                = var.name
   location            = var.region
-  ingress             = var.public ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = var.public || var.external_ingress ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
   deletion_protection = false
 
   template {

@@ -4,8 +4,10 @@ import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema.js';
 
-export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
+import { JOBS_POOL } from './jobs.js';
+export { createMemoryQueue, createPgBossQueue, JOBS_POOL, pgBossConstructorOptions, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
 export { passwordStatements, provisionDatabase, quoteLiteral, type ProvisionOptions } from './provision.js';
+export { createPostgresSimulatorStore, provisionSimulatorStore, SIMULATOR_LOGIN, SIMULATOR_SCHEMA } from './simulator-store.js';
 
 // The only way into the database from outside src/db/ (see src/modules/README.md). Each role in
 // database-schema.md, "Least privilege", is its own login with its own pool, opened on first use.
@@ -59,8 +61,6 @@ export const PROCESS_LOGINS: Record<'web' | 'worker' | 'console', readonly strin
   console: ['app_sys_console', 'app_workflow', 'app_publishing', 'app_billing', 'app_messaging', JOBS_LOGIN],
 };
 
-/** pg-boss's own pool in every process (src/db/jobs.ts), on the `app_jobs` login. */
-export const JOBS_POOL = 10;
 
 /**
  * The most connections a process opens (docs/security.md, D7): poolMax per database login it uses,

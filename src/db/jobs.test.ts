@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMemoryQueue, startWorker } from './jobs.js';
+import { createMemoryQueue, JOBS_POOL, pgBossConstructorOptions, startWorker } from './jobs.js';
 
 describe('job queue', () => {
   it('runs a registered handler with the job data', async () => {
@@ -16,5 +16,12 @@ describe('job queue', () => {
     await expect(queue.send('missing', {})).rejects.toThrow('no handler');
     await queue.register('ping', async () => {});
     await expect(queue.register('ping', async () => {})).rejects.toThrow('already registered');
+  });
+});
+
+describe('pg-boss pool (D7, WP-87)', () => {
+  it('caps pg-boss at JOBS_POOL connections, the number the connection budget counts', () => {
+    expect(pgBossConstructorOptions({ connectionString: 'postgres://app_jobs@db/p' }).max).toBe(JOBS_POOL);
+    expect(JOBS_POOL).toBe(10);
   });
 });

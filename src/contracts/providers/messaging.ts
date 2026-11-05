@@ -5,21 +5,32 @@ import { ContentHash, Language, Phone, Timestamp, Url, Uuid } from '../common.js
 export const ApprovalButtonPayload = z.object({
   action: z.enum(['approve', 'change']),
   postId: Uuid,
+  /**
+   * The exact post_version row the button was sent for (T15). Every button Postly sends carries it,
+   * so a later version with the same hash never revives an old button. Optional only so a payload
+   * without it still parses; such a tap is checked by hash alone (contracts.md, MessagingProvider).
+   */
+  versionId: Uuid.optional(),
   versionHash: ContentHash,
 });
 export type ApprovalButtonPayload = z.infer<typeof ApprovalButtonPayload>;
 
-/** The button id a draft is sent with: `<action>:<postId>:<versionHash>` (contracts.md, MessagingProvider). */
+/**
+ * The button id a draft is sent with: `<action>:<postId>:<versionId>:<versionHash>`, or
+ * `<action>:<postId>:<versionHash>` for a payload without a version id (contracts.md, MessagingProvider).
+ */
 export function encodeButtonId(payload: ApprovalButtonPayload): string {
   const p = ApprovalButtonPayload.parse(payload);
-  return `${p.action}:${p.postId}:${p.versionHash}`;
+  return p.versionId ? `${p.action}:${p.postId}:${p.versionId}:${p.versionHash}` : `${p.action}:${p.postId}:${p.versionHash}`;
 }
 
 /** The payload of a tapped button id, or undefined when the id is not one `encodeButtonId` made. */
 export function decodeButtonId(id: string): ApprovalButtonPayload | undefined {
-  const [action, postId, versionHash, ...rest] = id.split(':');
-  if (rest.length > 0) return undefined;
-  const parsed = ApprovalButtonPayload.safeParse({ action, postId, versionHash });
+  const parts = id.split(':');
+  if (parts.length !== 3 && parts.length !== 4) return undefined;
+  const [action, postId, ...tail] = parts;
+  const candidate = tail.length === 2 ? { action, postId, versionId: tail[0], versionHash: tail[1] } : { action, postId, versionHash: tail[0] };
+  const parsed = ApprovalButtonPayload.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }
 

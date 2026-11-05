@@ -5,6 +5,7 @@ import { RenderRequest } from './renderer.js';
 
 const hash = 'a'.repeat(64);
 const uuid = '3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e';
+const uuid2 = '7a1c2e3f-5b6d-4e8f-9a0b-1c2d3e4f5a6b';
 
 describe('ApprovalButtonPayload', () => {
   it('ties a tap to a post and a version hash', () => {
@@ -31,7 +32,13 @@ describe('button ids', () => {
     expect(decodeButtonId(encodeButtonId(payload))).toEqual(payload);
   });
 
-  it.each(['approve', `approve:${uuid}`, `publish:${uuid}:${hash}`, `approve:${uuid}:${hash}:x`])('rejects id %s', (id) => {
+  it('carries the version id in the button id, so a tap is bound to one version row', () => {
+    const payload = { action: 'approve', postId: uuid, versionId: uuid2, versionHash: hash } as const;
+    expect(encodeButtonId(payload)).toBe(`approve:${uuid}:${uuid2}:${hash}`);
+    expect(decodeButtonId(encodeButtonId(payload))).toEqual(payload);
+  });
+
+  it.each(['approve', `approve:${uuid}`, `approve:${uuid}:x:${hash}`, `approve:${uuid}:${uuid2}:${hash}:x`, `publish:${uuid}:${hash}`, `approve:${uuid}:${hash}:x`])('rejects id %s', (id) => {
     expect(decodeButtonId(id)).toBeUndefined();
   });
 });

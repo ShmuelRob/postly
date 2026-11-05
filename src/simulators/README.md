@@ -11,6 +11,10 @@ In-memory implementations of the provider interfaces in `src/contracts/providers
 
 Every simulator takes an optional `now: () => Date` so tests control time.
 
+## Simulated mode (WP-51)
+
+`persistent.ts` keeps a simulator's state outside the process, for the deployed dev ([deployment.md](../../docs/deployment.md#simulated-mode-dev-wp-51)). Each simulator has `exportState()` and `importState()` (JSON); `PersistentSimulator(name, sim, store)` loads the shared state, runs one call, and saves the state back in one locked `SimulatorStore.update`, also when the call throws. `provider` is the wrapped simulator as its provider interface; `run(sim => ...)` scripts it. `MemorySimulatorStore` serves local runs and tests; the Postgres store is `src/db/simulator-store.ts`. Both pass `contract-suites/simulator-store.ts`. `conversational/` holds the free-Hebrew stand-ins for profile extraction, intent detection and weekly planning that the playground and the sandbox use on the model simulator (`conversationalModelSimulator()`). `src/simulated.ts` composes the app on them.
+
 ## Model task identification
 
 `ModelProvider` requests name their `task`. `ModelSimulator` serves that task and rejects a request whose `outputJsonSchema` is not `taskOutputJsonSchema(task)`, which is `z.toJSONSchema(modelTasks[task].output)`. Unscripted calls get input-aware defaults from `model-fixtures.ts` that pass the code checks in contracts.md (verbatim source quotes, post count equal to `postsPerWeek`, allowed formats, the requested networks).
