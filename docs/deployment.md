@@ -24,6 +24,8 @@ Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
 
 **Logs.** Every process writes one JSON line per event to stdout in Cloud Logging's structured format (`severity`, `message`, the trace field, and labels with the request, business, message and job ids); Cloud Run ships them to Cloud Logging with no agent. No customer content, phone numbers or secrets reach a line. Format and rules: [observability.md](observability.md).
 
+**Metrics, traces and errors (WP-48).** web, worker and console export OpenTelemetry metrics to Cloud Monitoring as `workload.googleapis.com/postly.*` (messages in and out, drafts, approvals, publications by outcome and network, model calls with cost and latency per task, job durations and failures, queue depth) and spans to Cloud Trace (10% of traces, `TRACE_SAMPLE_RATIO`); every `ERROR` log line is a Cloud Error Reporting event. Database connections come from Cloud SQL's `num_backends`. Labels and attributes carry no customer content and no business id. The metric names and labels, which the dashboards and alerts (WP-49) use: [observability.md](observability.md#metrics-wp-48). Export is on only when `POSTLY_ENV` is `dev`, `stage` or `prod`; the APIs (`cloudtrace`, `clouderrorreporting`, `monitoring`) are in `infra/modules/stack/apis.tf` and the runtime accounts already hold `roles/monitoring.metricWriter` and `roles/cloudtrace.agent`.
+
 - **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, `console`, or `migrate` (`src/main.ts`).
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the `inbound-burst` job and the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
 - **console** serves only the internal console and `/healthz`, as its own service with internal-only ingress and no public invoker, because ingress is set per service ([security.md](security.md#console-exposure)). It is not a sign-in.
@@ -90,7 +92,7 @@ Terraform does everything that needs no human decision:
 | --- | --- | --- |
 | `postly-<env>-web` | Cloud SQL client, log, metric and trace writer, Vertex AI user (`roles/aiplatform.user`, project-level, for Gemini); the login password secrets and vendor secrets; object user on the media bucket; image pull | the admin URL |
 | `postly-<env>-worker` | the same as web | the admin URL |
-| `postly-<env>-migrate` | Cloud SQL client, log and metric writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
+| `postly-<env>-migrate` | Cloud SQL client, log, metric and trace writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
 | `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
 
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) and on that environment's branch (`dev`, `stage` or `main`) can act as the deploy account.
