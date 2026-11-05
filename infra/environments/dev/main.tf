@@ -56,8 +56,9 @@ module "postly" {
   sql_retained_backups      = 3
   log_retention_days        = 7
   # Simulated mode (WP-51): the stack runs dev on the simulators; the sandbox has no public invoker.
-  sandbox_enabled  = true
-  sandbox_invokers = var.sandbox_invokers
+  sandbox_enabled       = true
+  sandbox_invokers      = var.sandbox_invokers
+  sandbox_iap_client_id = var.sandbox_iap_client_id
 }
 
 module "github" {
@@ -75,3 +76,4 @@ module "github" {
 }
 
 output "postly" { value = module.postly }
+output "sandbox_url" { value = module.postly.sandbox_url }

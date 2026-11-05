@@ -19,6 +19,12 @@
 - OAuth: מסך הסכמה מסוג External ו-OAuth client נוצרים פעם אחת ידנית בכל פרויקט (ה-API של Google לזה הוצא משימוש). ה-client id נכנס ל-`console_iap_client_id` והסוד ל-Secret Manager. עד שה-client id מוגדר, Terraform לא יוצר load balancer והקונסולה לא נגישה.
 - עלות: כ-18 דולר בחודש לכל סביבה עבור ה-load balancer.
 
+## חשיפת ה-sandbox
+- ה-sandbox של dev ‏(WP-51) משחק את בעל העסק על הסימולטורים, קיים רק ב-dev, ואף פעם לא ציבורי: Terraform מסרב ל-`allUsers` ול-`allAuthenticatedUsers` ב-`sandbox_invokers`.
+- דרך ה-proxy (ברירת המחדל): לחשבונות ב-`sandbox_invokers` יש `run.invoker` על שירות ה-sandbox בלבד, ו-`gcloud run services proxy` מוסיף את ה-token שלהם.
+- בדפדפן (כש-`sandbox_iap_client_id` מוגדר): IAP המובנה של Cloud Run, בלי load balancer ובלי עלות. החשבונות ב-`sandbox_invokers` מקבלים `iap.httpsResourceAccessor` על השירות בלבד, וסוכן השירות של IAP מקבל `run.invoker`. ה-OAuth client הוא של הפרויקט (מסך הסכמה External), כמו בקונסולה; הסוד נקרא ל-state של Terraform. ה-client של gcloud רשום כ-programmatic client כדי שה-proxy ימשיך לעבוד.
+- האפליקציה לא בודקת את הכותרת החתומה של IAP (אין בה התנהגות לפי משתמש). נגד CSRF היא דוחה `POST` ל-`/api/` עם `Origin` של host אחר (403).
+
 ## חובות טכניים (לפי סדר חשיבות)
 1. D1: לא הייתה כניסה לקונסולה ולא זהות למבצע הפעולה. טופל בקוד ב-WP-82 (IAP); נכנס לתוקף כשהאדם מפעיל את ה-Terraform ושלב ה-OAuth.
 2. D2: נתיב `cancel` מוחק עסק בלי הרשאה אמיתית.

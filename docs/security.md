@@ -9,7 +9,7 @@ This document refines the Security section of [technical-design.md](technical-de
 - **Tenant isolation.** Every business-owned table has forced row-level security; code reaches Postgres only through `withBusiness(role, businessId, fn)` and `withSystem(purpose, fn)`, each role a separate login with only its tables and verbs ([database-schema.md](database-schema.md#least-privilege)). Raw SQL that changes roles or session settings is banned outside `src/db/` by `src/db/raw-sql-guard.test.ts`.
 - **Webhooks** (messaging, payment) are verified by HMAC with a constant-time compare before processing. A deployed process refuses to start without a webhook secret or with the public simulator secret (`src/config.ts`).
 - **Secrets** live in Secret Manager, one per database login, readable only by the service accounts that need them; `log_statement` stays `none` so login passwords never reach the logs ([deployment.md](deployment.md#architecture)).
-- **Network.** Cloud SQL has a private IP only; the worker is a Cloud Run service with internal-only ingress; the web service is public, for the provider webhooks; the console is reachable only through a load balancer with IAP sign-in ([Console exposure](#console-exposure)).
+- **Network.** Cloud SQL has a private IP only; the worker is a Cloud Run service with internal-only ingress; the web service is public, for the provider webhooks; the console is reachable only through a load balancer with IAP sign-in ([Console exposure](#console-exposure)); the dev-only sandbox only by its listed accounts, through `gcloud run services proxy` or Cloud Run's built-in IAP ([Sandbox exposure](#sandbox-exposure)).
 - **Approval invariant and factual safeguards** are code-only paths, covered by the human-owned H5 tests.
 
 ## Console exposure
@@ -29,6 +29,16 @@ The console is its own process and Cloud Run service (T3), because Cloud Run ing
 - **Cost.** The load balancer's forwarding rule costs about 0.025 USD an hour, roughly **18 USD a month per environment**, plus about 0.008 USD per GB processed (negligible for the console). The managed certificate and IAP cost nothing.
 
 The bastion VM of T3 is no longer needed and was never built.
+
+## Sandbox exposure
+
+The dev sandbox (WP-51, [deployment.md](deployment.md#the-sandbox)) acts as the business owner on the simulators: it posts signed owner messages to the web service and approves drafts. It exists only in dev (Terraform refuses `sandbox_enabled` elsewhere) and touches no real customer, channel or payment.
+
+- **Never public.** No `allUsers` or `allAuthenticatedUsers` binding; Terraform refuses both in `sandbox_invokers`. Its ingress is "all", because both ways in reach its run.app URL from the internet; the IAM checks below gate every request.
+- **Proxy (the default).** Each account in `sandbox_invokers` has `roles/run.invoker` on the sandbox service only; `gcloud run services proxy` adds that account's identity token, and Cloud Run refuses anyone else with 403.
+- **Browser (`sandbox_iap_client_id` set).** Cloud Run's built-in IAP on the service (no load balancer, no extra cost). The accounts in `sandbox_invokers` get `roles/iap.httpsResourceAccessor` on the sandbox service only, and IAP's service agent gets `roles/run.invoker` on it. IAP uses the project's own OAuth client with an External consent screen (Google's managed client admits only users inside a Workspace organization, and a gmail.com account has none); its secret is read from `postly-dev-console-iap-client-secret` into the sandbox's IAP settings, so it is also in the Terraform state (the private state bucket). gcloud's OAuth client (`32555940559.apps.googleusercontent.com`) is listed as a programmatic client so the proxy's identity token passes IAP too; it adds no account, since IAP still requires `roles/iap.httpsResourceAccessor`.
+- **No identity check in the app.** Unlike the console, the sandbox does not verify IAP's signed header: it has no per-user behavior, and everyone who passes is a `sandbox_invokers` account playing the one owner number. A wrong IAM binding would expose only simulated dev data and the owner's dev chat.
+- **CSRF.** With IAP the session is a browser cookie, so the sandbox refuses an `/api/` `POST` whose `Origin` is present and is neither its own host nor a loopback address (the proxy's `http://localhost:8081` page) (403; `playground/sandbox/origin.ts`). Without it, a page the human visits could sign up a new business or send messages as the owner.
 
 ## Technical debts (ranked)
 
