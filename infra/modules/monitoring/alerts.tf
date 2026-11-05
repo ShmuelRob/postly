@@ -18,8 +18,8 @@ resource "google_monitoring_alert_policy" "publishing_failures" {
   conditions {
     display_name = "over 20% of publication runs failed in 1h"
     condition_threshold {
-      filter                  = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\""
-      denominator_filter      = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=monitoring.regex.full_match(\"published|failed\")"
+      filter                  = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\" AND resource.type=\"generic_task\""
+      denominator_filter      = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=monitoring.regex.full_match(\"published|failed\") AND resource.type=\"generic_task\""
       comparison              = "COMPARISON_GT"
       threshold_value         = 0.2
       duration                = "0s"
@@ -39,7 +39,7 @@ resource "google_monitoring_alert_policy" "publishing_failures" {
   conditions {
     display_name = "at least 3 failed publication runs in 1h"
     condition_threshold {
-      filter          = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\""
+      filter          = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\" AND resource.type=\"generic_task\""
       comparison      = "COMPARISON_GT"
       threshold_value = 2
       duration        = "0s"
@@ -64,7 +64,7 @@ resource "google_monitoring_alert_policy" "webhook_errors" {
   conditions {
     display_name = "at least 5 non-2xx webhook responses in 10 min"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.webhook_errors.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.webhook_errors.name}\" AND resource.type=\"cloud_run_revision\""
       comparison      = "COMPARISON_GT"
       threshold_value = 4
       duration        = "0s"
@@ -90,7 +90,7 @@ resource "google_monitoring_alert_policy" "queue_backlog" {
   conditions {
     display_name = "more than 50 queued jobs for 15 min"
     condition_threshold {
-      filter          = "metric.type=\"${local.workload}/postly.queue.depth\" AND metric.label.state=\"queued\""
+      filter          = "metric.type=\"${local.workload}/postly.queue.depth\" AND metric.label.state=\"queued\" AND resource.type=\"generic_task\""
       comparison      = "COMPARISON_GT"
       threshold_value = 50
       duration        = "900s"
@@ -153,7 +153,7 @@ resource "google_monitoring_alert_policy" "channel_disconnected" {
   conditions {
     display_name = "a business channel disconnected"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.channel_disconnected.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.channel_disconnected.name}\" AND resource.type=one_of(\"cloud_run_revision\", \"cloud_run_job\")"
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "0s"
@@ -179,7 +179,7 @@ resource "google_monitoring_alert_policy" "model_cost" {
   conditions {
     display_name = "model spend above USD ${var.model_cost_hourly_usd} in 1h"
     condition_threshold {
-      filter          = "metric.type=\"${local.workload}/postly.model.cost_usd\""
+      filter          = "metric.type=\"${local.workload}/postly.model.cost_usd\" AND resource.type=\"generic_task\""
       comparison      = "COMPARISON_GT"
       threshold_value = var.model_cost_hourly_usd
       duration        = "0s"
@@ -204,7 +204,7 @@ resource "google_monitoring_alert_policy" "model_validation" {
   conditions {
     display_name = "at least 5 invalid model outputs in 30 min"
     condition_threshold {
-      filter          = "metric.type=\"${local.workload}/postly.model.calls.count\" AND metric.label.outcome=\"invalid\""
+      filter          = "metric.type=\"${local.workload}/postly.model.calls.count\" AND metric.label.outcome=\"invalid\" AND resource.type=\"generic_task\""
       comparison      = "COMPARISON_GT"
       threshold_value = 4
       duration        = "0s"

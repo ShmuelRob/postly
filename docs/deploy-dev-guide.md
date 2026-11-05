@@ -263,6 +263,9 @@ It worked when: the last Deploy run is green, `/healthz` returns `{"ok":true}`, 
 | A service is unhealthy or its revision failed before the first deploy | the database had no logins yet (migrate not run) | run `gcloud run jobs execute postly-dev-migrate --region me-west1 --wait`, then apply again |
 | Deploy job shows **skipped** | `POSTLY_DEPLOY_DEV` is not `true` | the GitHub part of the apply did not run; check `GITHUB_TOKEN` and apply again |
 | `GET .../branches/dev: 404` or `403 Resource not accessible by personal access token` | token missing a permission or the repository | recreate it with the four write permissions in step 1 |
+| `uptime_url check has malformed host`, or `public_base_url must be https://<lowercase host>` | `terraform.tfvars` still has a placeholder such as `public_base_url = "https://REPLACE_WITH_WEB_HOST"` | delete the `public_base_url` line (dev uses its `run.app` URL), then apply again |
+| `backup retention should be >= transaction log retention` creating `postly-dev` | an older checkout kept 7 days of transaction logs with only 3 backups | update to `main`, where the log retention follows the backups kept, then apply again |
+| `must specify a restriction on "resource.type" in the filter` creating an alert | an older checkout of the monitoring module | update to `main`, then apply again |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 
