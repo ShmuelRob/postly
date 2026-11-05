@@ -6,7 +6,7 @@ variable "project_id" {
   type        = string
 }
 variable "business_number" {
-  description = "Postly's WhatsApp number for this environment (a test number)."
+  description = "Postly's WhatsApp number for this environment (any made-up number on the simulators; a test number after WP-41)."
   type        = string
 }
 variable "alert_email" {

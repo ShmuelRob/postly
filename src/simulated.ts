@@ -90,6 +90,8 @@ export interface SimulatedAppOptions extends SimulatedWorldOptions {
   /** Defaults to the conversational model simulator (POSTLY_MODELS=simulator). */
   models?: Record<string, ModelProvider>;
   burstQuietMs?: number;
+  /** The durable burst wake (T2): pg-boss in web and worker; tests may leave it out. */
+  burstWake?: AppOptions['burstWake'];
   logger?: AppOptions['logger'];
 }
 
@@ -124,6 +126,7 @@ export async function createSimulatedApp(options: SimulatedAppOptions) {
     samplePhotoUrl: world.media.urlFor(SAMPLE_PHOTO_PATH),
     ...(options.burstQuietMs === undefined ? {} : { burstQuietMs: options.burstQuietMs }),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.burstWake ? { burstWake: options.burstWake } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
   return {

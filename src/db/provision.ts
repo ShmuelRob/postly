@@ -42,6 +42,7 @@ export async function provisionDatabase(options: ProvisionOptions): Promise<void
           CREATE ROLE ${JOBS_LOGIN} LOGIN NOBYPASSRLS NOINHERIT;
         END IF;
       END $$;
+      ALTER ROLE ${JOBS_LOGIN} LOGIN NOINHERIT NOCREATEROLE NOCREATEDB NOBYPASSRLS;
       CREATE SCHEMA IF NOT EXISTS ${JOBS_SCHEMA} AUTHORIZATION ${JOBS_LOGIN};
       REVOKE ALL ON SCHEMA public FROM ${JOBS_LOGIN};`);
     for (const statement of statements) await admin.unsafe(statement);

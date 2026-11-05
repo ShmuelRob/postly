@@ -1,5 +1,5 @@
-# Dev: always-on and cheap, on the simulators (simulated mode, WP-51) until test accounts exist; deployable without a reviewer, from
-# main only (docs/deployment.md, Environments). Not applied by any
+# Dev: always-on and cheap, on the simulators (simulated mode, WP-51) until test accounts exist; deployable
+# without a reviewer, from the dev branch only (docs/deployment.md, Environments). Not applied by any
 # agent: the human runs the apply (docs/deployment.md, gate H8).
 
 terraform {

@@ -17,7 +17,7 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 
 | Lane | Meaning | Concurrency |
 | --- | --- | --- |
-| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each rebases on the others' merges |
+| Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each merges the base branch into its own when the others land (never rebase) |
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
 
@@ -125,6 +125,21 @@ Added from the human's review of the queue on 2026-11-04 (items 15 and 29, and t
 | WP-48 | Observability: metrics and tracing. Cloud Trace through OpenTelemetry, Cloud Error Reporting, and metrics for messages in and out, drafts, approvals, publications by status and network, retries and failures, model run cost and latency, queue depth, and DB connections | Parallel | WP-47 | The metrics appear on the simulators locally and in `dev` | todo |
 | WP-49 | Observability: dashboards and alerts in Terraform (extending `infra/` monitoring): dashboards (including a per-business view), log-based metrics, uptime checks, SLOs, notification channels, and alerts for publishing failures, webhook errors, pg-boss backlog, worker not running, channel disconnected, cost spikes and 5xx | Parallel | WP-48, H8 | `terraform validate` and plan are clean; never applied by an agent | todo |
 | WP-50 | Observability: runbook. One entry per alert: what it means, how to check, what to do | Parallel | WP-49 | Every alert in WP-49 links to its runbook entry | todo |
+
+### Phase 5b: security debts
+
+From the ranked debts in [security.md](security.md#technical-debts-ranked) (T3, #62). Already covered elsewhere: D5 and D6 by T11 (console column grants, `ALTER ROLE`), D11 by T2 (the durable burst claim), D13 by WP-41, D14 by WP-47; the dev mocks are WP-51. The rows are ordered by effort (quick fixes first), not by the security.md rank.
+
+| ID | Package | Lane | Depends on | Done when | Status |
+| --- | --- | --- | --- | --- | --- |
+| WP-80 | D3: console CSRF and DNS rebinding. Check `Host` against an allowlist (loopback names locally, configured hosts deployed), require a JSON content type on every `POST`, and refuse a cross-origin `Origin` | Parallel | WP-40 | Console route tests refuse a foreign `Host`, a cross-origin `Origin` and a non-JSON `POST` | todo |
+| WP-81 | D8: `trustProxy` set to Cloud Run's single front-end hop on the deployed web and console processes, off locally; the IP is never used as authentication | Parallel | WP-44 | A test shows `request.ip` takes the last forwarded hop only, and a spoofed leftmost `X-Forwarded-For` is ignored | todo |
+| WP-82 | D1 and D4: console team sign-in (IAP on the console service or accounts in the app; the human chooses, H8) with the actor taken from the identity on every console action, including the global pause (`by` stays only as a note) and WP-46's audit rows | Core | WP-40, WP-46, H8 | A console action without an identity is refused; every action records the signed-in actor | todo |
+| WP-83 | D2: `cancel` needs a confirmation (the typed business name) before it starts; the actor comes from WP-82 once it lands | Core | WP-43 (WP-82 for the actor) | A cancel without the matching name is refused and nothing is scheduled; covered end to end | todo |
+| WP-84 | D9: per-process config (each command loads only the logins it uses) and a console service account that reads only its secrets, in Terraform (never applied by an agent) | Parallel | WP-44, H8 | `loadConfig` for `console` and `worker` needs only their passwords; `terraform validate` is clean | todo |
+| WP-85 | D12: per-route `bodyLimit` and a simple rate limit on the public webhooks and the console (or Cloud Armor in front of web) | Parallel | WP-22 | Oversized bodies get 413 and a flood gets 429 before the HMAC check | todo |
+| WP-87 | D7: size the database pools per process and per login from config, and check that the sum across web, worker and console stays under the Cloud SQL tier's `max_connections` with headroom (T4's tiers) | Parallel | WP-44, WP-84 | A test fails when the configured pools exceed the tier's limit; startup logs the total | todo |
+| WP-86 | D10: re-review the `set_config` accepted risk with T11's grants; decide on a guarded setter or keep the source guard (H4) | Core | T11, H4 | The decision is recorded in security.md and the review queue | todo |
 
 ### Phase 6: polish
 
