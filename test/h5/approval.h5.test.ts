@@ -306,12 +306,10 @@ describe('H5 approval: cross-business references', () => {
  * does not reproduce the hash today (every redraft stores new rendered media ids, and the hash covers
  * them), so a plain case pins that down and the stale-button cases force a later version with the
  * same hash through test-owned SQL (`forgeSameHashVersion`). The tap replays the approve button
- * exactly as it was sent, so the cases hold whatever the button id carries. Until the T15 fix lands
- * the two stale-button cases run as `it.fails`; the fix PR turns them into `it`.
+ * exactly as it was sent, so the cases hold whatever the button id carries.
+ * The T15 fix binds each button to its version id, so the two stale-button cases run as `it`.
  */
 describe("H5 approval: a replaced version's button never approves, even with the same hash", () => {
-  const pendingT15 = it.fails as typeof it;
-
   /** The approve button of the last buttons message sent to the approver, replayed as the approver's tap. */
   function lastApproveButton(s: Setup, draft: { buttons: { approve: string } }) {
     const message = s.messaging
@@ -338,7 +336,7 @@ describe("H5 approval: a replaced version's button never approves, even with the
     await unchanged(s, draft.postId);
   }, 60_000);
 
-  pendingT15("the first version's button is refused when a later version has the same hash", async () => {
+  it("the first version's button is refused when a later version has the same hash", async () => {
     const s = await open();
     const { businessId, draft } = await businessWithDraft(s);
     const firstButton = lastApproveButton(s, draft);
@@ -350,7 +348,7 @@ describe("H5 approval: a replaced version's button never approves, even with the
     await unchanged(s, draft.postId);
   });
 
-  pendingT15("an approved first version's button, replayed after a same-hash version replaced it, is refused", async () => {
+  it("an approved first version's button, replayed after a same-hash version replaced it, is refused", async () => {
     const s = await open();
     const { businessId, draft } = await businessWithDraft(s);
     const firstButton = lastApproveButton(s, draft);
