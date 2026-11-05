@@ -46,16 +46,18 @@ async function main(command: string | undefined) {
     ...(process.env.SANDBOX_URL ? { sandboxUrl: process.env.SANDBOX_URL } : {}),
   });
 
+  // Deployed processes sit behind Cloud Run's front end, one proxy hop (docs/security.md, D8).
+  const deployed = config.env !== 'local' && config.env !== 'test';
   const stops: Array<() => Promise<void> | void> = [];
   if (command === 'web') {
-    const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl });
+    const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl, ...(deployed ? { trustProxyHops: 1 } : {}) });
     await queue.register<InboundBurstJob>(INBOUND_BURST_JOB, async (job) => void (await app.messaging.processBurst(job.businessId, job.from)), { policy: 'short' });
     stops.push(app.start(), () => server.close(), () => queue.stop());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else if (command === 'console') {
     // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
-    const access = config.env === 'local' || config.env === 'test' ? 'loopback' : 'private-ingress';
-    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access });
+    const access = deployed ? 'private-ingress' : 'loopback';
+    const server = buildConsoleServer({ console: createConsole(db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console'), access, ...(deployed ? { trustProxyHops: 1 } : {}) });
     stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
