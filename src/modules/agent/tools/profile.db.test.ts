@@ -77,6 +77,13 @@ describe('set_profile_field', () => {
     expect((await profile()).profile).toEqual({ approverPhone: expect.any(String) });
   });
 
+  it('matches whole numbers only: "2" is not inside "20"', async () => {
+    await newBusiness('onboarding', 'פתוחים עד 20:00');
+    sim.scriptAgent('onboarding', [step(call.setProfileField('location.hours', 'א-ה 2-20', 'פתוחים עד 20:00')), step(call.endTurn())]);
+    const result = await agent().runTurn(businessId, 'onboarding', trigger);
+    expect((await turnResults(result.turnId!))[0]).toMatchObject({ status: 'refused', reason: 'value_not_in_quote' });
+  });
+
   it('keeps the parts of a nested field until the whole object is known, across turns', async () => {
     await newBusiness('onboarding', 'אנחנו בכפר סבא, ויצמן 10');
     sim.scriptAgent(

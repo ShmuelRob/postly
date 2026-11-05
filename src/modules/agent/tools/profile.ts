@@ -45,13 +45,9 @@ function digitsIn(quote: string): Set<string> {
  */
 function numbersMatch(value: unknown, quote: string, saved: unknown): boolean {
   const have = digitsIn(`${quote} ${saved === undefined ? '' : JSON.stringify(saved)}`);
-  const joined = [...have].join(' ');
-  return digitGroups(value).every((g) => {
-    if (have.has(g)) return true;
-    // +972501234567 against 050-1234567: compare the national number.
-    const national = g.startsWith('972') ? g.slice(3) : g;
-    return joined.includes(national);
-  });
+  // Every number is a whole digit group of the quote or the saved value ("2" never matches inside
+  // "20"). Only a phone has a second form: +972501234567 against 050-1234567, by its national number.
+  return digitGroups(value).every((g) => have.has(g) || (g.startsWith('972') && g.length >= 11 && have.has(g.slice(3))));
 }
 
 /** The parts of a nested object set by earlier successful calls in this onboarding, oldest first. */

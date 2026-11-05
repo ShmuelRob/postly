@@ -66,7 +66,8 @@ export async function onboardingDone(db: Database, businessId: string, turnId: s
       return Boolean(logo && photos);
     }
     case 'profile_review':
-      return calls.some((c) => ok(c) && c.turnId === turnId && c.call.tool === 'set_profile_field');
+      // A correction counts once it is saved (a nested part still waiting for the rest is not).
+      return calls.some((c) => ok(c) && c.turnId === turnId && c.call.tool === 'set_profile_field' && c.result.status === 'ok' && c.result.data.saved === true);
     default:
       return false;
   }
