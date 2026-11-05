@@ -2,19 +2,20 @@ name: Infra
 
 # Builds the production image and checks the Terraform on pushes to dev, stage and main, and on PRs
 # that touch them (the image: anything but docs and infra/; the Terraform: infra/). It never pushes an
-# image, never authenticates to Google Cloud and never plans or applies (docs/deployment.md).
+# image, never authenticates to Google Cloud and never plans or applies (docs/deployment.md). On a
+# push it runs inside Deploy (`workflow_call`), which deploys only after it passed for that commit.
 
 on:
   pull_request:
-  push:
-    branches: [dev, stage, main]
+  workflow_call:
 
 permissions:
   contents: read
 
+# As in ci.yml: PR runs cancel older ones; a push's run (inside Deploy) is never cancelled.
 concurrency:
-  group: infra-${{ github.ref }}
-  cancel-in-progress: true
+  group: infra-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

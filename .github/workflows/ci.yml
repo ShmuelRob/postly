@@ -1,19 +1,22 @@
 name: CI
 
 # `npm run check` split into parallel jobs (docs/deployment.md#ci). The aggregate job keeps the
-# name `check`, which branch protection requires; it fails unless every part passed.
+# name `check`, which branch protection requires; it fails unless every part passed. On a push to
+# `dev`, `stage` or `main` this workflow runs inside Deploy (`workflow_call`), which deploys only
+# after it passed for that commit.
 
 on:
   pull_request:
-  push:
-    branches: [dev, stage, main]
+  workflow_call:
 
 permissions:
   contents: read
 
+# A newer push to a PR cancels the older run. Inside Deploy every run is its own group (the run
+# id), so a push's CI is never cancelled by the next push and each commit gets a verdict.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Typecheck, markdown links and module boundary rules.
