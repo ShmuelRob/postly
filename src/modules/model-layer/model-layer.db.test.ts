@@ -6,6 +6,7 @@ import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { ModelSimulator } from '../../simulators/model.js';
 import { createModelLayer, ModelTaskFailedError } from './index.js';
+import { memoryTelemetry } from '../../shared/telemetry-memory.js';
 
 // The model layer against the migrated database and the model simulator: seed rows, model_run per
 // attempt, retries within model_task_config.max_retries, and console routing (technical-design.md).
@@ -205,5 +206,36 @@ describe('config limits', () => {
     expect(sim.callsFor('intent_detection')).toHaveLength(1);
     const [item] = await consoleOf(businessId);
     expect((item?.details as { errors: string[] }).errors.at(-1)).toMatch(/cost limit/);
+  });
+});
+
+// docs/observability.md, Metrics (WP-48): one call count, latency and cost per attempt, by task.
+describe('model metrics', () => {
+  it('records every attempt by task and outcome, with its cost, and no input text in any label', async () => {
+    const telemetry = memoryTelemetry();
+    try {
+      sim.failNext('intent_detection', new Error('quota'));
+      sim.scriptInvalid('intent_detection', { intent: 'approve' });
+      sim.script('intent_detection', validIntent);
+      await createModelLayer({ db, providers: { google: sim } }).run(businessId, 'intent_detection', intent);
+
+      const calls = await telemetry.points('postly.model.calls.count');
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          { labels: { task: 'intent_detection', outcome: 'provider_error' }, value: 1 },
+          { labels: { task: 'intent_detection', outcome: 'invalid' }, value: 1 },
+          { labels: { task: 'intent_detection', outcome: 'valid' }, value: 1 },
+        ]),
+      );
+      const latency = await telemetry.points('postly.model.latency');
+      expect(latency.reduce((n, p) => n + (p.count ?? 0), 0)).toBe(3);
+      const [cost] = await telemetry.points('postly.model.cost_usd');
+      expect(cost!.labels).toEqual({ task: 'intent_detection' });
+      expect(cost!.value).toBeGreaterThan(0);
+      expect(telemetry.spans().filter((s) => s.name === 'model intent_detection')).toHaveLength(3);
+      expect(JSON.stringify(await telemetry.allPoints()) + JSON.stringify(telemetry.spans())).not.toContain(intent.text);
+    } finally {
+      telemetry.stop();
+    }
   });
 });

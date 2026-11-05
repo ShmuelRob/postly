@@ -9,7 +9,7 @@
  */
 import { and, eq } from 'drizzle-orm';
 import sharp from 'sharp';
-import { afterAll, expect, inject } from 'vitest';
+import { afterAll, expect, inject, onTestFinished } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { BusinessProfile } from '../../src/contracts/business-profile.js';
 import type { ModelTaskInput } from '../../src/contracts/model-tasks.js';
@@ -20,6 +20,7 @@ import { createDesignRenderer } from '../../src/modules/design/index.js';
 import { draftsCopy, weeklyCopy } from '../../src/modules/workflow/index.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 import { e2eTest, type AppFactory, type Providers } from './harness/index.js';
+import { memoryTelemetry } from '../../src/shared/telemetry-memory.js';
 
 const BUSINESS_PHONE = '+972521111132';
 const MEDIA_ORIGIN = 'https://media.postly.test/';
@@ -133,6 +134,9 @@ const step = async (businessId: string) => (await db.withBusiness('workflow', bu
 
 e2eTest('a mismatched price blocks a draft; a change creates a new version and a saved rule', { timeout: 180_000 }, async ({ e2e }) => {
   const owner = '+972501230050';
+  // docs/observability.md, Metrics (WP-48): what this run shows on the dashboards.
+  const telemetry = memoryTelemetry();
+  onTestFinished(() => telemetry.stop());
   const { storage, messagingSim, modelSim, providers, app, ref, burst } = await setup();
   const run = await e2e.start({ providers, app, ownerPhone: owner, businessPhone: BUSINESS_PHONE, readMedia: storage.read, now: () => NOW });
   const postly = ref.postly!;
@@ -169,6 +173,27 @@ e2eTest('a mismatched price blocks a draft; a change creates a new version and a
   // Only the behind-the-scenes draft reaches the owner; the wrong price never does.
   const [promo, dough] = await posts(businessId);
   expect([promo?.status, dough?.status]).toEqual(['needs_review', 'awaiting_approval']);
+  // One draft sent and one blocked by the fact check; the blocked caption failed every model attempt.
+  expect(await telemetry.points('postly.drafts.count')).toEqual(
+    expect.arrayContaining([
+      { labels: { outcome: 'sent' }, value: 1 },
+      { labels: { outcome: 'failed' }, value: 1 },
+    ]),
+  );
+  const captionCalls = (await telemetry.points('postly.model.calls.count')).filter((p) => p.labels.task === 'caption_writing');
+  expect(captionCalls.find((p) => p.labels.outcome === 'invalid')?.value).toBe(3);
+  expect(captionCalls.find((p) => p.labels.outcome === 'valid')?.value).toBe(1);
+  const messages = await telemetry.points('postly.messages.count');
+  expect(messages).toEqual(
+    expect.arrayContaining([
+      { labels: { direction: 'in', kind: 'text', outcome: 'accepted' }, value: 1 },
+      { labels: { direction: 'in', kind: 'image', outcome: 'accepted' }, value: 1 },
+      expect.objectContaining({ labels: expect.objectContaining({ direction: 'out', outcome: 'sent' }) }),
+    ]),
+  );
+  // Nothing the owner wrote, no caption and no phone reaches a metric label or a span attribute.
+  const exported = JSON.stringify(await telemetry.allPoints()) + JSON.stringify(telemetry.spans().map((sp) => sp.attributes));
+  for (const forbidden of [owner, UPDATE_TEXT, 'חלות', 'הבצק']) expect(exported).not.toContain(forbidden);
   const afterUpdate = run.owner.received();
   // The update reply, then the draft with the render and the buttons. The Facebook render is the same
   // image as Instagram's here, so it is not sent twice.
