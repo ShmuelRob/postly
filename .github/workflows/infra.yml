@@ -52,6 +52,15 @@ jobs:
           tags: postly:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build the dev sandbox image (not pushed)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          push: false
+          tags: postly-sandbox:ci
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
       - name: Image runs as non-root and holds no test or playground code
         run: |
           test "$(docker run --rm --entrypoint id postly:ci -u)" != "0"
