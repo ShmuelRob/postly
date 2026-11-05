@@ -17,7 +17,10 @@ const BANNED: { name: string; pattern: RegExp }[] = [
   { name: 'create temp', pattern: /\bcreate\s+(temp|temporary)\b/i },
   { name: 'discard', pattern: /\bdiscard\s+(all|plans|sequences|temp|temporary)\b/i },
   // Dynamic SQL is how a banned statement would slip past this text check (docs/security.md, D10; WP-86).
-  { name: 'dynamic sql', pattern: /\bsql\.raw\s*\(|\.unsafe\s*\(/ },
+  // `sql.raw(...)`, the driver's `.unsafe(...)`, and Drizzle's `.execute('<string>')`, which runs a plain
+  // string as SQL. A string held in a variable and passed to `.execute(name)` is not caught: the guard
+  // narrows the gap, it does not close it.
+  { name: 'dynamic sql', pattern: /\bsql\.raw\s*\(|\.unsafe\s*\(|\.execute\s*\(\s*['"`]/ },
 ];
 
 function sourceFiles(dir: string): string[] {
@@ -55,6 +58,7 @@ describe('raw SQL guard', () => {
       'src/modules/x/create-temp.ts: create temp',
       'src/modules/x/discard.ts: discard',
       'src/modules/x/dynamic.ts: dynamic sql',
+      'src/modules/x/execute-string.ts: dynamic sql',
       'src/modules/x/reset.ts: dynamic sql',
       'src/modules/x/reset.ts: reset',
       'src/modules/x/set-app.ts: set app.*',
