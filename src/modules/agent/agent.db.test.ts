@@ -9,6 +9,7 @@ import * as schema from '../../db/schema.js';
 import { ModelSimulator } from '../../simulators/model.js';
 import { createModelLayer, type ModelLayer } from '../model-layer/index.js';
 import { createAgent, handOffLine, type AgentDeps } from './index.js';
+import { weeklyAgent } from './agents/weekly.js';
 
 // The agent runtime (WP-90, agent.md: Runtime, Limits, Tools) against the migrated database and the
 // model simulator with scripted agent steps. No test calls a real model.
@@ -128,7 +129,8 @@ describe('a turn', () => {
     const { input } = contextOf(0);
     expect(input.persona).toEqual({ name: 'פוסטלי', gender: 'feminine' });
     expect(input.messages).toEqual([expect.objectContaining({ role: 'owner', text: OWNER_TEXT })]);
-    expect(input.tools).toEqual(['ask_owner', 'request_photo', 'record_decline', 'hand_off_to_console', 'end_turn']);
+    // The running agent's own tool list (the weekly agent's grew with WP-93).
+    expect(input.tools).toEqual([...weeklyAgent.tools]);
     expect(JSON.stringify(input)).not.toContain(approver);
   });
 
