@@ -2,6 +2,8 @@
 
 One entry per alert. Each says what the alert means, how to check it, what to do, and when to escalate or pause publishing. The alerts are defined in `infra/modules/monitoring/main.tf`; each alert's documentation links to its entry here by the anchor under the heading. Logging fields are described in observability.md (WP-47).
 
+**Status of the entries.** The first four alerts exist in infra/modules/monitoring/main.tf. The entries from Publishing failures on are provisional: they follow the alert list agreed with the WP-49 session, whose PR is not merged, so check each against its Terraform and the observability.md section it adds before relying on a metric name or threshold. **Anchors.** Every entry's anchor is the GitHub slug of its heading, nothing else; WP-49's alert links use those slugs.
+
 Placeholders: `ENV` is `dev`, `stage` or `prod`; `PROJECT` is that environment's GCP project; `REGION` is `me-west1` unless Terraform says otherwise. Services are named `postly-ENV-web`, `postly-ENV-worker` and `postly-ENV-console`; the jobs include `postly-ENV-migrate`.
 
 ## Common tools
@@ -102,7 +104,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 **Means:** the publishing job is failing to put approved posts live. Owners' approved posts are late or stuck in `retry_pending` or `failed`.
 
 **Check:**
-1. Logs Explorer: `resource.type="cloud_run_revision" AND resource.labels.service_name="postly-ENV-worker" AND severity>=ERROR`, then group by `jsonPayload.message`. The log-based metric's filter in `infra/modules/monitoring` names the exact failed-run message.
+1. Logs Explorer: `resource.type="cloud_run_revision" AND resource.labels.service_name="postly-ENV-worker" AND severity>=ERROR`, then group by `jsonPayload.message`. Look for the publication run's error lines; there is no "publication finished" line, so use the console publications list for counts.
 2. Narrow by the `businessId` label: one business (its channel or token) or all (the vendor or our code).
 3. Console: the publications list, filtered to failed and retry-pending.
 
@@ -125,17 +127,17 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 **Escalate / pause:** tell the human for a secret mismatch. No pause needed unless approvals are involved (a missed approval tap only delays a post).
 
-## Job queue stuck
+## Pgboss backlog
 
-**Alert:** "job queue stuck" (`postly.queue.depth` above 50 on any queue for 15 minutes; there is no oldest-job-age metric, so check job age by hand below). Anchor: `pgboss-backlog`.
+**Alert:** "job queue stuck" (`postly.queue.depth` above 50 on any queue for 15 minutes; there is no oldest-job-age metric, so check job age by hand below). 
 
-<a id="pgboss-backlog"></a>
+
 
 **Means:** pg-boss jobs (the publishing job, the weekly tick, drafts, deletion) are queued faster than the worker runs them, or not running at all.
 
 **Check:**
 1. Is the worker running? See [Worker not running](#worker-not-running).
-2. Logs: `resource.labels.service_name="postly-ENV-worker"`, group by the `jobName` label; look for one job type failing or running very long.
+2. Logs: `resource.labels.service_name="postly-ENV-worker" AND severity>=WARNING`, group by the `jobName` label; look for one job type failing.
 3. Database: queue counts per state, as the admin through the bastion, `select name, state, count(*) from pgboss.job group by 1,2;` (read only). Also check [Cloud SQL CPU or disk high](#cloud-sql-cpu-or-disk-high).
 
 **Do:** one failing job type: fix the cause and let pg-boss retry (3 retries). A slow worker: raise `worker_max_instances` in Terraform (human applies). Never delete rows from `pgboss` by hand.
@@ -164,24 +166,24 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 **Means:** a business's Instagram or Facebook (or WhatsApp) connection stopped verifying, so its posts cannot publish.
 
 **Check:**
-1. Logs Explorer: the metric's filter in `infra/modules/monitoring`; read the `businessId` label and the reason field.
+1. Logs Explorer: the metric's filter in `infra/modules/monitoring`; read the `businessId` label and the `network` field.
 2. Console: that business's page, channel connections and their status.
 
 **Do:** the owner must reconnect: the agent sends them the reconnect link through the normal conversation flow (a console item exists for it). A business with no verified connection cannot be resumed, so it stays paused until reconnected. Many businesses at once points at the publishing vendor or an expired app token, not the owners.
 
 **Escalate / pause:** pause the one business if posts keep failing; tell the human if more than one business disconnects or it looks like a vendor-wide token problem.
 
-## Model cost spike
+## Cost spike
 
-**Alert:** "model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). Anchor: `cost-spike`.
+**Alert:** "model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). 
 
-<a id="cost-spike"></a>
+
 
 **Means:** model calls are costing far more than normal: a retry loop, an oversized input, or a task moved to a pricier model.
 
 **Check:**
-1. Logs Explorer: the metric's filter; group by the task name and the `businessId` label; sum `costUsd`.
-2. Console: model settings (`model_task_config`) for a recent change; the `model_run` records for the top task.
+1. Cloud Console: Monitoring, Metrics Explorer, `postly.model.cost_usd`, grouped by its labels. Cost is not in the logs.
+2. Console: model settings (`model_task_config`) for a recent change; the `model_run` records (cost, task, prompt version) for the top task.
 3. Compare with [Model validation failure spike](#model-validation-failures): validation retries multiply cost.
 
 **Do:** one business or one task looping: pause that business, fix the cause, then resume. A bad model setting: change it in the console model settings.
@@ -195,7 +197,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 **Means:** model outputs fail their Zod schema. Retries are limited, then the item routes to the console, so owners wait.
 
 **Check:**
-1. Logs Explorer: the metric's filter; group by task and prompt version.
+1. Cloud Console: Monitoring, Metrics Explorer, `postly.model.calls.count` with `outcome=validation_failed`, grouped by task. Task and prompt version are in the `model_run` records, not in the logs.
 2. Console: items routed from the model layer; the `model_run` record shows input, prompt version and output for a sample.
 3. Did a prompt or model setting change recently?
 
@@ -205,9 +207,9 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Cloud SQL connections near max
 
-**Alert:** "Cloud SQL connections near max_connections" (more than 80% of `max_connections` in use for 10 minutes; `postgresql/num_backends`). Anchor: `cloud-sql-connections-near-max`.
+**Alert:** "Cloud SQL connections near max_connections" (more than 80% of `max_connections` in use for 10 minutes; `postgresql/num_backends`). 
 
-<a id="cloud-sql-connections-near-max"></a>
+
 
 **Means:** the processes are close to exhausting database connections; new requests and jobs will start to fail.
 
