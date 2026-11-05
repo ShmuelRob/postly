@@ -7,6 +7,7 @@ Every business, conversation, post, and external connection in Postly moves thro
 ## Conventions
 
 - Each machine is a transition table: `(state, event) -> next state`. Any pair not listed is invalid and is rejected with an error, never silently ignored.
+- The workflow runtime records every event it applies or rejects in `workflow_event` ([database-schema.md](database-schema.md)), in the same transaction as the transition, with the guard result and the rejection reason.
 - Guards are code checks that must pass before a transition is applied. They are listed per transition and live in the owning module, not in the table.
 - Terminal states have no outgoing transitions.
 - State names are the values stored in the database enum of the same machine.
