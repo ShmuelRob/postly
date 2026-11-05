@@ -18,8 +18,8 @@
 2. D2: נתיב `cancel` מוחק עסק בלי הרשאה אמיתית.
 3. D3: CSRF ו-DNS rebinding על הקונסולה המקומית.
 4. D4: השדה `by` נלקח מגוף הבקשה.
-5. D5: הרשאות ברמת עמודה למשתמש `console` (שלא יוכל להעביר שורה בין עסקים דרך `business_id`).
-6. D6: `CREATE ROLE ... IF NOT EXISTS` לא קובע מאפייני תפקיד; צריך `ALTER ROLE ... NOINHERIT NOCREATEROLE NOBYPASSRLS`.
+5. D5 (נסגר ב-T11): הרשאות ברמת עמודה למשתמש `console`, שלא יוכל להעביר שורה בין עסקים דרך `business_id`.
+6. D6 (נסגר ב-T11): אחרי `CREATE ROLE ... IF NOT EXISTS` מגיע `ALTER ROLE` שקובע את מאפייני התפקיד.
 7. D7: מספר החיבורים בכל ה-pools מול `max_connections` של Cloud SQL.
 8. D8: `trustProxy` כבוי; אסור להסתמך על כתובת IP.
 9. D9: הקונסולה רצה עם חשבון השירות של web וטוענת את כל הסיסמאות.
