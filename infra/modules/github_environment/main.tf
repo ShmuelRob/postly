@@ -65,6 +65,15 @@ resource "github_repository_environment_deployment_policy" "branch" {
 
 data "github_repository" "this" {
   full_name = var.repository
+  lifecycle {
+    # GitHub signs the deploy workflow's OIDC token with the repository's exact name, and the Workload
+    # Identity condition (stack/github_oidc.tf) compares it case-sensitively: "shmuelrob/postly" there
+    # rejects every deploy with "The given credential is rejected by the attribute condition".
+    postcondition {
+      condition     = self.full_name == var.repository
+      error_message = "github_repository must match the repository's exact name and capitalization on GitHub (for example ShmuelRob/postly)."
+    }
+  }
 }
 
 resource "github_branch" "this" {
