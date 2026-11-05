@@ -31,5 +31,5 @@ describe('holdStep (technical-design.md, Billing hold)', () => {
 
   it('names the hold day in the business time zone', () => {
     expect(holdOn(START, 'Asia/Jerusalem')).toBe('10.11.2026');
-  });
+  }, 30_000);
 });

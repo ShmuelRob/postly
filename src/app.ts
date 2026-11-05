@@ -91,6 +91,8 @@ export interface App {
   channelHealth: { tick(now: Date, options?: { businessId?: string }): Promise<void> };
   /** Billing, when a payment provider is wired (WP-42); a provider `cancelled` cancels the business. */
   billing?: Billing;
+  /** The daily billing-hold job (T16), when billing is wired; `businessId` limits it to one business. */
+  billingHold?: { tick(now: Date, options?: { businessId?: string }): Promise<unknown> };
   /** Cancellation (WP-43): channels disconnected at once, then publications, posts and the subscription. */
   cancellation: Cancellation;
   /** The daily data deletion job (WP-43). */
@@ -246,7 +248,16 @@ export function createApp(options: AppOptions): App {
 
   let cancellation: Cancellation | undefined;
   const billing = providers.payment
-    ? createBilling({ db, messaging, provider: providers.payment, onCancelled: async (b) => void (await cancellation!.cancel(b, 'payment_provider')) })
+    ? createBilling({
+        db,
+        messaging,
+        provider: providers.payment,
+        onCancelled: async (b) => void (await cancellation!.cancel(b, 'payment_provider')),
+        // The billing hold (T16) goes through the existing business pause, not a path of its own.
+        pauseBusiness: async (b) => (await workflow.apply(b, { machine: 'business', id: b, event: 'PAUSE', source: 'system' })).ok,
+        resumeBusiness: async (b) => (await workflow.apply(b, { machine: 'business', id: b, event: 'RESUME', source: 'system' })).ok,
+        ...(options.now ? { now: options.now } : {}),
+      })
     : undefined;
   cancellation = createCancellation({
     db,
@@ -350,7 +361,7 @@ export function createApp(options: AppOptions): App {
     schedule,
     publishing,
     channelHealth,
-    ...(billing ? { billing } : {}),
+    ...(billing ? { billing, billingHold: { tick: (at: Date, o?: { businessId?: string }) => billing.holdTick(at, o) } } : {}),
     cancellation,
     dataDeletion,
     monthlyReport,
