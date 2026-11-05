@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { modelTasks } from '../../../contracts/model-tasks.js';
 import { describeModelProviderContract } from '../../../simulators/contract-suites/model.js';
-import { type VertexRequestBody, type VertexTransport, VertexModelProvider } from './vertex.js';
+import { adcTransport, realModelsRefused, type VertexRequestBody, type VertexTransport, VertexModelProvider } from './vertex.js';
 
 const MODEL = 'gemini-2.5-flash';
 
@@ -46,6 +46,17 @@ describeModelProviderContract('vertex adapter on a fake transport', () => ({
   audioUrl: 'https://storage.example.test/voice.ogg',
   audioLanguage: 'he',
 }));
+
+describe('no paid model in tests or CI (agent.md, Testing)', () => {
+  it('refuses the real transport under NODE_ENV=test or CI=true', () => {
+    expect(realModelsRefused({ NODE_ENV: 'test' })).toBe(true);
+    expect(realModelsRefused({ CI: 'true' })).toBe(true);
+    expect(realModelsRefused({ NODE_ENV: 'production' })).toBe(false);
+    expect(() => adcTransport({ CI: 'true' })).toThrow(/refused in tests and CI/);
+    // This very test runs under Vitest: a provider without a fake transport cannot be built.
+    expect(() => new VertexModelProvider({ project: 'p', location: 'global' })).toThrow(/refused in tests and CI/);
+  });
+});
 
 describe('VertexModelProvider', () => {
   it('calls the Vertex generateContent endpoint of the project, with JSON output against the schema', async () => {

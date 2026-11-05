@@ -1,7 +1,7 @@
 # Modules
 
 Each module from [technical-design.md](../../docs/technical-design.md#modules) has a folder here:
-`messaging`, `workflow`, `model-layer`, `content`, `design`, `publishing`, `business-data`, `billing`, and `console`.
+`messaging`, `workflow`, `model-layer`, `content`, `design`, `publishing`, `business-data`, `billing`, `console`, and `agent` (WP-90; workflow calls it, it never imports workflow).
 
 ## Rules
 

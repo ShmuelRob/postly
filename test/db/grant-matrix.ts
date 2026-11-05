@@ -18,13 +18,15 @@ const MATRIX = `
 | approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
 | publication |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | subscription |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
-| model_run |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
+| model_run |  |  |  |  |  |  | SI |  |  |  |  | S | S | SI |
 | console_item |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
 | workflow_event |  | I |  |  | I | I |  | I |  |  |  |  | S |  |
 | model_task_config |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | prompt_template |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
-| system_control |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
+| system_control |  | S |  |  |  | S |  |  |  |  |  | S | SIU |  |
 | plan_price |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
+| agent_turn |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
+| agent_config |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;

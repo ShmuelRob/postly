@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gte, sum } from 'drizzle-orm';
 import { z } from 'zod';
 import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTasks } from '../../contracts/model-tasks.js';
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
@@ -26,6 +26,13 @@ export interface RunOptions<Output = unknown> {
    * reason to reject it. A rejection counts as a failed attempt, like a schema failure.
    */
   check?: (output: Output) => string | null;
+  /**
+   * A caller's cap for this call, below `model_task_config.max_cost_usd` (agent.md, Limits): the
+   * lower of the two caps every attempt of the call, retries included.
+   */
+  maxCostUsd?: number;
+  /** The agent turn the call belongs to, stored on each `model_run` (WP-90). */
+  agentTurnId?: string;
 }
 
 export interface ModelLayer {
@@ -41,6 +48,14 @@ export interface ModelLayer {
     input: ModelTaskInput<T>,
     options?: RunOptions<ModelTaskOutput<T>>,
   ): Promise<ModelTaskOutput<T>>;
+  /** The business's model spend in USD since a time, every task (agent.md, Limits). */
+  spentSince(businessId: string, since: Date): Promise<number>;
+  /** Every business's model spend in USD since a time, for the global daily cap. */
+  spentByAllSince(since: Date): Promise<number>;
+  /** The spend of one agent turn's model calls (`model_run.agent_turn_id`). */
+  spentOnTurn(businessId: string, agentTurnId: string): Promise<number>;
+  /** A task's `model_task_config.max_cost_usd`: what one call may spend, retries included. */
+  costCap(businessId: string, task: ModelTaskName): Promise<number>;
 }
 
 /** Every attempt failed; a person picks the task up from the console. */
@@ -110,6 +125,37 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
   }
 
   return {
+    async spentSince(businessId, since) {
+      const [row] = await deps.db.withBusiness('model', businessId, (tx) =>
+        tx
+          .select({ total: sum(modelRun.costUsd) })
+          .from(modelRun)
+          .where(and(eq(modelRun.businessId, businessId), gte(modelRun.createdAt, since))),
+      );
+      return Number(row?.total ?? 0);
+    },
+    async spentOnTurn(businessId, agentTurnId) {
+      const [row] = await deps.db.withBusiness('model', businessId, (tx) =>
+        tx
+          .select({ total: sum(modelRun.costUsd) })
+          .from(modelRun)
+          .where(and(eq(modelRun.businessId, businessId), eq(modelRun.agentTurnId, agentTurnId))),
+      );
+      return Number(row?.total ?? 0);
+    },
+    async costCap(businessId, task) {
+      const [row] = await deps.db.withBusiness('model', businessId, (tx) =>
+        tx.select({ cap: modelTaskConfig.maxCostUsd }).from(modelTaskConfig).where(eq(modelTaskConfig.task, task)),
+      );
+      if (!row) throw new Error(`No model_task_config row for ${task}`);
+      return Number(row.cap);
+    },
+    async spentByAllSince(since) {
+      const [row] = await deps.db.withSystem('scheduler', (tx) =>
+        tx.select({ total: sum(modelRun.costUsd) }).from(modelRun).where(gte(modelRun.createdAt, since)),
+      );
+      return Number(row?.total ?? 0);
+    },
     async run(businessId, task, input, options = {}) {
       const parsedInput = modelTasks[task].input.parse(input);
       const { config, template } = await deps.db.withBusiness('model', businessId, async (tx) => {
@@ -127,7 +173,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
       const fallback: Target | undefined = config.fallbackProvider
         ? { provider: config.fallbackProvider, model: config.fallbackModel ?? config.model }
         : undefined;
-      const maxCost = Number(config.maxCostUsd);
+      const maxCost = Math.min(Number(config.maxCostUsd), options.maxCostUsd ?? Number.POSITIVE_INFINITY);
       const runIds: string[] = [];
       const errors: string[] = [];
       let spent = 0;
@@ -165,6 +211,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
               outputTokens: outcome.result?.outputTokens ?? null,
               costUsd: outcome.result ? outcome.result.costUsd.toFixed(6) : null,
               durationMs,
+              agentTurnId: options.agentTurnId ?? null,
             })
             .returning({ id: modelRun.id }),
         );
@@ -172,8 +219,11 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         if (outcome.valid) return outcome.output as ModelTaskOutput<typeof task>;
 
         errors.push(outcome.error ?? 'invalid output');
-        spent += outcome.result?.costUsd ?? 0;
-        if (spent >= maxCost) {
+        const last = outcome.result?.costUsd ?? 0;
+        spent += last;
+        // The cap counts every attempt: a retry starts only when it would stay within the cap,
+        // judged by the last attempt's cost (agent.md, Limits).
+        if (spent >= maxCost || (n <= config.maxRetries && spent + last > maxCost)) {
           errors.push(`cost limit reached: ${spent.toFixed(6)} of ${maxCost.toFixed(6)} USD`);
           break;
         }

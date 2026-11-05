@@ -279,6 +279,7 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Action | Effect |
 | --- | --- |
 | List businesses, conversations, drafts, console items, and the global pause | Read only |
+| See a business's agent turns | `GET /console/api/businesses/:id/agent-turns`: the newest 50 turns with their steps (each tool call and code's answer), stop reason and cost (WP-90) |
 | Resolve a console item | `status` becomes `resolved` |
 | Route a console item | Starts a [handoff](state-machines.md#human-handoff) for the item's business and resolves the item; an item without a business can only be resolved |
 | Start or clear a handoff | `startHandoff` / `clearHandoff` of the workflow module |

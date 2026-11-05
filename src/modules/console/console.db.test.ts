@@ -55,6 +55,12 @@ describe('reading', () => {
     const items = await api('GET', '/items');
     expect(items.body.some((i: any) => i.id === s.keys.get('console_item'))).toBe(true);
   });
+  it("shows a business's agent turns with their steps (WP-90)", async () => {
+    const s = await seed(db);
+    const turns = await api('GET', `/businesses/${s.id}/agent-turns`);
+    expect(turns.status).toBe(200);
+    expect(turns.body).toEqual([expect.objectContaining({ businessId: s.id, agent: 'weekly', status: 'running', steps: [] })]);
+  });
 });
 
 describe('console items', () => {

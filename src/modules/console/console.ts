@@ -38,6 +38,8 @@ export interface Draft {
 export interface ConsoleService {
   businesses(): Promise<BusinessSummary[]>;
   messages(businessId: string): Promise<Array<typeof schema.message.$inferSelect>>;
+  /** The business's agent turns, newest first, with their steps: what the agent asked for and what code answered (WP-90). */
+  agentTurns(businessId: string): Promise<Array<typeof schema.agentTurn.$inferSelect>>;
   drafts(businessId?: string): Promise<Draft[]>;
   openItems(): Promise<Array<typeof schema.consoleItem.$inferSelect>>;
   system(): Promise<{ publishingPaused: boolean; pausedReason: string | null; pausedAt: Date | null; pausedBy: string | null }>;
@@ -107,6 +109,9 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
 
     messages: (businessId) =>
       sys((tx) => tx.select().from(schema.message).where(eq(schema.message.businessId, businessId)).orderBy(asc(schema.message.createdAt))),
+
+    agentTurns: (businessId) =>
+      sys((tx) => tx.select().from(schema.agentTurn).where(eq(schema.agentTurn.businessId, businessId)).orderBy(desc(schema.agentTurn.startedAt)).limit(50)),
 
     async drafts(businessId) {
       return sys(async (tx) => {
