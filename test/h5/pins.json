@@ -1,6 +1,6 @@
 {
   "test/e2e/h5-approval-publishing.e2e.test.ts": "abcb23bb74258c39c7866dbb994df59633b8910f9c017668eaeacbe71be485a7",
-  "test/h5/approval.h5.test.ts": "fde3e8b31b35c0f913cb7a2087d76245cf67de6f7309ecc28127579738274ebe",
+  "test/h5/approval.h5.test.ts": "f398c52cb863175584f422cc9218af067405646cd10b4ccf4111ac939af1f696",
   "test/h5/db.ts": "446908dd4cfc524ef1bded8be06c3233bf4d71df78754e21f3330b202802f64c",
   "test/h5/fixtures.ts": "81cab0aa363666085b049898136bf00e3af487ed00725ab00061136562cad9de",
   "test/h5/meta.test.ts": "d51c941f14aee64abf297aa3b66aab3bd90b6cdd57233204c3743054e66fae9b",
