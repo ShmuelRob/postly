@@ -4,6 +4,7 @@ import { NETWORKS, type Network } from '../../contracts/common.js';
 import type { PublishingProvider } from '../../contracts/providers/publishing.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { log } from '../../shared/logger.js';
 
 // The publishing job (state-machines.md, Publishing guard and Publication; technical-design.md,
 // Scheduling and publishing flow). Code only: a publication reaches the provider only when it is tied
@@ -218,7 +219,7 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     try {
       await deps.notify(businessId, notice);
     } catch (error) {
-      console.error(JSON.stringify({ level: 'error', msg: 'publishing notice failed', businessId, postId, error: errorText(error) }));
+      log.error('publishing notice failed', { businessId, postId, error: errorText(error) });
     }
   }
 
@@ -227,7 +228,7 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     try {
       return await fail(businessId, publicationId, error, options);
     } catch (recordError) {
-      console.error(JSON.stringify({ level: 'error', msg: 'publication failure not recorded', businessId, publicationId, error, recordError: errorText(recordError) }));
+      log.error('publication failure not recorded', { businessId, publicationId, error, recordError: errorText(recordError) });
       throw recordError;
     }
   }
@@ -330,14 +331,14 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
         try {
           await runPublication(id);
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'publication run failed', publicationId: id, error: errorText(error) }));
+          log.error('publication run failed', { publicationId: id, error: errorText(error) });
         }
       }
       for (const [msg, step] of [['stale publication sweep failed', () => sweepStale(at, options.businessId)], ['publication settle failed', () => settle(options.businessId)]] as const) {
         try {
           await step();
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg, error: errorText(error) }));
+          log.error(msg, { error: errorText(error) });
         }
       }
       return { ran: due.length };

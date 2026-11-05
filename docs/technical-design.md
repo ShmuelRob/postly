@@ -268,6 +268,7 @@ Authentication is not defined yet. The console runs as its own process (`main.js
 - Media URLs stay stable until publishing, and retention follows a defined policy.
 - Payment card details are never stored.
 - The console exposure and the ranked security debts are in [security.md](security.md).
+- Logs are structured JSON from one shared logger, carry request, business, message and job ids, and never carry customer content, phone numbers or secrets; the logger redacts them in code ([observability.md](observability.md)).
 
 ## Environments
 

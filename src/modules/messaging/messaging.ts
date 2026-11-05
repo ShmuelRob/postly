@@ -12,6 +12,9 @@ import {
 } from '../../contracts/providers/messaging.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { log, withLogContext } from '../../shared/logger.js';
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** technical-design.md, Operational defaults: a burst ends after 20 seconds without a new message. */
 export const DEFAULT_BURST_QUIET_MS = 20_000;
@@ -98,7 +101,7 @@ export interface MessagingOptions {
   wake?: BurstWake;
   /** Stores voice notes and images as `media_asset` rows; without it media stays at the provider. */
   media?: MediaStorage;
-  /** Called when a burst handed over by a timer fails; defaults to console.error. */
+  /** Called when a burst handed over by a timer fails; defaults to an error log line with the ids. */
   onError?: (error: unknown, burst: InboundBurst) => void;
 }
 
@@ -154,7 +157,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const quietMs = options.burstQuietMs ?? DEFAULT_BURST_QUIET_MS;
   const now = options.now ?? (() => new Date());
   const timers = options.timers ?? nodeTimers;
-  const onError = options.onError ?? ((error: unknown) => console.error('inbound burst failed', error));
+  const onError = options.onError ?? ((error: unknown, burst: InboundBurst) => log.error('inbound burst failed', { businessId: burst.businessId, messageId: burst.messages[0]?.id, error: errorMessage(error) }));
   /** Senders this instance received from; only `flushBursts` reads it, the bursts themselves are in `message`. */
   const senders = new Map<string, { businessId: string; from: string }>();
   /** The in-process wake-up: one timer per sender, like the job's singletonKey. */
@@ -240,7 +243,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
       const readable = rows.flatMap((row) => {
         const parsed = InboundMessage.shape.content.safeParse(row.payload);
         if (parsed.success) return [toReceived(row, parsed.data)];
-        console.error(`inbound burst skipped message ${row.id}: unreadable payload`, parsed.error);
+        log.error('inbound burst skipped message: unreadable payload', { messageId: row.id });
         return [];
       });
       const [first] = readable;
@@ -270,7 +273,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
       }
       const ids = step.burst.messages.map((x) => x.id);
       try {
-        await handler.handleInbound(step.burst);
+        await withLogContext({ businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id }, () => handler.handleInbound(step.burst));
       } catch (error) {
         // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
         await db.withBusiness('messaging', businessId, (tx) =>
@@ -481,7 +484,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
     },
     startSweep(everyMs = quietMs) {
       const sweep = () => {
-        this.sweepUnprocessed().catch((error: unknown) => console.error('inbound sweep failed', error));
+        this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: errorMessage(error) }));
       };
       sweep();
       const timer = setInterval(sweep, everyMs);
