@@ -22,16 +22,15 @@ locals {
   ]
 
   product_charts = [
-    { title = "Messages by direction", filter = "metric.type=\"${local.workload}/postly.messages.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.direction"] },
+    { title = "Messages by direction and outcome", filter = "metric.type=\"${local.workload}/postly.messages.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.direction", "metric.label.outcome"] },
     { title = "Drafts by outcome", filter = "metric.type=\"${local.workload}/postly.drafts.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.outcome"] },
-    { title = "Approvals by outcome", filter = "metric.type=\"${local.workload}/postly.approvals.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.outcome"] },
-    { title = "Publications by status and network", filter = "metric.type=\"${local.workload}/postly.publications.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.status", "metric.label.network"] },
+    { title = "Approvals by outcome and reason", filter = "metric.type=\"${local.workload}/postly.approvals.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.outcome", "metric.label.reason"] },
+    { title = "Publications by outcome and network", filter = "metric.type=\"${local.workload}/postly.publications.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.outcome", "metric.label.network"] },
     { title = "Model cost (USD) by task", filter = "metric.type=\"${local.workload}/postly.model.cost_usd\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.task"] },
     { title = "Model latency p95 (ms) by task", filter = "metric.type=\"${local.workload}/postly.model.latency\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_PERCENTILE_95", group_by = ["metric.label.task"] },
     { title = "Model calls by task and outcome", filter = "metric.type=\"${local.workload}/postly.model.calls.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.task", "metric.label.outcome"] },
-    { title = "Queue depth by queue", filter = "metric.type=\"${local.workload}/postly.queue.depth\"", aligner = "ALIGN_MAX", reducer = "REDUCE_MAX", group_by = ["metric.label.queue"] },
+    { title = "Queue depth by queue and state", filter = "metric.type=\"${local.workload}/postly.queue.depth\"", aligner = "ALIGN_MAX", reducer = "REDUCE_MAX", group_by = ["metric.label.queue", "metric.label.state"] },
     { title = "Job failures by job", filter = "metric.type=\"${local.workload}/postly.jobs.failures.count\"", aligner = "ALIGN_DELTA", reducer = "REDUCE_SUM", group_by = ["metric.label.job"] },
-    { title = "Pool connections by process and state", filter = "metric.type=\"${local.workload}/postly.db.connections\"", aligner = "ALIGN_MAX", reducer = "REDUCE_SUM", group_by = ["metric.label.process", "metric.label.state"] },
   ]
 
   business_charts = [

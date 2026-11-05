@@ -99,7 +99,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Publishing failures
 
-**Alert:** "Postly ENV: publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; metric `workload.googleapis.com/postly.publications.count` with `status=failed`, from WP-48).
+**Alert:** "Postly ENV: publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; metric `workload.googleapis.com/postly.publications.count` with `outcome=failed`, from WP-48).
 
 **Means:** the publishing job is failing to put approved posts live. Owners' approved posts are late or stuck in `retry_pending` or `failed`.
 
@@ -192,12 +192,12 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Model validation failures
 
-**Alert:** "Postly ENV: model validation failures" (5 or more invalid outputs per task in 30 minutes; `postly.model.calls.count` with `outcome=validation_failed`).
+**Alert:** "Postly ENV: model validation failures" (5 or more invalid outputs per task in 30 minutes; `postly.model.calls.count` with `outcome=invalid`).
 
 **Means:** model outputs fail their Zod schema. Retries are limited, then the item routes to the console, so owners wait.
 
 **Check:**
-1. Cloud Console: Monitoring, Metrics Explorer, `postly.model.calls.count` with `outcome=validation_failed`, grouped by task. Task and prompt version are in the `model_run` records, not in the logs.
+1. Cloud Console: Monitoring, Metrics Explorer, `postly.model.calls.count` with `outcome=invalid`, grouped by task. Task and prompt version are in the `model_run` records, not in the logs.
 2. Console: items routed from the model layer; the `model_run` record shows input, prompt version and output for a sample.
 3. Did a prompt or model setting change recently?
 
