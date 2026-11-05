@@ -64,9 +64,10 @@ Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md)), queued for the
 | Onboarding `profile_review` | Onboarding (corrections only) | `PROFILE_CORRECTED`: code, after the agent's `set_profile_field` calls, when it resends the summary. `PROFILE_APPROVED` stays a code reading of the owner's text, as today |
 | Conversation `processing_update` / `awaiting_answer` | Weekly, Drafts | `QUESTION_ASKED`: code, when an `ask_owner` with `expects: answer` or a `request_photo` is sent; `ANSWER_RECEIVED`: code, on the owner's next burst |
 | Weekly update `received` | Weekly | `FACTS_EXTRACTED`: code, when `plan_posts` (`initial`) passes; `EXTRACTION_FAILED`: code, on a hand-off or limit before a plan |
-| Post `planned` / `drafting` | Drafts | `DRAFT_STARTED` and `DRAFT_READY`: code, inside `create_draft`, after the checks, the render, the version and the send with buttons. `DETAIL_MISSING`: code, when a question or photo request about the post is sent; `DETAIL_PROVIDED`: code, on the answer. `DRAFT_FAILED`: code, on a hand-off or limit while the post is `drafting` |
+| Post `planned` / `drafting` / `awaiting_clarification` | Drafts | Inside `create_draft`, after the checks, the render, the version and the send with buttons, code applies by the post's state: from `planned`, `DRAFT_STARTED` then `DRAFT_READY`; from `awaiting_clarification`, `DETAIL_PROVIDED` then `DRAFT_READY`; from `drafting`, `DRAFT_READY` only. `DETAIL_MISSING`: code, when a question or photo request about the post is sent; `DETAIL_PROVIDED`: code, on the answer. `DRAFT_FAILED`: code, on a hand-off or limit while the post is `drafting` |
 | Post `awaiting_approval` / `approved` / `scheduled` | Drafts | `CHANGE_REQUESTED`: code, inside `apply_change`, after invalidating approvals and cancelling pending publications; then `DRAFT_READY` on the new version |
-| Conversation `processing_update` | Drafts | `DRAFTS_SENT`: code, when every post of the week is `awaiting_approval`, `awaiting_clarification` or `needs_review` |
+| Conversation `reviewing_drafts` / `confirming_schedule` | none (code routing) | `CHANGE_REQUESTED` (to `processing_update`): code, when `intent_detection` routes an owner text as a change, before the drafts agent runs; the agent then works in `processing_update` |
+| Conversation `processing_update` | Drafts | `DRAFTS_SENT`: code, when every post of the week is `awaiting_approval`, `awaiting_clarification` or `needs_review`, after the plan or after a fix |
 
 Not agent-driven, ever: `APPROVED` (a button tap only, the [approval guard](#approval-guard)), `ALL_DRAFTS_RESOLVED`, `SCHEDULE_CONFIRMED`, `SCHEDULED`, every publication event, the business, channel and subscription machines, and clearing a handoff. A hand-off by the agent (`hand_off_to_console` or a limit) sets the [handoff](#human-handoff) flag like any other hand-off.
 
@@ -121,7 +122,7 @@ Stored in `post.status`. This is the machine that protects the approval rule.
 | `drafting` | `DETAIL_MISSING` | `awaiting_clarification` | One question is sent to the owner |
 | `awaiting_clarification` | `DETAIL_PROVIDED` | `drafting` | |
 | `drafting` | `DRAFT_READY` | `awaiting_approval` | New `post_version` exists and passed the fact check; draft was sent with buttons |
-| `drafting` | `DRAFT_FAILED` | `needs_review` | Model validation or fact check retries are exhausted |
+| `drafting` | `DRAFT_FAILED` | `needs_review` | Model validation or fact check retries are exhausted; with the drafts agent, it handed off or hit a limit while the post was `drafting` |
 | `needs_review` | `DRAFT_STARTED` | `drafting` | Team action from the console |
 | `awaiting_approval` | `APPROVED` | `approved` | See approval guard |
 | `awaiting_approval` | `CHANGE_REQUESTED` | `drafting` | |

@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`); the three agent tasks will run on Gemini Flash Lite (agent.md, A8) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -67,7 +67,7 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Image selection and quality check | Vision model | Mid tier |
 | Factual comparison against the source | Code, with an optional model check | Low cost |
 | Rendering, approval, scheduling, and publishing | Code only | None |
-| Agent steps: onboarding, weekly update, drafts and fixes (`agent_onboarding`, `agent_weekly`, `agent_drafts`; [agent.md](agent.md)) | Model, every tool call checked by code | Gemini Flash for now (A8) |
+| Agent steps: onboarding, weekly update, drafts and fixes (`agent_onboarding`, `agent_weekly`, `agent_drafts`; [agent.md](agent.md)) | Model, every tool call checked by code | Gemini Flash Lite (`gemini-2.5-flash-lite`; A8, decided 2026-11-05) |
 
 With the agent flows on, the agents replace profile field extraction, fact extraction, weekly planning, caption writing and change interpretation in those flows; those tasks stay as the fallback path behind the `agent_flows` switch until the human retires them (agent.md, A9). Intent detection, transcription and image review stay as they are; image review gains suggested edits for the drafts agent.
 
@@ -131,14 +131,15 @@ These are defaults stored in configuration, so they can change without a code ch
 | Data deletion | Daily at 03:00 UTC: every cancelled business past `data_delete_after` (WP-43) |
 | Monthly report | 06:00 UTC on the first of each month, for the previous calendar month in `business.timezone` (WP-43) |
 | Publishing tick | Every minute: publications due by `scheduled_for`, retries by the retry spacing |
-| Agent limits (A4, `agent_config`) | 6 steps and 12 tool calls a turn, USD 0.03 a turn, USD 0.50 a business a day, USD 25 for all businesses a day, 45 seconds a turn; a limit hands the conversation off ([agent.md](agent.md#limits)) |
+| Agent limits (A4, `agent_config`, decided 2026-11-05) | 12 steps and 24 tool calls a turn, USD 0.06 a turn, USD 1.00 a business a day, USD 50 for all businesses a day, 90 seconds a turn; a limit hands the conversation off ([agent.md](agent.md#limits)) |
 | Agent flows | `agent_flows` off for every flow until its package lands; switched per flow globally (`system_control`) or per business (`business`) |
 | No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, candle lighting at sunset minus 40 minutes in Jerusalem, 30 in Haifa and Zikhron Ya'akov, 20 elsewhere; havdalah at nightfall (sun 8.5° below the horizon); by the business's city when the city table knows its English or Hebrew name, otherwise Jerusalem |
 
 ## The agent
 
-Decided 2026-11-05; the full design, the tools and their checks, the limits, and the open decisions are in [agent.md](agent.md). In short:
+Decided 2026-11-05; the full design, the tools and their checks, the limits, and the human's decisions on it (A1 to A10) are in [agent.md](agent.md). In short:
 
+- Workflow routes to the agent module (`agent.runTurn`), never the other way round; tools get the state machine events as injected callbacks ([agent.md](agent.md#module-direction)).
 - The agent module runs a **turn** per trigger (a claimed burst routed by the conversation step, or a code event), holding the business's `conversation_state` row so one turn runs per business. Each step is one model-layer call of the agent's task, whose `AgentStep` output (one to four tool calls and a confidence) is Zod-validated, retried and recorded like every task; `model_run.agent_turn_id` ties the calls to the turn.
 - Each tool call is checked (allowed for this agent and state, its schema, its code checks: verbatim quotes, the fact check, the plan checks, the design ranges, the badge rules) and applied through the owning module in its role and transaction. A refusal changes nothing and goes back to the agent.
 - Messages the agent proposes (`ask_owner`, `request_photo`) are sent by messaging only inside the 24-hour window; drafts are sent with their buttons by the drafts code, exactly as below. Approval, times, scheduling, rendering and publishing are untouched.

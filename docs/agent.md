@@ -1,25 +1,27 @@
 # Postly Agent
 
-Status: proposed design (2026-11-05), queued for the human under H1 (contracts) and H7 (prompts). No code yet; the work packages are WP-90 to WP-96 in [implementation-plan.md](implementation-plan.md#phase-7-the-agent).
+Status: design (2026-11-05). The human decided A1 to A10 on 2026-11-05; the contracts stay queued under H1 and every prompt under H7. No code yet; the work packages are WP-89 to WP-97 in [implementation-plan.md](implementation-plan.md#phase-7-the-agent).
 
 Postly's onboarding, weekly data gathering and post creation move from fixed one-shot model tasks to a **hybrid agent**: an LLM agent gathers the data, asks follow-up questions and creates the posts, and it acts only through tool calls that code checks. Code still owns every state machine, every message that leaves Postly, the fact check, approval, scheduling, rendering and publishing. This document is the source of truth for the agent; [technical-design.md](technical-design.md), [state-machines.md](state-machines.md) and [contracts.md](contracts.md) point here.
 
-## Open decisions for the human
+## Decisions
 
-Each has a working default, so the packages can be built now; the human confirms or changes it in the review queue.
+Decided by the human on 2026-11-05. The budget values (A4) and the model (A8) are configuration, so they change without a code change.
 
-| # | Decision | Working default | Alternatives |
-| --- | --- | --- | --- |
-| A1 | **Persona name.** Does the agent introduce itself by a name, as "Roni" does in the demo video? | One global name set by the team (`system_control.agent_name`, empty means no name: the agent speaks as "Postly"), with an optional per-business override `persona.agentName` in the profile. The name is used in the intro, the weekly reminder and greetings only | No name at all; or a name per business only, chosen by the owner in onboarding |
-| A2 | **Gender and voice of the persona** in Hebrew (Roni is a unisex name, but Hebrew verbs are gendered) | The agent speaks in the first person plural ("אנחנו מכינים") when no name is set, and in the persona's grammatical gender `persona.gender` (`feminine` by default for a name) when one is set | Always first person plural |
-| A3 | **Time proposals with buttons** (the demo shows buttons for the time) | Keep the text confirmation of WP-34 (buttons carry approval payloads only) | A second button payload kind, `schedule:<proposalId>:<choice>`, which the approval service always refuses; a contract change in the approval area (H5) |
-| A4 | **Budgets** (see [Limits](#limits)) | 6 steps and 12 tool calls a turn, USD 0.03 a turn, USD 0.50 a business a day, USD 25 across all businesses a day, 45 seconds a turn | Any values; they are configuration, not code |
-| A5 | **The weekly greeting.** The demo's weekly "how was the week?" is a business-initiated message | It is the existing Monday 10:00 reminder (`weekly_reminder` template), reworded in the persona's voice (H6) | A second, earlier greeting on Sunday (one more paid template a week) |
-| A6 | **Badge and sticker set** (see [Badge](#badge-element)) | `discount`, `price`, `new`, `sale`, `holiday`; the last three are fixed words per language | More stickers; or no free-standing stickers, only fact badges |
-| A7 | **Profile edits after onboarding** ("we now close at 20:00" in a weekly chat) | The agent may call `set_profile_field` on an active business; code sends the owner a confirmation of the exact change, and the approver number cannot be changed | Profile edits only by the team from the console |
-| A8 | **Model per agent** | Gemini Flash for all three agents (T5), selected per task in `model_task_config` | A stronger model for the drafts agent only, after the manual eval compares them |
-| A9 | **Retiring the one-shot tasks** | `profile_extraction`, `fact_extraction`, `weekly_planning`, `caption_writing` and `change_interpretation` stay as the fallback path behind the `agent_flows` switch until each agent passes the manual eval on the example set; then a cleanup package removes them | Remove them as each agent lands |
-| A10 | **Conversation history the model sees** | The last 20 messages of the conversation within the last 14 days, plus the current week's update; older context only through the profile, the preference rules and the post history summary | More history (better memory, more cost) |
+| # | Question | Decision (2026-11-05) |
+| --- | --- | --- |
+| A1 | **Persona name** | One global name: "Postly" in English, "פוסטלי" in Hebrew, stored in `system_control.agent_name` (per language; default `{"en": "Postly", "he": "פוסטלי"}`). An optional per-business override `persona.agentName` in the profile is kept. The name appears in the intro, the weekly reminder and greetings, never in a post |
+| A2 | **Gender and voice of the persona** | The persona speaks as a woman: feminine grammatical gender in Hebrew everywhere, in the agent's own voice ("אני מכינה", "שלחתי לך") and in every fixed line of copy that speaks as the agent. There is no first-person-plural fallback. The owner is still addressed by the profile's `tone.address` |
+| A3 | **Time proposals with buttons** | No buttons: the text confirmation of WP-34 stays (buttons carry approval payloads only) |
+| A4 | **Budgets** | Twice the first proposal, accepted as roughly right for now: 12 steps and 24 tool calls a turn, USD 0.06 a turn, USD 1.00 a business a day, USD 50 across all businesses a day, 90 seconds a turn ([Limits](#limits)). Configuration values in `agent_config` and `system_control` |
+| A5 | **The weekly greeting** | The existing Monday 10:00 reminder (`weekly_reminder` template), reworded in the persona's voice (H6); no extra greeting |
+| A6 | **Badge and sticker set** | `discount`, `price`, `new`, `sale`, `holiday`; the last three are fixed words per language ([Badge](#badge-element)) |
+| A7 | **Profile edits after onboarding** | The agent may call `set_profile_field` on an active business; code sends the owner a confirmation of the exact change; the approver number can't be changed |
+| A8 | **Model per agent** | Gemini **Flash Lite** (`gemini-2.5-flash-lite`) for all three agent tasks, set in `model_task_config` |
+| A9 | **Retiring the one-shot tasks** | `profile_extraction`, `fact_extraction`, `weekly_planning`, `caption_writing` and `change_interpretation` stay as the fallback behind the `agent_flows` switch until each agent passes the manual eval on the example set; then a cleanup package removes them |
+| A10 | **Conversation history the model sees** | The last 20 messages of the conversation within 14 days, plus the current week's update; older context only through the profile, the preference rules and the post history summary |
+
+**Follow-up (A8, A10).** If Flash Lite proves too weak in the manual eval (WP-96) or in dev use, revisit the history size, the model, or both; the trigger and the comparison to run are in [implementation-plan.md](implementation-plan.md#phase-7-the-agent) (WP-97).
 
 ## What changes and what does not
 
@@ -48,7 +50,7 @@ Three agents share one runtime and one tool framework. Each is a model task with
 | --- | --- | --- | --- | --- |
 | Onboarding | `agent_onboarding` | Onboarding steps `profile_questions` and `brand_assets`, and corrections in `profile_review` | `ask_owner`, `set_profile_field`, `request_photo`, `record_decline`, `hand_off_to_console`, `end_turn` | `profile_questions`: `missingRequiredProfileFields` is empty (except `style`) and the agent has asked the closing question "anything else customers should know?" once, or the owner declined. `brand_assets`: the logo request and the business-photo request are each answered by an image or a recorded decline |
 | Weekly update | `agent_weekly` | Conversation `processing_update` and `awaiting_answer`, week `received` | `ask_owner`, `record_fact`, `request_photo`, `record_decline`, `plan_posts`, `set_profile_field` (A7), `hand_off_to_console`, `end_turn` | A plan passed the [plan checks](#tools); every fact a planned post depends on is recorded or declined. Code then applies `FACTS_EXTRACTED` |
-| Drafts | `agent_drafts` | Posts `drafting`; conversation `processing_update` after the plan, and `reviewing_drafts` for fixes | `create_draft`, `apply_change`, `ask_owner`, `request_photo`, `plan_posts` (revise only), `record_decline`, `hand_off_to_console`, `end_turn` | Every post of the week is `awaiting_approval`, `awaiting_clarification` or `needs_review`; code then applies `DRAFTS_SENT` |
+| Drafts | `agent_drafts` | Posts `drafting`; conversation `processing_update`, both after the plan and after a change (see [Fixes](#how-it-fits-the-state-machines)) | `create_draft`, `apply_change`, `ask_owner`, `request_photo`, `plan_posts` (revise only), `record_decline`, `hand_off_to_console`, `end_turn` | Every post of the week is `awaiting_approval`, `awaiting_clarification` or `needs_review`; code then applies `DRAFTS_SENT` |
 
 Steps that stay code-only and agent-free: the intro message, the style samples and the owner's style choice (code reads a style name or number, as today), the profile summary and its approval, channel connection and its test, activation and the payment link, intent routing (`intent_detection` decides which flow takes an idle message), approval, time proposals and confirmation, the reminder and every template.
 
@@ -70,21 +72,25 @@ A crash mid-turn leaves the turn `running`; the burst it came from is still unpr
 
 ### Limits
 
-All limits are configuration (`agent_config`, a system table, one row per agent; A4). Hitting any of them ends the turn and hands off.
+All limits are configuration values (`agent_config`, a system table, one row per agent, and `system_control` for the global cap), decided by the human on 2026-11-05 (A4). Hitting any of them ends the turn and hands off.
 
 | Limit | Default | When hit |
 | --- | --- | --- |
-| Steps per turn | 6 | Hand off: `agent_limit` console item, reason `max_steps` |
-| Tool calls per turn | 12 | Same, reason `max_tool_calls` |
-| Cost per turn | USD 0.03 | Same, reason `turn_budget`; the model layer refuses a call whose `max_cost_usd` would pass the remaining turn budget |
-| Cost per business per day | USD 0.50 | Same, reason `daily_budget`; summed from `model_run.cost_usd` since local midnight. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
-| Cost across all businesses per day | USD 25 | Every agent turn hands off (reason `global_budget`) and the team gets an alert; the old one-shot path is not a fallback for cost |
-| Turn duration | 45 seconds | The turn stops after the current tool call, reason `timeout` |
+| Steps per turn | 12 | Hand off: `agent_limit` console item, reason `max_steps` |
+| Tool calls per turn | 24 | Same, reason `max_tool_calls` |
+| Cost per turn | USD 0.06 | Same, reason `turn_budget`; the model layer refuses a call whose `max_cost_usd` would pass the remaining turn budget |
+| Cost per business per day | USD 1.00 | Same, reason `daily_budget`; summed from `model_run.cost_usd` since local midnight. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
+| Cost across all businesses per day | USD 50 | Every agent turn hands off (reason `global_budget`) and the team gets an alert; the old one-shot path is not a fallback for cost |
+| Turn duration | 90 seconds | The turn stops after the current tool call, reason `timeout` |
 | Repeated question | The same `ask_owner.topic` 3 times in a week or an onboarding step | Hand off, reason `stuck` (the existing three-attempt rule) |
 | Low confidence | `confidence` below 0.4 on a step | The step's calls are not run; hand off, reason `low_confidence` |
 | Refused tool calls | 3 refusals in one turn | Hand off, reason `refusals` |
 
 A hand-off from a limit always sends the owner one fixed code line (H6: a person will continue shortly), sets the handoff flag, and opens one console item with the turn id. The console shows the turn's steps.
+
+### Module direction
+
+The workflow module routes a burst or a code event to the agent module (`agent.runTurn(businessId, trigger)`); the agent module never imports workflow. The state machine events a tool needs (for example `DRAFT_READY` inside `create_draft`) reach the tools as callbacks injected when the app is wired (`createAgent({ events, messaging, content, design, ... })`), the same way flows get their providers today. So the dependency runs workflow → agent only, and dependency-cruiser keeps it that way.
 
 ### Context
 
@@ -198,7 +204,7 @@ Creates the first version of a planned post.
 | `usedFactIds` | Facts the captions and design use; each must be named by the post's plan or be a profile detail |
 | `design` | A `DesignSpec` ([Photo edits](#photo-edits)) |
 
-Code runs, in order: the fact check on every caption, the hashtags, the title and the badge (`fact_mismatch`); the badge rules (`badge_invalid`); the photo operation ranges (`edit_out_of_range`); rendering (`render_failed`, for example a title that does not fit, with the reason); then writes the `post_version` with the `design_spec`, and sends the draft with the Approve and Change buttons exactly as the drafts flow does today, applying `DRAFT_STARTED` and `DRAFT_READY`. The agent never sees or sends the buttons. It can't touch: approvals, an existing version, publications.
+Code runs, in order: the fact check on every caption, the hashtags, the title and the badge (`fact_mismatch`); the badge rules (`badge_invalid`); the photo operation ranges (`edit_out_of_range`); rendering (`render_failed`, for example a title that does not fit, with the reason); then writes the `post_version` with the `design_spec`, and sends the draft with the Approve and Change buttons exactly as the drafts flow does today. The events depend on the post's state: from `planned`, `DRAFT_STARTED` then `DRAFT_READY`; from `awaiting_clarification`, `DETAIL_PROVIDED` then `DRAFT_READY` (`DRAFT_STARTED` is not valid there); from `drafting`, `DRAFT_READY` only. The agent never sees or sends the buttons. It can't touch: approvals, an existing version, publications.
 
 ### `apply_change`
 
@@ -234,14 +240,15 @@ The machines do not get new states. What changes is who produces the events' inp
 
 - **Onboarding.** `profile_questions` and `brand_assets` become "the onboarding agent gathers until done". After each step of a turn code evaluates the guard of `PROFILE_FIELDS_COMPLETE` and `BRAND_ASSETS_DONE` ([Agents](#agents)) and applies the event; the next code-driven step (the style samples) follows in the same handler, as today. A correction in `profile_review` runs the onboarding agent with `set_profile_field`; code resends the summary (`PROFILE_CORRECTED`).
 - **Weekly update.** `UPDATE_RECEIVED` is applied by code as today; the weekly agent then gathers. `QUESTION_ASKED` and `ANSWER_RECEIVED` move the conversation between `processing_update` and `awaiting_answer` while the agent asks about details. The week moves to `planned` (`FACTS_EXTRACTED`) when `plan_posts` passes; `EXTRACTION_FAILED` (`needs_review`) when the weekly agent hands off or hits a limit before a plan.
-- **Drafts.** `create_draft` drives `DRAFT_STARTED` and `DRAFT_READY`; a question about a post (several photos, a missing photo) drives `DETAIL_MISSING`, and the owner's answer `DETAIL_PROVIDED`; a hand-off or limit on a post drives `DRAFT_FAILED`. Code applies `DRAFTS_SENT` when every post is resolved. `apply_change` drives `CHANGE_REQUESTED` and a new `DRAFT_READY`.
+- **Drafts.** `create_draft` drives `DRAFT_STARTED` and `DRAFT_READY`; a question about a post (several photos, a missing photo) drives `DETAIL_MISSING`, and the owner's answer `DETAIL_PROVIDED`; a hand-off or limit on a post drives `DRAFT_FAILED`. Code applies `DRAFTS_SENT` when every post is resolved. `apply_change` drives the post's `CHANGE_REQUESTED` and a new `DRAFT_READY`.
+- **Fixes.** When `intent_detection` routes an owner text in `reviewing_drafts` (or `confirming_schedule`) as a change, code applies the conversation's `CHANGE_REQUESTED` first (to `processing_update`), as today; the drafts agent then runs in `processing_update`. A `clarify_change` question there is an ordinary `QUESTION_ASKED`, and code applies `DRAFTS_SENT` to return the conversation to `reviewing_drafts` once every post is resolved again.
 - **Approval and after.** Unchanged and agent-free: `APPROVED` comes only from a button tap; `ALL_DRAFTS_RESOLVED`, the time proposal, `SCHEDULE_CONFIRMED` and publishing are code.
 
 Free text in `reviewing_drafts` that is not a change (such as "looks good") is still not an event: the drafts agent is not called for it; code resends the open drafts with their buttons, as today. Routing between "a change" and "not a change" stays with `intent_detection`.
 
 ## Photo edits
 
-A post's design is a `DesignSpec`, a fixed set of operations within [design-styles.md](design-styles.md). The design engine applies them in a fixed order, with sharp, before the style template: rotate, crop, tone. No operation creates, removes or alters image content, and there is no free image generation.
+A post's design is a `DesignSpec`, a fixed set of operations, written into [design-styles.md](design-styles.md#photo-edits-and-badge) (H2) so the design engine builds them from that doc. The design engine applies them in a fixed order, with sharp, before the style template: rotate, crop, tone. No operation creates, removes or alters image content, and there is no free image generation.
 
 | Operation | Field | Range and rule |
 | --- | --- | --- |
@@ -257,12 +264,12 @@ Out-of-range values are refused (`edit_out_of_range`), not clamped, so the agent
 
 ### Badge element
 
-A new design element, added to design-styles.md (H2) with its own rules:
+A new design element with its own rules, also written into [design-styles.md](design-styles.md#photo-edits-and-badge) (H2):
 
 | Rule | Value |
 | --- | --- |
 | Kinds | `discount` (text such as `-15%`), `price` (such as `₪29.90`), and fixed-word stickers `new` (חדש), `sale` (מבצע), `holiday` (חג שמח) per language (A6) |
-| Fact check | A `discount` badge must equal a recorded `discount_percent` fact used by the post; a `price` badge a recorded `price` fact or a profile price. Stickers carry no number and no date. `sale` needs a recorded `promotion` or `discount_percent` fact in the post |
+| Fact check | A `discount` badge must equal a recorded `discount_percent` fact used by the post; a `price` badge a recorded `price` fact or a profile price. Stickers carry no number and no date. `sale` needs a recorded `promotion` or `discount_percent` fact in the post. `holiday` is allowed only when the post's week (Sunday to Saturday, `business.timezone`) holds a holiday that `jewish-calendar.ts` knows, so "חג שמח" never goes out in an ordinary week |
 | Text | At most 8 characters, one line, digits in Latin numerals, the % sign after the number in every language |
 | Shape per style | Clean: a square-cornered accent tag; Warm: a round stamp in the accent color with the card's paper tone; Dynamic: a circle in the secondary color rotated by -8 degrees with the shadow offset edge |
 | Size and place | A 220 px circle or equivalent box, on the cover only, in the top corner opposite the logo, inside the 64 px safe area; never over the title panel or the logo |
@@ -272,7 +279,7 @@ A new design element, added to design-styles.md (H2) with its own rules:
 
 ## Persona and tone
 
-The agent writes in the business's language and the profile's tone for posts, and in Postly's own voice for the conversation: short, warm, one question at a time, and never more than two messages a turn. The persona name and gender are open decisions A1 and A2. The name appears in the intro, in the weekly reminder template and in greetings; it never appears in a post. The persona's wording is part of the agent prompts (H7) and its fixed lines are copy (H6).
+The agent writes in the business's language and the profile's tone for posts, and in Postly's own voice for the conversation: short, warm, one question at a time, and never more than two messages a turn. The persona is "Postly" ("פוסטלי" in Hebrew) unless a business has its own `persona.agentName` (A1), and she speaks in the feminine in Hebrew everywhere (A2). The name appears in the intro, in the weekly reminder template and in greetings; it never appears in a post, and posts keep the business's own voice and tone. The persona's wording is part of the agent prompts (H7) and its fixed lines are copy (H6).
 
 ## Time proposals
 
@@ -296,7 +303,7 @@ Prompt rules that code also enforces: no detail without a source (the fact check
 The human's rule: no test pays for an LLM.
 
 - **Every unit, db and e2e test** runs the agents on the **scripted agent**: a mode of the model simulator in which each `agent_*` task returns the next `AgentStep` from a deterministic script that the test supplies (a list of steps per turn, keyed by agent and turn number). A script that runs out, or a call to a task with no script, fails the test. The tests assert on the tool results, the state machine events, what the owner saw and what reached the networks. Refusals are tested by scripting bad tool calls (a quote that is not in the message, a badge that does not match a fact, an out-of-range crop, a third question).
-- **The model layer refuses a real provider in tests.** The provider factory throws when `NODE_ENV` is `test` and the provider is not a simulator, and a unit test proves it. `npm run check` and CI never set a real model.
+- **The model layer refuses a real provider in tests.** The provider factory throws when `NODE_ENV` is `test` or `CI` is `true` and the provider is not a simulator, so no Vitest run and no other CI job (the image build, the compose job) can reach a real model; a unit test proves both. `npm run check` and CI never set a real model.
 - **The playground and the dev sandbox** keep a word-rule stand-in (`src/simulators/conversational/`) extended with a simple rule agent, so the human can play the agent flows without a model.
 - **The manual eval** (`npm run eval:agent`) is a separate script, outside Vitest and outside `npm run check`, that runs the example set's conversations against real Gemini. It refuses to start unless `POSTLY_AGENT_EVAL=1` is set, prints the expected cost before the first call, stops at a spend cap (`POSTLY_AGENT_EVAL_MAX_USD`, default 2), and writes a report: the conversations, the tool calls, the refusals, the drafts and their renders, and the cost. CI never runs it; a check fails if any CI workflow or `npm run check` references it.
 
@@ -309,4 +316,4 @@ New and changed rows ([database-schema.md](database-schema.md), H4 for the migra
 - `post_version.design_spec`: the `DesignSpec` the version was rendered from (immutable, like the rest of the version). The content hash is unchanged: it already covers the rendered media, so a different design gives a different hash.
 - `agent_config`: a system table, one row per agent, with the limits above.
 - `system_control.agent_flows` and `business.agent_flows`: which flows run on the agent (`onboarding`, `weekly`, `drafts`), globally and as a per-business override for a pilot; off means the one-shot path (A9).
-- `system_control.agent_name`: the global persona name (A1).
+- `system_control.agent_name`: the global persona name per language (A1; default `{"en": "Postly", "he": "פוסטלי"}`).

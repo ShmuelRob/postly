@@ -373,7 +373,7 @@ Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#data)); the migra
 - **`business.agent_flows`**: jsonb, nullable; a per-business override of which flows run on the agent.
 - **`business.profile.persona`**: inside the existing profile jsonb, no column.
 - **`console_item_kind`** gains `agent_limit`.
-- **System tables:** `agent_config` (one row per agent: `max_steps`, `max_tool_calls`, `max_turn_cost_usd`, `max_business_daily_cost_usd`, `timeout_ms`, `min_confidence`, `max_refusals`; read by `agent`, updated by `console`), and `system_control` gains `agent_flows` (jsonb), `agent_daily_cost_cap_usd`, and `agent_name` (text, nullable).
+- **System tables:** `agent_config` (one row per agent: `max_steps`, `max_tool_calls`, `max_turn_cost_usd`, `max_business_daily_cost_usd`, `timeout_ms`, `min_confidence`, `max_refusals`; read by `agent`, updated by `console`), and `system_control` gains `agent_flows` (jsonb), `agent_daily_cost_cap_usd` (default 50), and `agent_name` (jsonb per language, default `{"en": "Postly", "he": "פוסטלי"}`). The `agent_config` seed holds the decided limits (12, 24, 0.06, 1.00, 90 000 ms, 0.4, 3), and the migration seeds the three agent tasks in `model_task_config` on `gemini-2.5-flash-lite` (agent.md, A4 and A8).
 - **Daily cost.** The model layer sums `model_run.cost_usd` for the business since local midnight before each agent call (it already owns `model_run`); the global cap is summed by a `withSystem('scheduler')` read cached for one minute.
 
 ### System tables
