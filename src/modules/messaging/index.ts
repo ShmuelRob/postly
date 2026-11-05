@@ -2,9 +2,14 @@
 // Public surface of the module: other code imports only from this file (see ../README.md).
 
 export {
+  CLAIM_LEASE_MS,
   createMessaging,
   DEFAULT_BURST_QUIET_MS,
+  INBOUND_BURST_JOB,
+  jobBurstWake,
   WINDOW_MS,
+  type BurstWake,
+  type InboundBurstJob,
   type InboundBurst,
   type InboundHandler,
   type MediaStorage,

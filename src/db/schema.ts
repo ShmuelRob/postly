@@ -1,11 +1,12 @@
 import { sql, type SQL } from 'drizzle-orm';
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   check,
   foreignKey,
-  index,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -179,9 +180,20 @@ export const message = pgTable(
     payload: jsonb('payload'),
     mediaAssetIds: uuid('media_asset_ids').array().notNull().default([]),
     processedAt: tz('processed_at'),
+    /** Set when messaging claims the message to hand it over; a claim older than 5 minutes may be taken again (T2). */
+    claimedAt: tz('claimed_at'),
+    /** Arrival order, for messages whose provider timestamps tie (T2). */
+    seq: bigint('seq', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.provider, t.providerMessageId), businessKey('message', t), tenantIsolation(t.businessId)],
+  (t) => [
+    unique().on(t.provider, t.providerMessageId),
+    businessKey('message', t),
+    tenantIsolation(t.businessId),
+    index('message_unprocessed_inbound_idx')
+      .on(t.businessId, t.fromPhone, t.createdAt)
+      .where(sql`${t.direction} = 'inbound' and ${t.processedAt} is null`),
+  ],
 );
 
 export const mediaAsset = pgTable(

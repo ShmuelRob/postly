@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, isNotNull, isNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import {
   InboundMessage,
   type MessagingProvider,
@@ -16,6 +16,33 @@ import * as schema from '../../db/schema.js';
 /** technical-design.md, Operational defaults: a burst ends after 20 seconds without a new message. */
 export const DEFAULT_BURST_QUIET_MS = 20_000;
 export const WINDOW_MS = 24 * 60 * 60 * 1000;
+/** A claim on an unprocessed message older than this may be taken again: its process died (T2). */
+export const CLAIM_LEASE_MS = 5 * 60 * 1000;
+/** The pg-boss job that wakes messaging for one business and sender (technical-design.md, durable bursts). */
+export const INBOUND_BURST_JOB = 'inbound-burst';
+
+export interface InboundBurstJob {
+  businessId: string;
+  from: string;
+}
+
+/**
+ * Asks for `processBurst(businessId, from)` to run at `at`. At most one request waits per business
+ * and sender; one more while it waits is dropped (the job runs, finds the burst not quiet yet, and
+ * asks again).
+ */
+export interface BurstWake {
+  request(businessId: string, from: string, at: Date): Promise<void>;
+}
+
+/** The deployed wake-up: a pg-boss job on a `short` queue, keyed by business and sender. */
+export function jobBurstWake(queue: {
+  send(name: string, data: InboundBurstJob, options: { startAfter: Date; singletonKey: string }): Promise<void>;
+}): BurstWake {
+  return {
+    request: (businessId, from, at) => queue.send(INBOUND_BURST_JOB, { businessId, from }, { startAfter: at, singletonKey: `${businessId}:${from}` }),
+  };
+}
 
 /** One stored inbound message inside a burst. */
 export interface ReceivedMessage {
@@ -67,6 +94,8 @@ export interface MessagingOptions {
   burstQuietMs?: number;
   now?: () => Date;
   timers?: Timers;
+  /** The wake-up after the quiet window; defaults to an in-process timer (local runs and tests). */
+  wake?: BurstWake;
   /** Stores voice notes and images as `media_asset` rows; without it media stays at the provider. */
   media?: MediaStorage;
   /** Called when a burst handed over by a timer fails; defaults to console.error. */
@@ -103,16 +132,20 @@ export interface Messaging {
   sweepUnprocessed(options?: { businessId?: string }): Promise<number>;
   /** Runs the sweep now and then every `everyMs` (default: the quiet window); returns a stop function. */
   startSweep(everyMs?: number): () => void;
-  /** Hands every pending burst to the handler now. */
+  /**
+   * The `inbound-burst` job: claims this sender's unprocessed messages and hands them over, burst
+   * by burst, once the newest is a quiet window old; otherwise asks for another wake-up. Returns
+   * the number of messages handed over. Safe to run on several instances at once.
+   */
+  processBurst(businessId: string, from: string): Promise<number>;
+  /** Hands every burst of the senders this instance received from to the handler now (tests, local runs). */
   flushBursts(): Promise<void>;
-  /** Flushes pending bursts and stops the timers. */
+  /** Flushes as `flushBursts` does and stops the in-process timers. */
   close(): Promise<void>;
 }
 
-interface PendingBurst {
-  burst: InboundBurst;
-  timer: unknown;
-}
+type MessageRow = typeof schema.message.$inferSelect;
+type ClaimStep = { kind: 'none' } | { kind: 'wait'; at: Date } | { kind: 'claimed'; burst: InboundBurst };
 
 const nodeTimers: Timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
 
@@ -122,9 +155,21 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const now = options.now ?? (() => new Date());
   const timers = options.timers ?? nodeTimers;
   const onError = options.onError ?? ((error: unknown) => console.error('inbound burst failed', error));
-  const pending = new Map<string, PendingBurst>();
-  /** Ids of messages handed to the handler and not yet marked processed. */
-  const delivering = new Set<string>();
+  /** Senders this instance received from; only `flushBursts` reads it, the bursts themselves are in `message`. */
+  const senders = new Map<string, { businessId: string; from: string }>();
+  /** The in-process wake-up: one timer per sender, like the job's singletonKey. */
+  const waiting = new Map<string, unknown>();
+  const wake: BurstWake = options.wake ?? {
+    async request(businessId, from, at) {
+      const k = key(businessId, from);
+      if (waiting.has(k)) return;
+      const handle = timers.set(() => {
+        waiting.delete(k);
+        processBurst(businessId, from).catch(() => {});
+      }, Math.max(0, at.getTime() - now().getTime()));
+      waiting.set(k, handle);
+    },
+  };
 
   const key = (businessId: string, from: string) => `${businessId}:${from}`;
 
@@ -157,41 +202,88 @@ export function createMessaging(options: MessagingOptions): Messaging {
     });
   }
 
+  function toReceived(row: MessageRow, content: InboundMessage['content']): ReceivedMessage {
+    return {
+      id: row.id,
+      providerMessageId: row.providerMessageId,
+      receivedAt: row.createdAt.toISOString(),
+      content,
+      mediaAssetIds: row.mediaAssetIds,
+    };
+  }
+
   /**
-   * Hands a burst to the handler and marks its messages processed. Its message ids stay in
-   * `delivering` until that finishes, so the sweep never hands the same messages over twice in this
-   * process. Returns false, doing nothing, when one of them is already being delivered.
+   * One claim, in one transaction: locks the sender's unprocessed inbound rows (a second claimer
+   * waits for this one to commit), and claims the first burst when nothing earlier is claimed by
+   * someone else and, unless `force`, the newest message is a quiet window old.
    */
-  async function deliver(burst: InboundBurst): Promise<boolean> {
-    if (burst.messages.some((m) => delivering.has(m.id))) return false;
-    for (const m of burst.messages) delivering.add(m.id);
-    try {
-      await handler.handleInbound(burst);
-      const processedAt = now();
-      await db.withBusiness('messaging', burst.businessId, async (tx) => {
-        for (const m of burst.messages) {
-          await tx.update(schema.message).set({ processedAt }).where(eq(schema.message.id, m.id));
-        }
+  async function claim(businessId: string, from: string, force: boolean): Promise<ClaimStep> {
+    return db.withBusiness('messaging', businessId, async (tx) => {
+      const m = schema.message;
+      const rows = await tx
+        .select()
+        .from(m)
+        .where(and(eq(m.direction, 'inbound'), eq(m.fromPhone, from), isNull(m.processedAt)))
+        // Provider timestamps tie (WhatsApp's have second resolution); `seq` is the arrival order.
+        .orderBy(asc(m.createdAt), asc(m.seq))
+        .for('update');
+      if (rows.length === 0) return { kind: 'none' };
+      const at = now().getTime();
+      if (rows.some((r) => r.claimedAt !== null && r.claimedAt.getTime() > at - CLAIM_LEASE_MS)) {
+        // Someone else is handing an earlier burst over; look again after it, so the order is kept.
+        return { kind: 'wait', at: new Date(at + quietMs) };
+      }
+      const newest = rows.at(-1)!.createdAt.getTime();
+      if (!force && newest > at - quietMs) return { kind: 'wait', at: new Date(newest + quietMs) };
+      // A row this module cannot read is skipped (and stays unprocessed for the console), so it
+      // never blocks the sender's other messages.
+      const readable = rows.flatMap((row) => {
+        const parsed = InboundMessage.shape.content.safeParse(row.payload);
+        if (parsed.success) return [toReceived(row, parsed.data)];
+        console.error(`inbound burst skipped message ${row.id}: unreadable payload`, parsed.error);
+        return [];
       });
-      return true;
-    } finally {
-      for (const m of burst.messages) delivering.delete(m.id);
+      const [first] = readable;
+      if (!first) return { kind: 'none' };
+      const messages = [first];
+      // A button reply is never merged: it is a burst of its own.
+      if (first.content.kind !== 'button_reply') {
+        for (const next of readable.slice(1)) {
+          if (next.content.kind === 'button_reply') break;
+          messages.push(next);
+        }
+      }
+      await tx.update(m).set({ claimedAt: new Date(at) }).where(inArray(m.id, messages.map((x) => x.id)));
+      return { kind: 'claimed', burst: { businessId, from, messages, text: burstText(messages) } };
+    });
+  }
+
+  /** Claims and hands over the sender's bursts in order; `force` skips the quiet window (a button reply, a flush). */
+  async function processBurst(businessId: string, from: string, force = false): Promise<number> {
+    let delivered = 0;
+    for (;;) {
+      const step = await claim(businessId, from, force);
+      if (step.kind === 'none') return delivered;
+      if (step.kind === 'wait') {
+        await wake.request(businessId, from, step.at);
+        return delivered;
+      }
+      const ids = step.burst.messages.map((x) => x.id);
+      try {
+        await handler.handleInbound(step.burst);
+      } catch (error) {
+        // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
+        await db.withBusiness('messaging', businessId, (tx) =>
+          tx.update(schema.message).set({ claimedAt: null }).where(inArray(schema.message.id, ids)),
+        );
+        onError(error, step.burst);
+        throw error;
+      }
+      await db.withBusiness('messaging', businessId, (tx) =>
+        tx.update(schema.message).set({ processedAt: now() }).where(inArray(schema.message.id, ids)),
+      );
+      delivered += ids.length;
     }
-  }
-
-  async function flush(k: string): Promise<void> {
-    const entry = pending.get(k);
-    if (!entry) return;
-    pending.delete(k);
-    timers.clear(entry.timer);
-    await deliver(entry.burst);
-  }
-
-  function schedule(k: string, entry: PendingBurst): void {
-    timers.clear(entry.timer);
-    entry.timer = timers.set(() => {
-      flush(k).catch((error: unknown) => onError(error, entry.burst));
-    }, quietMs);
   }
 
   async function lookupBusiness(phone: string): Promise<string | undefined> {
@@ -249,29 +341,15 @@ export function createMessaging(options: MessagingOptions): Messaging {
     });
     if (!stored) return 'duplicate';
 
-    const received: ReceivedMessage = {
-      id: stored.id,
-      providerMessageId: message.providerMessageId,
-      receivedAt: message.receivedAt,
-      content: message.content,
-      mediaAssetIds: await storeMedia(businessId, stored.id, message.content),
-    };
-    const k = key(businessId, message.from);
+    await storeMedia(businessId, stored.id, message.content);
+    senders.set(key(businessId, message.from), { businessId, from: message.from });
 
     if (message.content.kind === 'button_reply') {
-      await flush(k);
-      await deliver({ businessId, from: message.from, messages: [received], text: '' });
+      // Handed over at once, after the sender's earlier messages.
+      await processBurst(businessId, message.from, true);
       return 'accepted';
     }
-
-    const entry = pending.get(k) ?? {
-      burst: { businessId, from: message.from, messages: [], text: '' },
-      timer: undefined,
-    };
-    entry.burst.messages.push(received);
-    entry.burst.text = burstText(entry.burst.messages);
-    pending.set(k, entry);
-    schedule(k, entry);
+    await wake.request(businessId, message.from, new Date(now().getTime() + quietMs));
     return 'accepted';
   }
 
@@ -377,56 +455,26 @@ export function createMessaging(options: MessagingOptions): Messaging {
     async sweepUnprocessed(sweepOptions = {}) {
       const m = schema.message;
       const cutoff = new Date(now().getTime() - quietMs);
+      const leaseCutoff = new Date(now().getTime() - CLAIM_LEASE_MS);
       const rows = await db.withSystem('phone_lookup', (tx) =>
         tx
-          .select()
+          .selectDistinct({ businessId: m.businessId, from: m.fromPhone })
           .from(m)
           .where(and(
               eq(m.direction, 'inbound'),
               isNull(m.processedAt),
               sweepOptions.businessId ? eq(m.businessId, sweepOptions.businessId) : isNotNull(m.businessId),
               lt(m.createdAt, cutoff),
-            ))
-          .orderBy(asc(m.createdAt)),
+              or(isNull(m.claimedAt), lt(m.claimedAt, leaseCutoff)),
+            )),
       );
-      const waiting = new Set([...pending.values()].flatMap((p) => p.burst.messages.map((x) => x.id)));
-      const groups = new Map<string, InboundBurst[]>();
-      for (const row of rows) {
-        if (waiting.has(row.id) || delivering.has(row.id) || !row.businessId) continue;
-        // A row this module cannot read must not stop the sweep for every other business.
-        const parsed = InboundMessage.shape.content.safeParse(row.payload);
-        if (!parsed.success) {
-          console.error(`inbound sweep skipped message ${row.id}: unreadable payload`, parsed.error);
-          continue;
-        }
-        const content = parsed.data;
-        const received: ReceivedMessage = {
-          id: row.id,
-          providerMessageId: row.providerMessageId,
-          receivedAt: row.createdAt.toISOString(),
-          content,
-          mediaAssetIds: row.mediaAssetIds,
-        };
-        const k = key(row.businessId, row.fromPhone);
-        const bursts = groups.get(k) ?? [];
-        groups.set(k, bursts);
-        const last = bursts.at(-1);
-        // A button reply is never merged, as on the live path.
-        const mergeable = content.kind !== 'button_reply' && last !== undefined && last.messages[0]?.content.kind !== 'button_reply';
-        if (mergeable) last.messages.push(received);
-        else bursts.push({ businessId: row.businessId, from: row.fromPhone, messages: [received], text: '' });
-      }
       let delivered = 0;
-      for (const bursts of groups.values()) {
-        for (const burst of bursts) {
-          burst.text = burstText(burst.messages);
-          try {
-            if (await deliver(burst)) delivered += burst.messages.length;
-          } catch (error) {
-            // Later bursts of this sender wait for the next sweep, so their order is kept.
-            onError(error, burst);
-            break;
-          }
+      for (const row of rows) {
+        if (!row.businessId) continue;
+        try {
+          delivered += await processBurst(row.businessId, row.from);
+        } catch {
+          // Reported through onError; later bursts of this sender wait for the next sweep, in order.
         }
       }
       return delivered;
@@ -439,11 +487,15 @@ export function createMessaging(options: MessagingOptions): Messaging {
       const timer = setInterval(sweep, everyMs);
       return () => clearInterval(timer);
     },
+    processBurst: (businessId, from) => processBurst(businessId, from),
     async flushBursts() {
-      for (const k of [...pending.keys()]) await flush(k);
+      // The in-process wake-ups have nothing left to do for these senders.
+      for (const handle of waiting.values()) timers.clear(handle);
+      waiting.clear();
+      for (const s of [...senders.values()]) await processBurst(s.businessId, s.from, true);
     },
     async close() {
-      for (const k of [...pending.keys()]) await flush(k);
+      await this.flushBursts();
     },
   };
 }
