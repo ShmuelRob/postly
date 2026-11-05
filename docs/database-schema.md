@@ -363,6 +363,19 @@ The workflow audit trail (WP-46): one row for every event the workflow runtime a
 | `detail` | text | The guard's reason code when blocked |
 | `correlation_id` | text | For example the inbound message id; null when none |
 
+### Proposed with the agent
+
+Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#data)); the migration lands in WP-90 and needs H4. Nothing here exists yet.
+
+- **`agent_turn`** (business-owned, FORCE RLS, `on delete cascade`): `id`, `business_id`, `agent` (`onboarding`, `weekly`, `drafts`), `trigger` (jsonb: `burst` with the message ids, or a code event name), `status` (`running`, `done`, `waiting`, `handed_off`, `failed`), `stop_reason` (`AgentTurnStopReason`), `steps` (jsonb: each step's tool calls and their results; no free-text reasoning is stored), `cost_usd` (numeric(10, 6)), `duration_ms`, `started_at`, `ended_at`. Written by a new business role `agent` (`app_agent`: SIU on `agent_turn`, S on `business`, `conversation_state`, `message`, `media_asset`, `preference_rule`, `weekly_update`, `post`, `post_version`); the console reads it. The agent role changes no other table: each tool applies its effect through the owning module's role.
+- **`model_run.agent_turn_id`**: uuid, nullable, same-business reference to `agent_turn`.
+- **`post_version.design_spec`**: jsonb, nullable (`DesignSpec`; null for versions drafted before the agent). Immutable like the rest of the row; not part of `content_hash`.
+- **`business.agent_flows`**: jsonb, nullable; a per-business override of which flows run on the agent.
+- **`business.profile.persona`**: inside the existing profile jsonb, no column.
+- **`console_item_kind`** gains `agent_limit`.
+- **System tables:** `agent_config` (one row per agent: `max_steps`, `max_tool_calls`, `max_turn_cost_usd`, `max_business_daily_cost_usd`, `timeout_ms`, `min_confidence`, `max_refusals`; read by `agent`, updated by `console`), and `system_control` gains `agent_flows` (jsonb), `agent_daily_cost_cap_usd`, and `agent_name` (text, nullable).
+- **Daily cost.** The model layer sums `model_run.cost_usd` for the business since local midnight before each agent call (it already owns `model_run`); the global cap is summed by a `withSystem('scheduler')` read cached for one minute.
+
 ### System tables
 
 `model_task_config`: one row per `model_task`, with `provider`, `model`, `fallback_provider`, `fallback_model`, `temperature`, `max_cost_usd`, `max_retries`, and `active_prompt_version`.
