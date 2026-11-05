@@ -18,6 +18,7 @@ import * as copy from './drafts-copy.js';
 import * as weeklyCopy from './weekly-copy.js';
 import { MAX_QUESTION_ATTEMPTS, type OnboardingBurst } from './onboarding.js';
 import type { Workflow } from './workflow.js';
+import { log } from '../../shared/logger.js';
 
 // Drafts (PRD, Weekly update and content preparation, Content safeguards; technical-design.md,
 // Drafts flow; state-machines.md, Post and Conversation). Code owns every step: the model writes
@@ -239,7 +240,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       for (const [i, url] of slides.entries()) await deps.messaging.sendText(businessId, { to, text: copy.carouselSlide(i + 1, slides.length), mediaUrl: url });
     }
     const details = (version.factSources as { type: string; value: string }[]).filter((f) => !['product', 'promotion', 'other', 'testimonial'].includes(f.type)).map((f) => f.value);
-    const payload = { postId: post.id, versionHash: version.contentHash };
+    const payload = { postId: post.id, versionId: version.id, versionHash: version.contentHash };
     await deps.messaging.sendButtons(businessId, {
       to,
       text: copy.draftText(plan.topic, networks.map((n) => ({ network: n, caption: captions[n]! })), details),
@@ -560,7 +561,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       } catch (error) {
         // Any other error after the plan: the team gets the week and a person takes over, so the
         // conversation does not wait in processing_update answering every message with stillWorking.
-        console.error(JSON.stringify({ level: 'error', msg: 'drafting failed', businessId, weekId, error: String(error) }));
+        log.error('drafting failed', { businessId, weekId, error: String(error) });
         await db.withBusiness('workflow', businessId, (tx) =>
           tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: weekId, details: { error: String(error) } }),
         );
