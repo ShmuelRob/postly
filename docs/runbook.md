@@ -2,7 +2,7 @@
 
 One entry per alert. Each says what the alert means, how to check it, what to do, and when to escalate or pause publishing. The alerts are defined in `infra/modules/monitoring/main.tf`; each alert's documentation links to its entry here by the anchor under the heading. Logging fields are described in observability.md (WP-47).
 
-**Status of the entries.** The first four alerts exist in infra/modules/monitoring/main.tf. The entries from Publishing failures on are planned (WP-49) and provisional: they follow the alert list agreed with the WP-49 session, whose PR is not merged, so check each against its Terraform and the observability.md section it adds before relying on a metric name or threshold. **Anchors.** Every entry's anchor is the GitHub slug of its heading, nothing else; WP-49's alert links use those slugs.
+**Status of the entries.** Every alert below is in `infra/modules/monitoring` (`main.tf` and `alerts.tf`); thresholds and metrics are listed in [observability.md](observability.md#dashboards-and-alerts-wp-49). **Anchors.** Every entry's anchor is the GitHub slug of its heading, nothing else; WP-49's alert links use those slugs.
 
 Placeholders: `ENV` is `dev`, `stage` or `prod`; `PROJECT` is that environment's GCP project; `REGION` is `me-west1` unless Terraform says otherwise. Services are named `postly-ENV-web`, `postly-ENV-worker` and `postly-ENV-console`; the jobs include `postly-ENV-migrate`.
 
@@ -99,7 +99,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Publishing failures
 
-**Alert (planned, WP-49; not yet in Terraform):** "publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; metric `workload.googleapis.com/postly.publications.count` with `status=failed`, from WP-48).
+**Alert:** "Postly ENV: publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; metric `workload.googleapis.com/postly.publications.count` with `status=failed`, from WP-48).
 
 **Means:** the publishing job is failing to put approved posts live. Owners' approved posts are late or stuck in `retry_pending` or `failed`.
 
@@ -114,7 +114,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Webhook errors
 
-**Alert (planned, WP-49; not yet in Terraform):** "webhook errors" (5 or more non-2xx responses on `/webhooks/*` in 10 minutes; log metric `postly-ENV-webhook-errors`, from Cloud Run request logs).
+**Alert:** "Postly ENV: webhook errors" (5 or more non-2xx responses on `/webhooks/*` in 10 minutes; log metric `postly-ENV-webhook-errors`, from Cloud Run request logs).
 
 **Means:** the messaging or payment vendor is sending webhooks that we reject or fail. Owner messages or payment events may be dropped once the vendor stops retrying.
 
@@ -129,7 +129,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Pgboss backlog
 
-**Alert (planned, WP-49; not yet in Terraform):** "job queue stuck" (`postly.queue.depth` above 50 on any queue for 15 minutes; there is no oldest-job-age metric, so check job age by hand below). 
+**Alert:** "Postly ENV: job queue stuck" (`postly.queue.depth` above 50 on any queue for 15 minutes; there is no oldest-job-age metric, so check job age by hand below). 
 
 
 
@@ -146,7 +146,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Worker not running
 
-**Alert (planned, WP-49; not yet in Terraform):** "worker not running" (worker instance count 0, or no instance data at all, for 10 minutes; `run.googleapis.com/container/instance_count`).
+**Alert:** "Postly ENV: worker not running" (worker instance count 0, or no instance data at all, for 10 minutes; `run.googleapis.com/container/instance_count`).
 
 **Means:** nothing runs jobs: no publishing, no weekly tick, no drafts or deletion.
 
@@ -161,7 +161,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Channel disconnected
 
-**Alert (planned, WP-49; not yet in Terraform):** "channel disconnected" (any log line with `message` "channel disconnected", WARNING, with `businessId` and `network`, in 10 minutes; log metric `postly-ENV-channel-disconnected`. Nothing emits that line yet, so this alert stays silent until it does).
+**Alert:** "Postly ENV: publishing channel disconnected" (any log line with `message` "channel disconnected", WARNING, with `businessId`, `channelId`, `network` and `providerStatus`, in 10 minutes; log metric `postly-ENV-channel-disconnected`. The daily channel health check writes it when a verified channel becomes `disconnected`).
 
 **Means:** a business's Instagram or Facebook (or WhatsApp) connection stopped verifying, so its posts cannot publish.
 
@@ -175,7 +175,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Cost spike
 
-**Alert (planned, WP-49; not yet in Terraform):** "model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). 
+**Alert:** "Postly ENV: model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). 
 
 
 
@@ -192,7 +192,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Model validation failures
 
-**Alert (planned, WP-49; not yet in Terraform):** "model validation failure spike" (5 or more invalid outputs per task in 30 minutes; `postly.model.calls.count` with `outcome=validation_failed`).
+**Alert:** "Postly ENV: model validation failures" (5 or more invalid outputs per task in 30 minutes; `postly.model.calls.count` with `outcome=validation_failed`).
 
 **Means:** model outputs fail their Zod schema. Retries are limited, then the item routes to the console, so owners wait.
 
@@ -207,7 +207,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Cloud SQL connections near max
 
-**Alert (planned, WP-49; not yet in Terraform):** "Cloud SQL connections near max_connections" (more than 80% of `max_connections` in use for 10 minutes; `postgresql/num_backends`). 
+**Alert:** "Postly ENV: Cloud SQL connections near max_connections" (more than 80% of `max_connections` in use for 10 minutes; `postgresql/num_backends`). 
 
 
 
@@ -224,7 +224,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Error budget burn
 
-**Alert (planned, WP-49; not yet in Terraform):** "error budget burn" (99.5% 28-day web availability SLO, burn rate above 10x over 1 hour; SLO on Cloud Run `request_count`).
+**Alert:** "Postly ENV: web error budget burning" (99.5% 28-day web availability SLO, burn rate above 10x over 1 hour; SLO on Cloud Run `request_count`).
 
 **Means:** the web service is failing enough requests to use up the month's error budget within days.
 
