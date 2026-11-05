@@ -13,7 +13,8 @@ import { createConsole, registerConsoleRoutes } from './index.js';
 const db = createDatabase(inject('databaseUrls'), { max: 4 });
 const workflow = createWorkflow(db, { rejected: () => {} });
 const app = Fastify();
-registerConsoleRoutes(app, { console: createConsole(db, workflow) });
+// Signed in as `team@postly` through the local dev bypass (the actor of every action, D4).
+registerConsoleRoutes(app, { console: createConsole(db, workflow), auth: { mode: 'dev-bypass', actor: 'team@postly' }, log: () => {} });
 afterAll(async () => {
   await app.close();
   await db.close();
@@ -131,9 +132,9 @@ describe('pause', () => {
   });
 
   it('pauses and resumes all publishing', async () => {
-    expect((await api('POST', '/system/pause', { by: 'team@postly', reason: 'incident' })).status).toBe(200);
+    expect((await api('POST', '/system/pause', { reason: 'incident' })).status).toBe(200);
     expect((await api('GET', '/system')).body).toMatchObject({ publishingPaused: true, pausedBy: 'team@postly', pausedReason: 'incident' });
-    expect((await api('POST', '/system/resume', { by: 'team@postly' })).status).toBe(200);
+    expect((await api('POST', '/system/resume', {})).status).toBe(200);
     expect((await api('GET', '/system')).body).toMatchObject({ publishingPaused: false });
   });
 
