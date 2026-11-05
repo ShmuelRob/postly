@@ -90,6 +90,7 @@ export const sharedTools: ToolHandlers = {
       details: { reason: call.reason, note: call.note, agent: ctx.agent },
       approverPhone: ctx.approverPhone,
       personaName: ctx.personaName,
+      language: ctx.context.languages[0] ?? 'he',
       now: ctx.deps.now(),
     });
     return { ...ok({ handedOff: true }), stop: 'handed_off' };

@@ -44,6 +44,12 @@ type Transcript = { text: string; language: z.infer<typeof Language> };
 export interface ModelSimulatorOptions {
   /** When false, a call with nothing scripted throws instead of using the default fixture. */
   defaults?: boolean;
+  /**
+   * Strict agents: an agent task call with no `scriptAgent` script for its agent fails the test
+   * (a violation), even when the test scripted no agent at all. Without it, an unscripted agent
+   * hands off until the first `scriptAgent` call (review of #117).
+   */
+  strictAgents?: boolean;
 }
 
 const COST_PER_TOKEN_USD = 0.000001;
@@ -63,10 +69,11 @@ export class ModelSimulator implements ModelProvider {
   private readonly overrides = new Map<ModelTaskName, Fixture<ModelTaskName>>();
   private readonly transcriptQueue: Transcript[] = [];
   private readonly transcriptsByUrl = new Map<string, Transcript>();
-  private readonly agent = new ScriptedAgent();
+  private readonly agent: ScriptedAgent;
 
   constructor(options: ModelSimulatorOptions = {}) {
     this.useDefaults = options.defaults ?? true;
+    this.agent = new ScriptedAgent(options.strictAgents ?? false);
   }
 
   async generateStructured(request: GenerateStructuredRequest): Promise<StructuredResult> {

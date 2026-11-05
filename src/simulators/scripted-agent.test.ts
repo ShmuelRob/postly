@@ -184,6 +184,12 @@ describe('ModelSimulator: the scripted agent', () => {
     await expect(ask(sim, context('weekly', [result('end_turn', ok())]))).rejects.toThrow(/no turn started/);
   });
 
+  it('strictAgents: an agent call with no script fails even when no agent was scripted', async () => {
+    const sim = new ModelSimulator({ strictAgents: true });
+    await expect(ask(sim, context('weekly'))).rejects.toThrow(/weekly.*no script/);
+    expect(sim.agentScriptProblems()).toEqual([expect.stringMatching(/weekly/)]);
+  });
+
   it('without any agent script, an agent call still hands off (WP-89 default) and is no violation', async () => {
     const sim = new ModelSimulator();
     const output = modelTasks.agent_weekly.output.parse((await ask(sim, context('weekly'))).output);

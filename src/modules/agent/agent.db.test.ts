@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, inject, it } from 'vitest';
+import { setLogSink } from '../../shared/logger.js';
 import type { AgentContext, AgentStep } from '../../contracts/agent.js';
 import { type SendTextRequest, WindowClosedError } from '../../contracts/providers/messaging.js';
 import { createDatabase } from '../../db/index.js';
@@ -41,6 +42,7 @@ const ask = (text: string, topic = 'detail:date', expects: 'answer' | 'none' = '
 const decline = (ownerQuote = 'עד יום חמישי') => ({ tool: 'record_decline' as const, what: 'anything_else', ownerQuote });
 const END = { tool: 'end_turn' as const };
 const trigger = { kind: 'event', name: 'test' } as const;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function newBusiness(): Promise<void> {
   businessId = randomUUID();
@@ -163,7 +165,7 @@ describe('a turn', () => {
     const result = await agentWith().runTurn(businessId, 'weekly', trigger);
     // Three refusals reach the limit: only the hand-off line goes out.
     expect(result.stopReason).toBe('refusals');
-    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי') }]);
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי', 'he') }]);
     const turn = await turnRow(result.turnId!);
     expect((turn.steps as { calls: { result: { reason: string } }[] }[]).map((st) => st.calls[0]!.result.reason)).toEqual([
       'fact_mismatch',
@@ -192,7 +194,7 @@ describe('a turn', () => {
     expect(await consoleItems()).toEqual([
       expect.objectContaining({ kind: 'handoff', referenceId: result.turnId, details: expect.objectContaining({ reason: 'owner_asked_for_person', note: 'ביקש נציג' }) }),
     ]);
-    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי') }]);
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי', 'he') }]);
   });
 });
 
@@ -207,6 +209,18 @@ describe('one turn per business', () => {
     );
     expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'skipped' });
     expect(sim.callsFor('agent_weekly')).toHaveLength(0);
+  });
+
+  it('of two turns started at once, exactly one runs (the conversation_state row lock)', async () => {
+    sim.script('agent_weekly', step([END]));
+    // A slow step keeps the first turn running while the second one tries the lock.
+    const slow = { ...models, run: (async (...args: Parameters<ModelLayer['run']>) => (await sleep(300), models.run(...args))) as ModelLayer['run'] };
+    const agent = agentWith({ models: slow });
+    const results = await Promise.all([agent.runTurn(businessId, 'weekly', trigger), agent.runTurn(businessId, 'weekly', trigger)]);
+    expect(results.map((r) => r.status).sort()).toEqual(['done', 'skipped']);
+    expect(sim.callsFor('agent_weekly')).toHaveLength(1);
+    const turns = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.agentTurn).where(eq(schema.agentTurn.businessId, businessId)));
+    expect(turns).toHaveLength(1);
   });
 
   it('closes a crashed turn (running for twice the timeout) and runs', async () => {
@@ -226,7 +240,7 @@ describe('limits', () => {
     expect(result).toMatchObject({ status: 'handed_off', stopReason: reason });
     expect(await handoffAt()).not.toBeNull();
     expect(await consoleItems()).toContainEqual(expect.objectContaining({ kind: 'agent_limit', referenceId: result.turnId, details: expect.objectContaining({ reason }) }));
-    expect(sent.at(-1)).toEqual({ to: approver, text: handOffLine('פוסטלי') });
+    expect(sent.at(-1)).toEqual({ to: approver, text: handOffLine('פוסטלי', 'he') });
     expect((await turnRow(result.turnId!)).status).toBe('handed_off');
   }
 
@@ -269,6 +283,57 @@ describe('limits', () => {
     await expectLimit('timeout', agentWith({ now }).runTurn(businessId, 'onboarding', trigger));
   });
 
+  it('timeout bounds a model call that hangs: the turn ends, the lock frees, and the late answer does nothing', async () => {
+    await setLimits({ timeoutMs: 1_000 });
+    let answer: ((s: AgentStep) => void) | undefined;
+    const hanging = { ...models, run: (() => new Promise<AgentStep>((resolve) => (answer = resolve))) as unknown as ModelLayer['run'] };
+    const started = Date.now();
+    await expectLimit('timeout', agentWith({ models: hanging }).runTurn(businessId, 'onboarding', trigger));
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(answer, 'the model call started').toBeDefined();
+
+    // The call answers after the turn ended: none of its tools run.
+    answer!(step([ask('עוד משהו?', 'anything_else', 'none')]));
+    await sleep(50);
+    expect(sent).toHaveLength(1); // only the hand-off line
+
+    // The turn is closed, so once a person clears the handoff the next turn runs at once.
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx.update(schema.conversationState).set({ handoffAt: null }).where(eq(schema.conversationState.businessId, businessId)),
+    );
+    sim.script('agent_onboarding', step([END]));
+    expect(await agentWith().runTurn(businessId, 'onboarding', trigger)).toMatchObject({ status: 'done' });
+  });
+
+  it('timeout is also checked after each tool call: the rest of the step does not run', async () => {
+    let clock = Date.now();
+    const now = () => new Date(clock);
+    // Sending takes longer than the whole 90-second turn.
+    const slowSend: AgentDeps['messaging'] = {
+      async sendText(b, request) {
+        clock += 100_000;
+        return messaging.sendText(b, request);
+      },
+    };
+    sim.script('agent_onboarding', step([ask('קיבלתי', 'info', 'none'), ask('ועוד משהו', 'info', 'none')]));
+    await expectLimit('timeout', agentWith({ now, messaging: slowSend }).runTurn(businessId, 'onboarding', trigger));
+    expect(sent.map((m) => m.text)).toEqual(['קיבלתי', handOffLine('פוסטלי', 'he')]);
+  });
+
+  it('global_budget logs the one alert line the monitoring counts', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      const overGlobal = { ...models, spentByAllSince: async () => 49.99 };
+      await expectLimit('global_budget', agentWith({ models: overGlobal }).runTurn(businessId, 'onboarding', trigger));
+    } finally {
+      setLogSink(undefined);
+    }
+    const alerts = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.message === 'agent global budget reached');
+    expect(alerts).toEqual([expect.objectContaining({ severity: 'WARNING', capUsd: 50, agent: 'onboarding' })]);
+    expect(alerts[0]!['logging.googleapis.com/labels']).toMatchObject({ businessId });
+  });
+
   it('invalid_output after the model layer gives up', async () => {
     sim.scriptInvalid('agent_onboarding', { calls: [{ tool: 'approve' }] }, { calls: [] }, {});
     await expectLimit('invalid_output', agentWith().runTurn(businessId, 'onboarding', trigger));
@@ -290,6 +355,17 @@ describe('limits', () => {
     const overGlobal = { ...models, spentByAllSince: async () => 49.99 };
     await expectLimit('global_budget', agentWith({ models: overGlobal }).runTurn(businessId, 'onboarding', trigger));
     expect(sim.callsFor('agent_onboarding')).toHaveLength(0);
+  });
+});
+
+describe('the hand-off line', () => {
+  it("is in the business's first language, with the persona's name in that language", async () => {
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx.update(schema.business).set({ profile: { name: 'Dana Flowers', approverPhone: approver, languages: ['en'] } }).where(eq(schema.business.id, businessId)),
+    );
+    sim.script('agent_weekly', step([{ tool: 'hand_off_to_console', reason: 'owner_asked_for_person', note: 'asked for a person' }]));
+    await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(sent).toEqual([{ to: approver, text: handOffLine('Postly', 'en') }]);
   });
 });
 

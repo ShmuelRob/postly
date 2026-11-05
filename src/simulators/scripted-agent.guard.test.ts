@@ -38,10 +38,12 @@ describe('no paid model in tests or CI', () => {
     }
   });
 
-  it("no test builds a real adapter's network transport", () => {
+  it("no test builds a real adapter's network transport, except to prove it throws", () => {
     const tests = ['src', 'test', 'playground', 'scripts'].flatMap((dir) => files(join(ROOT, dir), isTest));
     expect(tests.length).toBeGreaterThan(50);
-    const offenders = tests.filter((t) => /\badcTransport\s*\(/.test(readFileSync(t, 'utf8'))).map(rel);
+    // `expect(() => adcTransport(...)).toThrow(...)` is the model layer's own proof of its guard (WP-90).
+    const proving = /expect\(\s*\(\)\s*=>\s*adcTransport\s*\([^)]*\)\s*\)\s*\.toThrow/g;
+    const offenders = tests.filter((t) => /\badcTransport\s*\(/.test(readFileSync(t, 'utf8').replace(proving, ''))).map(rel);
     expect(offenders).toEqual([]);
   });
 
