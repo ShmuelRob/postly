@@ -105,14 +105,18 @@ e2eTest('an owner who never pays gets reminders on days 1, 3 and 6, publishing p
     // The post's time is a week away: it would go live after the hold starts.
     await read(db, (tx) => tx.update(schema.publication).set({ scheduledFor: at(8) }).where(eq(schema.publication.postId, draft.postId)));
 
-    // Day 0 and day 2: nothing is due.
+    // Day 0: nothing is due.
     await day(0);
-    await day(2);
     expect(templates(run)).toEqual([]);
 
     for (const d of [1, 3, 6]) {
       await day(d);
       await day(d); // the tick runs again the same day: no second reminder
+      if (d === 1) {
+        // Day 2 is not a reminder day: nothing more after day 1's reminder.
+        await day(2);
+        expect(templates(run)).toHaveLength(1);
+      }
     }
     const reminders = templates(run);
     expect(reminders.map((t) => t.name)).toEqual([holdCopy.REMINDER_TEMPLATE, holdCopy.REMINDER_TEMPLATE, holdCopy.REMINDER_TEMPLATE]);
