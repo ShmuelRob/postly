@@ -16,6 +16,9 @@ describe('model task registry', () => {
         'change_interpretation',
         'image_review',
         'fact_check',
+        'agent_onboarding',
+        'agent_weekly',
+        'agent_drafts',
       ].sort(),
     );
   });
@@ -135,6 +138,31 @@ describe('image_review', () => {
     const base = { usable: true, score: 0.7, issues: [] };
     expect(output.safeParse({ ...base, crop: { x: 0.1, y: 0, width: 0.8, height: 1 } }).success).toBe(true);
     expect(output.safeParse({ ...base, crop: { x: 0.5, y: 0, width: 0.8, height: 1 } }).success).toBe(false);
+  });
+});
+
+describe('image_review version 2 (agent.md, Photos the agent sees)', () => {
+  const { output } = modelTasks.image_review;
+  const base = { usable: true, score: 0.7, issues: [] };
+
+  it('accepts a description and suggested edits within the photo edit ranges', () => {
+    expect(output.safeParse({ ...base, description: 'זר ורדים על דלפק', rotateDeg: -2.5, brightness: 0.1, contrast: 0 }).success).toBe(true);
+    expect(output.safeParse(base).success).toBe(true);
+  });
+
+  it('rejects suggestions out of range and a description over 200 characters', () => {
+    expect(output.safeParse({ ...base, rotateDeg: 12 }).success).toBe(false);
+    expect(output.safeParse({ ...base, brightness: 0.5 }).success).toBe(false);
+    expect(output.safeParse({ ...base, description: 'א'.repeat(201) }).success).toBe(false);
+  });
+});
+
+describe('agent tasks (contracts.md, Agent)', () => {
+  it('take an AgentContext and return an AgentStep', () => {
+    for (const task of ['agent_onboarding', 'agent_weekly', 'agent_drafts'] as const) {
+      expect(modelTasks[task].output.safeParse({ calls: [{ tool: 'end_turn' }], confidence: 1 }).success, task).toBe(true);
+      expect(modelTasks[task].output.safeParse({ calls: [{ tool: 'approve' }], confidence: 1 }).success, task).toBe(false);
+    }
   });
 });
 

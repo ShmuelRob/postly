@@ -7,6 +7,7 @@ import {
   modelTasks,
   type PlannedPost,
 } from '../contracts/model-tasks.js';
+import type { AgentContext } from '../contracts/agent.js';
 import { describeModelProviderContract } from './contract-suites/model.js';
 import { ModelSimulator, taskOutputJsonSchema } from './model.js';
 
@@ -29,6 +30,28 @@ const plan: PlannedPost = {
   mediaAssetIds: [uuid],
   brief: 'פוסט על 20% הנחה על תמרים',
 };
+
+function agentContext(agent: 'onboarding' | 'weekly' | 'drafts', step: 'profile_questions' | 'processing_update'): AgentContext {
+  return {
+    agent,
+    persona: { name: 'פוסטלי', gender: 'feminine' },
+    languages: ['he'],
+    tone: { register: 'warm', address: 'plural', emoji: true },
+    profile: { name: 'פרחי דנה' },
+    missingFields: [],
+    messages: [{ role: 'owner', text: 'השבוע 20% הנחה על תמרים', at: '2026-11-05T10:00:00+02:00', photos: [] }],
+    step,
+    openQuestion: null,
+    week: null,
+    posts: [],
+    rules: [],
+    history: [],
+    tools: ['ask_owner', 'hand_off_to_console', 'end_turn'],
+    doneRule: 'Done when the plan passed the checks',
+    budget: { stepsLeft: 12, costLeftUsd: 0.06 },
+    toolResults: [],
+  };
+}
 
 const sampleInputs: { [T in ModelTaskName]: ModelTaskInput<T> } = {
   intent_detection: { text: 'יש לנו מבצע', step: 'idle', draftsOpen: false },
@@ -59,6 +82,9 @@ const sampleInputs: { [T in ModelTaskName]: ModelTaskInput<T> } = {
   },
   image_review: { mediaAssetId: uuid, purpose: 'post_photo' },
   fact_check: { caption: 'מבצע 20% על תמרים', facts: [fact] },
+  agent_onboarding: agentContext('onboarding', 'profile_questions'),
+  agent_weekly: agentContext('weekly', 'processing_update'),
+  agent_drafts: agentContext('drafts', 'processing_update'),
 };
 
 const request = (task: ModelTaskName, input: unknown = sampleInputs[task]) => ({

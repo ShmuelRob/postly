@@ -122,4 +122,31 @@ describe('RenderRequest', () => {
     expect(RenderRequest.safeParse({ ...req, networks: [] }).success).toBe(false);
     expect(RenderRequest.safeParse({ ...req, photoUrls: [] }).success).toBe(false);
   });
+
+  // Proposed with the agent (contracts.md, TemplateRenderer): optional edits, badge and layout.
+  const carousel = {
+    style: 'warm',
+    format: 'carousel',
+    photoUrls: ['https://storage.example.test/a.jpg', 'https://storage.example.test/b.jpg'],
+    overlayText: 'מבצע תמרים',
+    brandColors: [],
+    networks: ['instagram'],
+  };
+
+  it('takes one edit per photo, a badge with its text, and a carousel layout', () => {
+    const ok = RenderRequest.safeParse({
+      ...carousel,
+      edits: [{ rotateDeg: 1.5, crop: { x: 0, y: 0.1, w: 1, h: 0.8 } }, {}],
+      badge: { kind: 'discount', text: '-15%' },
+      carouselLayout: 'numbered',
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it('rejects edits that do not match the photos, out-of-range edits, and a badge over 8 characters', () => {
+    expect(RenderRequest.safeParse({ ...carousel, edits: [{}] }).success).toBe(false);
+    expect(RenderRequest.safeParse({ ...carousel, edits: [{ brightness: 0.9 }, {}] }).success).toBe(false);
+    expect(RenderRequest.safeParse({ ...carousel, badge: { kind: 'sale', text: 'מבצע ענק היום' } }).success).toBe(false);
+    expect(RenderRequest.safeParse({ ...carousel, badge: { kind: 'stamp', text: 'x' } }).success).toBe(false);
+  });
 });

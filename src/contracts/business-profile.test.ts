@@ -19,6 +19,13 @@ const required = {
 } as const;
 
 describe('BusinessProfile', () => {
+  it('takes an optional persona name override (agent.md, A1)', () => {
+    expect(BusinessProfile.parse(required).persona).toBeUndefined();
+    expect(BusinessProfile.parse({ ...required, persona: { agentName: 'רוני' } }).persona).toEqual({ agentName: 'רוני' });
+    expect(BusinessProfile.safeParse({ ...required, persona: { agentName: '' } }).success).toBe(false);
+    expect(BusinessProfile.safeParse({ ...required, persona: { agentName: 'א'.repeat(31) } }).success).toBe(false);
+  });
+
   it('applies PRD defaults to missing optional fields', () => {
     const profile = BusinessProfile.parse(required);
     expect(profile.languages).toEqual(['he']);
