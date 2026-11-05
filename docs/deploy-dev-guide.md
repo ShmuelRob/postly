@@ -99,7 +99,7 @@ notepad infra/environments/dev/terraform.tfvars
 | Value | What to put | Where it comes from |
 | --- | --- | --- |
 | `project_id` | `postly-dev-xyz` | the project from step 2 |
-| `business_number` | a test number in `+` format, for example `+15550000001` | Postly's WhatsApp number on dev. On the simulators it is only a label, so any test number works until WP-41 brings a real test number |
+| `business_number` | a made-up number in `+` format, for example `+15550000001` | **You do not need a real WhatsApp number.** Dev runs only on the simulators, so this is just a label (any non-empty string passes `src/config.ts`). Replace it with a real test number only when WP-41 connects WhatsApp |
 | `alert_email` | your email | where the alerts in step 7 go |
 
 Leave the rest out: `region` defaults to `me-west1`, `public_base_url` to the web service's `run.app` URL, `github_repository` to `ShmuelRob/postly`. The file is git-ignored.
