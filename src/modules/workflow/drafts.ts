@@ -19,6 +19,7 @@ import * as weeklyCopy from './weekly-copy.js';
 import { MAX_QUESTION_ATTEMPTS, type OnboardingBurst } from './onboarding.js';
 import type { Workflow } from './workflow.js';
 import { log } from '../../shared/logger.js';
+import { metrics, withSpan } from '../../shared/telemetry.js';
 
 // Drafts (PRD, Weekly update and content preparation, Content safeguards; technical-design.md,
 // Drafts flow; state-machines.md, Post and Conversation). Code owns every step: the model writes
@@ -262,8 +263,24 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     return 'failed' as const;
   }
 
+  /** One draft run, counted by outcome (docs/observability.md, Metrics); a throw counts as `failed`. */
+  async function draftPost(...args: Parameters<typeof draftOnePost>): Promise<Outcome> {
+    const [business, post] = args;
+    let outcome: Outcome = 'failed';
+    try {
+      outcome = await withSpan('draft post', { businessId: business.id, postId: post.id }, async (span) => {
+        const result = await draftOnePost(...args);
+        span.set({ outcome: result });
+        return result;
+      });
+      return outcome;
+    } finally {
+      metrics.count('postly.drafts.count', { outcome });
+    }
+  }
+
   /** Drafts one post in `planned` or `drafting`: question, caption with the fact check, render, version, send. */
-  async function draftPost(
+  async function draftOnePost(
     business: typeof schema.business.$inferSelect,
     post: PostRow,
     run: Run,

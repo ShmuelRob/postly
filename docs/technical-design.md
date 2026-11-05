@@ -270,6 +270,7 @@ Authentication is not defined yet. The console runs as its own process (`main.js
 - Payment card details are never stored.
 - The console exposure and the ranked security debts are in [security.md](security.md).
 - Logs are structured JSON from one shared logger, carry request, business, message and job ids, and never carry customer content, phone numbers or secrets; the logger redacts them in code ([observability.md](observability.md)).
+- Metrics go to Cloud Monitoring and traces to Cloud Trace through OpenTelemetry, and every error log line is a Cloud Error Reporting event. Each metric is declared once with fixed label values, and span attributes are limited to ids and code words, so no customer content and no business id reach a label or an attribute ([observability.md](observability.md#metrics-wp-48)).
 
 ## Environments
 

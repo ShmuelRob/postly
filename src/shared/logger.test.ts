@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { log, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { log, setLogLabels, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { withSpan } from './telemetry.js';
+import { memoryTelemetry } from './telemetry-memory.js';
 
 // docs/observability.md, Logging (WP-47).
 
@@ -146,5 +148,53 @@ describe('one logger', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+// docs/observability.md, Error Reporting (WP-48) and Tracing (logs join traces).
+describe('Error Reporting', () => {
+  it('marks every ERROR line as a reported error event with the service context', () => {
+    capture();
+    setLogLabels({ process: 'worker' });
+    log.error('publication run failed', { publicationId: 'p1', error: 'timeout' });
+    log.warn('workflow event rejected');
+    setLogLabels({});
+    const [error, warn] = parsed();
+    expect(error).toMatchObject({
+      '@type': 'type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent',
+      serviceContext: { service: 'worker', version: expect.any(String) },
+    });
+    expect(warn!['@type']).toBeUndefined();
+  });
+
+  it('adds a scrubbed stack trace when a field is an Error', () => {
+    capture();
+    log.error('inbound burst failed', { error: new Error(`reply to ${PHONES[0]}: ${CUSTOMER_TEXT}`) });
+    const [line] = parsed();
+    const stack = String(line!.stack_trace);
+    expect(stack).toMatch(/^Error: reply to \[redacted\]/);
+    expect(stack).toMatch(/\n\s+at .+logger\.test\.ts:\d+/);
+    expect(stack).not.toContain(PHONES[0]);
+  });
+});
+
+describe('logs join traces', () => {
+  it('takes the trace and span ids from the active span', async () => {
+    const telemetry = memoryTelemetry();
+    const previous = process.env.GOOGLE_CLOUD_PROJECT;
+    process.env.GOOGLE_CLOUD_PROJECT = 'postly-test';
+    try {
+      capture();
+      await withSpan('job weekly-tick', { job: 'weekly-tick' }, async () => log.info('weekly tick done'));
+      const [span] = telemetry.spans();
+      const [line] = parsed();
+      expect(line!['logging.googleapis.com/trace']).toBe(`projects/postly-test/traces/${span!.traceId}`);
+      expect(line!['logging.googleapis.com/spanId']).toBe(span!.spanId);
+      expect(line!['logging.googleapis.com/trace_sampled']).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.GOOGLE_CLOUD_PROJECT;
+      else process.env.GOOGLE_CLOUD_PROJECT = previous;
+      telemetry.stop();
+    }
   });
 });

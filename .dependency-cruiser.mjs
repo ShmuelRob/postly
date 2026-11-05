@@ -43,10 +43,21 @@ const vendorRules = Object.entries(vendorPackages).map(([owner, names]) => ({
   to: { path: packagePattern(names) },
 }));
 
+// Telemetry SDKs and exporters (docs/observability.md): only src/shared/telemetry*.ts loads them;
+// everything else records through src/shared/telemetry.ts and the vendor-neutral @opentelemetry/api.
+const telemetryPackages = ['@opentelemetry/(?!api(/|$)).+', '@google-cloud/opentelemetry-.+'];
+
 /** @type {import('dependency-cruiser').IConfiguration} */
 export default {
   forbidden: [
     ...vendorRules,
+    {
+      name: 'telemetry-sdk-outside-telemetry',
+      comment: 'OpenTelemetry SDKs and the Google Cloud exporters are imported only in src/shared/telemetry*.ts.',
+      severity: 'error',
+      from: { pathNot: '^src/shared/telemetry[^/]*\.ts$' },
+      to: { path: packagePattern(telemetryPackages) },
+    },
     {
       name: 'module-internals',
       comment: 'Another module is imported only through its index.ts.',
