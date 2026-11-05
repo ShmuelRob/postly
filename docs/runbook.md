@@ -97,7 +97,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Publishing failures
 
-**Alert:** "publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; log metrics `postly-ENV-publication-failed` and `postly-ENV-publication-finished`).
+**Alert:** "publishing failure rate" (at least 3 failed publication runs in 1 hour and more than 20% of runs; metric `workload.googleapis.com/postly.publications.count` with `status=failed`, from WP-48).
 
 **Means:** the publishing job is failing to put approved posts live. Owners' approved posts are late or stuck in `retry_pending` or `failed`.
 
@@ -127,7 +127,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Job queue stuck
 
-**Alert:** "job queue stuck" (more than 50 queued jobs, or the oldest queued job older than 15 minutes, for 15 minutes; WP-48 queue metric, log metric `postly-ENV-queue-depth` until it merges). Anchor: `pgboss-backlog`.
+**Alert:** "job queue stuck" (`postly.queue.depth` above 50 on any queue for 15 minutes; there is no oldest-job-age metric, so check job age by hand below). Anchor: `pgboss-backlog`.
 
 <a id="pgboss-backlog"></a>
 
@@ -144,7 +144,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Worker not running
 
-**Alert:** "worker not running" (worker instance count 0 for 10 minutes; `run.googleapis.com/container/instance_count`).
+**Alert:** "worker not running" (worker instance count 0, or no instance data at all, for 10 minutes; `run.googleapis.com/container/instance_count`).
 
 **Means:** nothing runs jobs: no publishing, no weekly tick, no drafts or deletion.
 
@@ -159,7 +159,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Channel disconnected
 
-**Alert:** "channel disconnected" (any channel disconnect logged in 10 minutes; log metric `postly-ENV-channel-disconnected`).
+**Alert:** "channel disconnected" (any log line with `message` "channel disconnected", WARNING, with `businessId` and `network`, in 10 minutes; log metric `postly-ENV-channel-disconnected`. Nothing emits that line yet, so this alert stays silent until it does).
 
 **Means:** a business's Instagram or Facebook (or WhatsApp) connection stopped verifying, so its posts cannot publish.
 
@@ -173,7 +173,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Model cost spike
 
-**Alert:** "model cost spike" (model cost above USD 5 in 1 hour, set per environment; log metric `postly-ENV-model-cost`, distribution of `costUsd`). Anchor: `cost-spike`.
+**Alert:** "model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). Anchor: `cost-spike`.
 
 <a id="cost-spike"></a>
 
@@ -190,7 +190,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 ## Model validation failures
 
-**Alert:** "model validation failure spike" (5 or more invalid model outputs in 30 minutes; log metric `postly-ENV-model-validation-failed`).
+**Alert:** "model validation failure spike" (5 or more invalid outputs per task in 30 minutes; `postly.model.calls.count` with `outcome=validation_failed`).
 
 **Means:** model outputs fail their Zod schema. Retries are limited, then the item routes to the console, so owners wait.
 
