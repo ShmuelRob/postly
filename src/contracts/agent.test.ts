@@ -134,6 +134,8 @@ describe('tool calls (agent.md, Tools)', () => {
     expect(call({ ...set, field: 'approverPhone', value: '+972501234567' })).toBe(false);
     expect(call({ ...set, field: 'style', value: 'warm' })).toBe(false);
     expect(call({ ...set, field: 'brand.logoAssetId', value: uuid })).toBe(false);
+    expect(call({ ...set, field: 'persona', value: { agentName: 'רוני' } })).toBe(false);
+    expect(call({ ...set, field: 'persona.agentName', value: 'רוני' })).toBe(false);
   });
 
   it('set_profile_field: a quote is required for factual fields', () => {
