@@ -62,7 +62,8 @@ resource "google_monitoring_uptime_check_config" "web" {
   timeout      = "10s"
   period       = "60s"
   http_check {
-    path         = "/healthz"
+    # Not /healthz: Cloud Run's front end reserves paths ending in "z" and answers them 404 itself.
+    path         = "/health"
     port         = 443
     use_ssl      = true
     validate_ssl = true

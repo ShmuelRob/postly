@@ -24,6 +24,19 @@ describe('console process', () => {
     await web.close();
   });
 
+  // Cloud Run's front end reserves paths ending in "z" (/healthz answers 404 from Google, never reaching
+  // the app), so callers outside the container (the deploy smoke check, the uptime check) use /health.
+  // The startup and liveness probes go to the container directly and keep /healthz.
+  it('the public web server answers /health as well as /healthz', async () => {
+    const web = buildServer({ messaging: stubMessaging, publicBaseUrl: 'http://localhost' });
+    for (const url of ['/health', '/healthz']) {
+      const res = await web.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+    }
+    await web.close();
+  });
+
   it('serves /healthz and the console API', async () => {
     const server = buildConsoleServer({ console: stubConsole });
     expect((await server.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);

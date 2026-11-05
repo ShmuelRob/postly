@@ -93,4 +93,4 @@ jobs:
       - name: Smoke check
         run: |
           URL="$(gcloud run services describe "$PREFIX-web" --region "$REGION" --format 'value(status.url)')"
-          curl -fsS "$URL/healthz"
+          curl -fsS "$URL/health"
