@@ -210,6 +210,11 @@ GRANT SELECT, UPDATE ON "system_control" TO app_sys_console;
 --> statement-breakpoint
 -- The WP-20 logins held the old single grant set; their privileges and the logins themselves go.
 -- No object is owned by them (the migration role owns every table), so DROP OWNED only revokes.
+-- DROP OWNED needs the privileges of the role. On Cloud SQL the admin (`postgres`, cloudsqlsuperuser)
+-- is not a superuser, and since Postgres 16 creating a role does not make the creator a member, so
+-- the admin takes the two logins first (it holds ADMIN OPTION on roles it created). A real superuser
+-- (tests, local) gets the same grant and loses it when the roles are dropped.
+GRANT app_user, app_system TO CURRENT_USER;--> statement-breakpoint
 DROP OWNED BY app_user, app_system;--> statement-breakpoint
 DROP ROLE app_user;--> statement-breakpoint
 DROP ROLE app_system;

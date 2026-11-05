@@ -19,6 +19,8 @@ export function simulatorProvisionStatements(password: string): string[] {
       END IF;
     END $$`,
     `ALTER ROLE ${SIMULATOR_LOGIN} LOGIN NOINHERIT NOCREATEROLE NOCREATEDB NOBYPASSRLS`,
+    // AUTHORIZATION needs SET ROLE on the login; the Cloud SQL admin is not a superuser (see provision.ts).
+    `GRANT ${SIMULATOR_LOGIN} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE`,
     `CREATE SCHEMA IF NOT EXISTS ${SIMULATOR_SCHEMA} AUTHORIZATION ${SIMULATOR_LOGIN}`,
     `REVOKE ALL ON SCHEMA public FROM ${SIMULATOR_LOGIN}`,
     `alter role ${SIMULATOR_LOGIN} password ${quoteLiteral(password)}`,
