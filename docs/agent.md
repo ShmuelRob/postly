@@ -140,7 +140,7 @@ Sets one field of the onboarding draft (or of the active profile, A7).
 
 | Field | Rule |
 | --- | --- |
-| `field` | A `BusinessProfile` path from the allowed list: everything except `approverPhone`, `style` (code reads the style choice), `channels` after onboarding, and `brand.logoAssetId` (code sets it from the image that answers the logo request) |
+| `field` | A `BusinessProfile` path from the allowed list: everything except `approverPhone`, `style` (code reads the style choice), `channels` after onboarding, `brand.logoAssetId` (code sets it from the image that answers the logo request), and `persona` (the per-business name override, set by the team) |
 | `value` | Validated against that field's own schema in `BusinessProfileDraft` |
 | `sourceQuote` | Required for `name`, `location.*`, `contact.*`, `schedule.*`, `differentiator`, `mainProducts` and `fixedHashtags`: words of the owner's own messages in the context, verbatim (whitespace runs count as one space). Optional for fields with defaults (`tone`, `contentTypes`, `formats`) when the agent infers them from the owner's answers |
 

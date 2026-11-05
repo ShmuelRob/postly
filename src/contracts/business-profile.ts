@@ -60,6 +60,8 @@ const fields = {
   forbiddenTopics: z.array(nonBlank),
   fixedHashtags: z.array(z.string().regex(/^#\S+$/, 'Hashtags start with # and have no spaces')),
   approverPhone: Phone,
+  /** The agent's name for this business, overriding the global "Postly" / "פוסטלי" (agent.md, A1). Set by the team. */
+  persona: z.object({ agentName: nonBlank.max(30).optional() }),
 };
 
 export const BusinessProfile = z.object({
@@ -76,6 +78,7 @@ export const BusinessProfile = z.object({
   contact: fields.contact.default({}),
   forbiddenTopics: fields.forbiddenTopics.default(['politics', 'competitor comparisons']),
   fixedHashtags: fields.fixedHashtags.default([]),
+  persona: fields.persona.optional(),
 });
 export type BusinessProfile = z.infer<typeof BusinessProfile>;
 

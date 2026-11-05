@@ -10,6 +10,11 @@ type DefaultFixture<T extends ModelTaskName> = (input: ModelTaskInput<T> | undef
 
 const plannedTypes = ['products', 'tips'] as const;
 
+const unscriptedAgentStep: ModelTaskOutput<'agent_weekly'> = {
+  calls: [{ tool: 'hand_off_to_console', reason: 'unclear', note: 'Model simulator: no agent script for this step' }],
+  confidence: 1,
+};
+
 export const defaultFixtures: { [T in ModelTaskName]: DefaultFixture<T> } = {
   intent_detection: () => ({ intent: 'other', confidence: 0.5 }),
 
@@ -59,6 +64,12 @@ export const defaultFixtures: { [T in ModelTaskName]: DefaultFixture<T> } = {
   image_review: () => ({ usable: true, score: 0.9, issues: [] }),
 
   fact_check: () => ({ mismatches: [] }),
+
+  // An agent step nobody scripted hands off, so an unscripted agent never acts (WP-91 adds the
+  // scripted agent that tests use).
+  agent_onboarding: () => unscriptedAgentStep,
+  agent_weekly: () => unscriptedAgentStep,
+  agent_drafts: () => unscriptedAgentStep,
 };
 
 export function defaultOutput<T extends ModelTaskName>(task: T, input: unknown): ModelTaskOutput<T> {

@@ -120,6 +120,13 @@
       "when": 1793836808000,
       "tag": "0016_billing_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793923208000,
+      "tag": "0017_agent_tasks",
+      "breakpoints": true
     }
   ]
 }

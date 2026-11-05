@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { BusinessProfileDraft } from './business-profile.js';
-import { ContentType, Language, Network, POST_FORMATS, PostFormat, Uuid } from './common.js';
+import { AgentContext, AgentStep } from './agent.js';
+import { Caption, ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost } from './content.js';
+import { ContentType, Language, Network, POST_FORMATS, Uuid } from './common.js';
+import { RotateDeg, ToneAdjust } from './design-spec.js';
+
+export { Caption, ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost };
 import { CONVERSATION_STEP_VALUES } from './state-machines/index.js';
 
 // Model outputs are validated here before any other code sees them. No
@@ -50,28 +55,6 @@ const ProfileExtractionOutput = z.object({
 
 // fact_extraction
 
-export const FACT_TYPES = [
-  'price',
-  'discount_percent',
-  'date',
-  'date_range',
-  'time',
-  'address',
-  'phone',
-  'product',
-  'promotion',
-  'testimonial',
-  'other',
-] as const;
-
-export const Fact = z.object({
-  id: factId,
-  type: z.enum(FACT_TYPES),
-  value: text,
-  /** Verbatim quote from the owner's text or transcript; checked in code. */
-  sourceQuote: text,
-});
-export type Fact = z.infer<typeof Fact>;
 
 const FactExtractionInput = z.object({
   text: z.string(),
@@ -87,15 +70,6 @@ export const FactExtractionOutput = z.object({
 
 // weekly_planning
 
-export const PlannedPost = z.object({
-  topic: text,
-  contentType: ContentType,
-  format: PostFormat,
-  factIds: z.array(factId),
-  mediaAssetIds: z.array(Uuid),
-  brief: text,
-});
-export type PlannedPost = z.infer<typeof PlannedPost>;
 
 const WeeklyPlanningInput = z.object({
   facts: z.array(Fact),
@@ -108,15 +82,6 @@ const WeeklyPlanningOutput = z.object({ posts: z.array(PlannedPost).min(2).max(5
 
 // caption_writing
 
-export const Caption = z.object({
-  text,
-  hashtags: z.array(z.string().regex(/^#\S+$/, 'Hashtags start with # and have no spaces')),
-});
-
-export const ChannelCaptions = z
-  .partialRecord(Network, Caption)
-  .refine((captions) => Object.keys(captions).length > 0, 'At least one network caption is required');
-export type ChannelCaptions = z.infer<typeof ChannelCaptions>;
 
 const CaptionWritingInput = z.object({
   plan: PlannedPost,
@@ -134,7 +99,6 @@ const CaptionWritingOutput = z.object({ captions: ChannelCaptions, usedFactIds: 
 
 // change_interpretation
 
-export const PREFERENCE_SCOPES = ['caption', 'design', 'schedule', 'general'] as const;
 
 const ChangeInterpretationInput = z.object({
   text,
@@ -160,6 +124,12 @@ const ImageReviewOutput = z.object({
     .object({ x: unit, y: unit, width: unit, height: unit })
     .refine((c) => c.x + c.width <= 1 && c.y + c.height <= 1, 'Crop must stay inside the image')
     .optional(),
+  // Version 2 (agent.md, Photos the agent sees): what the photo shows, for the agent, and suggested
+  // edits within the photo edit ranges. Optional, so version 1 outputs stay valid.
+  description: z.string().trim().min(1).max(200).optional(),
+  rotateDeg: RotateDeg.optional(),
+  brightness: ToneAdjust.optional(),
+  contrast: ToneAdjust.optional(),
 });
 
 // fact_check
@@ -177,6 +147,10 @@ export const modelTasks = {
   change_interpretation: { input: ChangeInterpretationInput, output: ChangeInterpretationOutput },
   image_review: { input: ImageReviewInput, output: ImageReviewOutput },
   fact_check: { input: FactCheckInput, output: FactCheckOutput },
+  // The hybrid agent (agent.md): one step of a turn, whose tool calls code checks and applies.
+  agent_onboarding: { input: AgentContext, output: AgentStep },
+  agent_weekly: { input: AgentContext, output: AgentStep },
+  agent_drafts: { input: AgentContext, output: AgentStep },
 } as const;
 
 export type ModelTaskName = keyof typeof modelTasks;

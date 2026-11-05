@@ -78,7 +78,7 @@ What a `post_version` stores (WP-32): `captions` is `ChannelCaptions`; `rendered
 
 ## Agent
 
-Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md)); queued for the human (H1). The schemas go in `src/contracts/agent.ts` and `src/contracts/design-spec.ts`.
+Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md)); queued for the human (H1). The schemas are in `src/contracts/agent.ts` and `src/contracts/design-spec.ts` (WP-89). The content shapes that both the model tasks and the tools use (`Fact`, `PlannedPost`, `ChannelCaptions`, the preference scopes) moved to `src/contracts/content.ts`, re-exported by `model-tasks.ts`, so the two files do not import each other. `AgentToolCall` is a plain union of objects with a literal `tool`, so its JSON Schema uses `anyOf` for the model's structured output. Until the scripted agent (WP-91) exists, the model simulator answers an agent task with one `hand_off_to_console` step.
 
 | Schema | Shape |
 | --- | --- |
