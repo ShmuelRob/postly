@@ -114,18 +114,22 @@ WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 h
 | `analyzeImage` | `task`, `model`, `prompt`, `imageUrl`, JSON schema of the output | Same as `generateStructured` |
 | `transcribeAudio` | `model`, `audioUrl`, `languageHint` | `text`, `language`, `costUsd` |
 
+The Google adapter (`src/modules/model-layer/adapters/vertex.ts`) calls Vertex AI `generateContent` with the service account's Application Default Credentials, never an API key. It asks for JSON output against the request's JSON schema, sends photos and voice notes as inline bytes fetched from their URL, validates every request with the Zod schema above (a bad request throws before any call), and computes `costUsd` from the response's token counts and a per-model price table in the adapter. A model missing from that table is refused. Its tests run the shared contract suite against a fake transport.
+
 The provider returns raw output. Only the model layer validates it against the task schema. `task` names the model task the request serves (one of the tasks above); a real adapter may ignore it, and the simulator uses it to pick its scripted output and checks that the JSON schema is that task's output schema.
 
 ### `PaymentProvider`
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `createPaymentLink` | `businessId`, `plan` | `url`, `providerCustomerId` |
+| `createPaymentLink` | `businessId`, `plan`, `price` (`amountAgorot`, a positive integer, and `currency`, `ILS`) | `url`, `providerCustomerId` |
 | `getSubscriptionStatus` | `providerSubscriptionId` | `status` (a subscription state), `currentPeriodEnd` |
 | `cancelSubscription` | `providerSubscriptionId` | `cancelledAt` |
 | `verifyWebhook` (on `PaymentWebhooks`) | `headers`, `body`, `url` (the provider's signed callback) | `PaymentEvent`: `providerEventId`, `businessId`, `providerCustomerId`, `providerSubscriptionId`, `status` (a subscription state), optional `currentPeriodEnd` |
 
 `verifyWebhook` sits on a sibling interface, `PaymentWebhooks`, that every payment adapter implements next to `PaymentProvider`; billing takes both. It is separate so the `PaymentProvider` stubs in the pinned H5 tests stay valid. `verifyWebhook` throws `InvalidWebhookSignatureError` when the signature does not verify. It is how Postly learns the `providerSubscriptionId` after the owner pays, and every later status change (a failed renewal, a recovered payment, a cancellation). `businessId` is the one passed to `createPaymentLink`, echoed back by the provider (a reference or metadata field), so billing finds the subscription inside that business's context without a system role; billing also checks that `providerCustomerId` (and a stored `providerSubscriptionId`) match the row. **The callback is only a trigger:** callbacks can arrive late, twice, in parallel, or out of order, so billing never applies the event's `status`. It locks the subscription row (`select ... for update`), reads the current status with `getSubscriptionStatus`, and applies a transition only when that status differs from the stored one; the owner is told only when the status actually changes. A stale or repeated callback therefore changes nothing and sends nothing. `providerEventId` is for logs and support. Added 2026-11-03 by WP-42, settling the WP-03 gap; queued for the human.
+
+`price` is the plan's current price from `plan_price` (database-schema.md), passed so the provider's page charges it; Postly never hard-codes a price. Added 2026-11-04 by T1 (no trial, ILS 300); queued for the human.
 
 ### `TemplateRenderer`
 

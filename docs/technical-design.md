@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google for now, behind a replaceable model layer | May change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. Every task runs on a Gemini Flash model for now (`drizzle/0010_all_tasks_flash.sql`) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -49,7 +49,7 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Design | Renders posts from style templates and produces a file for each network |
 | Publishing | Connects channels, publishes, and checks status |
 | Business data | Profiles, preferences, post history, and media library |
-| Billing | Payment links, subscription status, and the placeholder provider |
+| Billing | Payment links, subscription status, the plan price, and the placeholder provider |
 | Console | Conversations, drafts, errors, manual intervention, and the global pause |
 
 ## Task routing
@@ -219,6 +219,16 @@ How each case is handled (WP-35, 2026-11-04; each has an end-to-end test):
 - **A post the provider drops after accepting it.** A publication that is `published` (the provider held it) and that the provider later reports `failed` gets `last_error` and counts as failed for its post: the post applies `PARTIALLY_PUBLISHED` or `ALL_FAILED` and the owner gets `publication_failed`, so the post never stays in `publishing` (review of PR #52, item b). `publication_failed` console items are idempotent: one is inserted only when no open one exists for the same publication, checked while the publication row is locked, so sibling publications finishing in parallel do not add duplicates.
 - **Failed model validation.** The model layer retries within the task's limit and then opens a `model_validation_failed` console item (WP-21); each flow then hands the conversation to a person or marks the draft failed, as its section says.
 
+## Billing
+
+T1, 2026-11-04. There is no trial: the owner pays at once, at ILS 300 a month (PRD, Payment).
+
+- **Price.** One setting, the `plan_price` table (database-schema.md): append-only, so every change is kept with who made it; the current price is the newest row. The team changes it from the console. Billing reads it each time it creates a link and passes it to `createPaymentLink`.
+- **Payment link in onboarding.** When onboarding activates the business (`ONBOARDING_COMPLETED`), the owner gets the activation message and then billing's `sendPaymentLink`: the provider link is created with the current price, the `subscription` row is stored `pending`, and the link goes to the approver in WhatsApp (the owner just wrote, so the window is open). A send that fails is logged and opens a `payment_link_failed` console item (details: the error); the business stays active and the team resends the link. Without a payment provider wired, no link is sent.
+- **Status.** The provider's callback moves the row (`pending` to `active` on payment; state-machines.md, Subscription). The owner is told on every change.
+- **`past_due` (proposed, not built).** 7 days of grace from the moment the row became `past_due`, with template reminders on days 1, 3 and 6; then the publishing guard holds the business's publications until payment. Nothing is cancelled or deleted. Waiting for the human (review queue).
+- Local runs and tests use the payment simulator; the vendor (PayPlus or Grow) is still open.
+
 ## Cancellation, data deletion and the monthly report
 
 WP-43, 2026-11-04. Each has an end-to-end test.
@@ -245,6 +255,7 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Retry a failed publication | Publication `RETRY_REQUESTED`, and the post `PUBLISHING_STARTED` when it is `failed`; the publishing job still checks the approved hash before anything goes live; resolves the matching `publication_failed` items |
 | Pause or resume a business | Business `PAUSE` / `RESUME` (resume needs a `verified` channel connection) |
 | Pause or resume all publishing | `system_control` through `setGlobalPause` |
+| See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, `by`, optional `reason`) inserts a `plan_price` row. A new price applies to payment links sent afterwards |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
 
 Authentication is not defined yet. The console runs as its own process (`main.js console`) and its own Cloud Run service with internal-only ingress and no public invoker; the public web service never serves it. Locally the routes answer only the loopback address (anything else gets 403); deployed, the gate is the ingress and IAM. Neither is a sign-in, which must exist before any wider access ([security.md](security.md#console-exposure)).

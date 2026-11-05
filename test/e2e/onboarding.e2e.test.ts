@@ -13,6 +13,7 @@ import type { BusinessProfileDraft } from '../../src/contracts/business-profile.
 import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
+import { BILLING_COPY, PAYMENT_WEBHOOK_PATH } from '../../src/modules/billing/index.js';
 import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
 import { buildServer } from '../../src/server.js';
@@ -63,6 +64,7 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   const publishingSim = new PublishingSimulator();
   const modelSim = new ModelSimulator();
   modelSim.setDefault('profile_extraction', (input) => ({ found: extractions[input.text] ?? {}, unclear: [] }));
+  const paymentSim = new PaymentSimulator();
 
   const voiceName = messagingSim.addMedia('audio/ogg', new Uint8Array([1, 2, 3]));
   const voiceDifferentiator = messagingSim.addMedia('audio/ogg', new Uint8Array([4, 5, 6]));
@@ -84,7 +86,7 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
     messaging: messagingSim,
     publishing: publishingSim,
     model: modelSim,
-    payment: new PaymentSimulator(),
+    payment: paymentSim,
     renderer: { render: async () => ({}) },
     design,
   } satisfies Providers;
@@ -95,17 +97,22 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   );
 
   let onboarding: ReturnType<typeof createApp>['onboarding'] | undefined;
+  let deliverPayment = async (_subscriptionId: string) => 0;
   const app: AppFactory = ({ messaging: messagingProvider, publishing, model, design: recordedDesign }) => {
     const postly = createApp({
       db,
-      providers: { messaging: messagingProvider, publishing, models: { google: model } },
+      providers: { messaging: messagingProvider, publishing, models: { google: model }, payment: paymentSim },
       design: recordedDesign!,
       media: storage,
       businessNumber: BUSINESS_PHONE,
       samplePhotoUrl: storage.urlFor('bundled/sample.jpg'),
     });
     onboarding = postly.onboarding;
-    const server = buildServer({ messaging: postly.messaging, publicBaseUrl: 'https://postly.example.test' });
+    const server = buildServer({ messaging: postly.messaging, billing: postly.billing!, publicBaseUrl: 'https://postly.example.test' });
+    deliverPayment = async (subscriptionId) => {
+      const hook = paymentSim.webhook(subscriptionId);
+      return (await server.inject({ method: 'POST', url: PAYMENT_WEBHOOK_PATH, headers: hook.headers, payload: hook.body })).statusCode;
+    };
     return {
       async deliverInbound(message) {
         const hook = messagingSim.webhook(message);
@@ -188,7 +195,20 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   publishingSim.connect(businessId, 'instagram');
   publishingSim.connect(businessId, 'facebook');
   await run.owner.sendsText('חיברתי');
-  expect(lastSaid()).toBe(copy.activated);
+
+  // 9. No trial (T1): activation is followed at once by the payment link, at the price setting (ILS 300).
+  const [payLink] = paymentSim.links;
+  expect(payLink?.request).toEqual({ businessId, plan: 'basic', price: { amountAgorot: 30000, currency: 'ILS' } });
+  expect(said().slice(-2)).toEqual([copy.activated, BILLING_COPY.paymentLink(payLink!.link.url, 30000)]);
+  expect(lastSaid()).toContain('300 ₪ לחודש');
+  const subscriptionOf = async () => (await db.withBusiness('billing', businessId, (tx) => tx.select().from(schema.subscription)))[0];
+  expect(await subscriptionOf()).toMatchObject({ status: 'pending', plan: 'basic', providerCustomerId: payLink!.link.providerCustomerId });
+
+  // The owner pays on the provider's page; the provider's callback makes the subscription active.
+  const subscriptionId = paymentSim.completePayment(payLink!.link.providerCustomerId);
+  expect(await deliverPayment(subscriptionId)).toBe(200);
+  expect(await subscriptionOf()).toMatchObject({ status: 'active', providerSubscriptionId: subscriptionId });
+  expect(lastSaid()).toBe(BILLING_COPY.active);
 
   // The business is active with the full profile; nothing was published.
   const stored = await db.withBusiness('workflow', businessId, async (tx) => ({
@@ -299,7 +319,7 @@ async function stoppedAt(
 }
 
 /** The app without the design engine; `hold` delays the first text send to the owner. */
-function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promise<void>) {
+function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promise<void>, payment?: PaymentSimulator) {
   const ref: { postly?: ReturnType<typeof createApp> } = {};
   const app: AppFactory = ({ messaging, publishing, model }) => {
     const slowMessaging: typeof messaging = hold
@@ -317,7 +337,7 @@ function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promis
       : messaging;
     ref.postly = createApp({
       db,
-      providers: { messaging: slowMessaging, publishing, models: { google: model } },
+      providers: { messaging: slowMessaging, publishing, models: { google: model }, ...(payment ? { payment } : {}) },
       design: { forBusiness: () => ({ render: async () => ({}) }) },
       media: storage,
       businessNumber: BUSINESS_PHONE,
@@ -380,6 +400,29 @@ e2eTest('onboarding stopped after the test passed activates the business on the 
   }));
   expect(state.business?.status).toBe('active');
   expect(state.conversation?.step).toBe('idle');
+});
+
+e2eTest('a payment link that fails to send after activation opens a console item; the business stays active', { timeout: 60_000 }, async ({ e2e }) => {
+  const owner = '+972501230036';
+  const payment = new PaymentSimulator();
+  payment.createPaymentLink = async () => {
+    throw new Error('provider down');
+  };
+  const { app, ref } = plainApp(memoryStorage(), undefined, payment);
+  const run = await e2e.start({ providers: providersWith(), app, ownerPhone: owner, businessPhone: BUSINESS_PHONE });
+  const businessId = await stoppedAt(ref.postly!.onboarding, owner, 'completed', [
+    { network: 'instagram', status: 'verified' },
+    { network: 'facebook', status: 'verified' },
+  ]);
+
+  await run.owner.sendsText('היי');
+
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.activated]);
+  const items = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem));
+  run.recordConsoleItems(items.map((i) => ({ kind: i.kind, details: i.details })));
+  expect(items).toMatchObject([{ kind: 'payment_link_failed', status: 'open', details: { error: 'Error: provider down' } }]);
+  const business = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.business))[0]);
+  expect(business?.status).toBe('active');
 });
 
 e2eTest('onboarding that cannot activate tells the owner and hands off to a person', { timeout: 60_000 }, async ({ e2e }) => {

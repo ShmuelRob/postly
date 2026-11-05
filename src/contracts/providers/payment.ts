@@ -3,7 +3,11 @@ import { Timestamp, Url, Uuid } from '../common.js';
 import { SUBSCRIPTION_STATES } from '../state-machines/index.js';
 import type { WebhookRequest } from './messaging.js';
 
-export const CreatePaymentLinkRequest = z.object({ businessId: Uuid, plan: z.string().min(1) });
+/** A monthly price in agorot (ILS 300 is 30000), from the `plan_price` setting (T1). */
+export const PlanPrice = z.object({ amountAgorot: z.number().int().positive(), currency: z.literal('ILS') });
+export type PlanPrice = z.infer<typeof PlanPrice>;
+
+export const CreatePaymentLinkRequest = z.object({ businessId: Uuid, plan: z.string().min(1), price: PlanPrice });
 export type CreatePaymentLinkRequest = z.infer<typeof CreatePaymentLinkRequest>;
 
 export const PaymentLink = z.object({ url: Url, providerCustomerId: z.string().min(1) });

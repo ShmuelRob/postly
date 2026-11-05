@@ -42,6 +42,11 @@ variable "business_number" {
 }
 variable "sql_tier" { type = string }
 variable "sql_high_availability" { type = bool }
+variable "sql_max_connections" {
+  description = "Cloud SQL max_connections; 400 is Postgres' default for db-custom-2-7680 (7.5 GB)."
+  type        = number
+  default     = 400
+}
 variable "deletion_protection" { type = bool }
 variable "web_max_instances" {
   description = "Must stay 1 until bursts are durable (review queue item 14); see docs/deployment.md."
@@ -93,7 +98,7 @@ locals {
   ]
   login_secrets = { for login in local.logins : "db-password-${replace(login, "_", "-")}" => "DB_PASSWORD_${upper(login)}" }
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
-  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "model-api-key", "payment-api-key", "payment-webhook-secret"]
+  vendor_secrets = ["messaging-webhook-secret", "messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"]
   image          = "${module.registry.repository_url}/postly:${var.image_tag}"
   app_env = {
     POSTLY_ENV       = var.env_name
@@ -155,6 +160,7 @@ module "sql" {
   private_services_connection = module.network.private_services_connection
   tier                        = var.sql_tier
   high_availability           = var.sql_high_availability
+  max_connections             = var.sql_max_connections
   deletion_protection         = var.deletion_protection
   retained_backups            = var.sql_retained_backups
 }
@@ -196,6 +202,23 @@ resource "google_artifact_registry_repository_iam_member" "push" {
   member     = "serviceAccount:${module.accounts.emails.deploy}"
 }
 
+# Connection budget (docs/deployment.md, Sizing): each login x 3 (createDatabase) + pg-boss 10 per
+# process, plus the migrate job (11) and connections Cloud SQL reserves for itself (10).
+locals {
+  connections_per_process = length(local.logins) * 3 + 10
+  connections_needed      = (var.web_max_instances + var.worker_max_instances) * local.connections_per_process + 11 + 10
+}
+
+resource "terraform_data" "connection_budget" {
+  input = local.connections_needed
+  lifecycle {
+    precondition {
+      condition     = local.connections_needed <= var.sql_max_connections
+      error_message = "The process pools need more connections than Cloud SQL max_connections allows (docs/deployment.md, Sizing)."
+    }
+  }
+}
+
 module "web" {
   source          = "../cloud_run"
   project_id      = var.project_id
@@ -211,6 +234,7 @@ module "web" {
   public          = true
   min_instances   = 1
   max_instances   = var.web_max_instances
+  cpu             = "1"
   memory          = "2Gi"
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -230,7 +254,8 @@ module "worker" {
   public          = false
   min_instances   = 1
   max_instances   = var.worker_max_instances
-  memory          = "2Gi"
+  cpu             = "2"
+  memory          = "4Gi"
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 

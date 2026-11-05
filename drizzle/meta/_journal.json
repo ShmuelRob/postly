@@ -71,6 +71,27 @@
       "when": 1793750406000,
       "tag": "0009_deletion_role",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793750407000,
+      "tag": "0010_all_tasks_flash",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793750408000,
+      "tag": "0011_no_trial_plan_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793750408001,
+      "tag": "0012_payment_link_failed_item",
+      "breakpoints": true
     }
   ]
 }
