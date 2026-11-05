@@ -43,6 +43,9 @@ export async function provisionDatabase(options: ProvisionOptions): Promise<void
         END IF;
       END $$;
       ALTER ROLE ${JOBS_LOGIN} LOGIN NOINHERIT NOCREATEROLE NOCREATEDB NOBYPASSRLS;
+      -- AUTHORIZATION needs SET ROLE on the login. On Cloud SQL the admin is not a superuser and, since
+      -- Postgres 16, is not a member of the roles it creates: it takes SET (not INHERIT) on this one.
+      GRANT ${JOBS_LOGIN} TO CURRENT_USER WITH INHERIT FALSE, SET TRUE;
       CREATE SCHEMA IF NOT EXISTS ${JOBS_SCHEMA} AUTHORIZATION ${JOBS_LOGIN};
       REVOKE ALL ON SCHEMA public FROM ${JOBS_LOGIN};`);
     for (const statement of statements) await admin.unsafe(statement);

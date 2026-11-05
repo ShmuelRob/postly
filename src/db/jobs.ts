@@ -63,10 +63,21 @@ export interface PgBossQueueOptions {
 /** pg-boss's own pool in every process, on the `app_jobs` login; the connection budget counts it (docs/security.md, D7). */
 export const JOBS_POOL = 10;
 
+/**
+ * pg (under pg-boss) reads `sslmode=require` as verify-full, unlike postgres.js and libpq, and the Cloud
+ * SQL server certificate is signed by Cloud SQL's own CA: the connection then fails to verify. With
+ * `uselibpqcompat=true`, `require` means what it says everywhere else: encrypted, no CA check (the
+ * traffic stays on the private VPC to an instance that accepts TLS only).
+ */
+export function libpqSslMode(connectionString: string): string {
+  if (!/[?&]sslmode=require(&|$)/.test(connectionString) || /[?&]uselibpqcompat=/.test(connectionString)) return connectionString;
+  return `${connectionString}&uselibpqcompat=true`;
+}
+
 /** The PgBoss constructor options, with its pool capped at JOBS_POOL. */
 export function pgBossConstructorOptions(options: PgBossQueueOptions) {
   const migrate = options.migrate ?? false;
-  return { connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate, max: JOBS_POOL };
+  return { connectionString: libpqSslMode(options.connectionString), schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate, max: JOBS_POOL };
 }
 
 export async function createPgBossQueue(options: PgBossQueueOptions): Promise<JobQueue> {

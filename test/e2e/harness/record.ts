@@ -84,9 +84,5 @@ export function emptyRecord(): E2eRecord {
   return { transcript: [], renders: [], publishing: [], modelCalls: [], consoleItems: [] };
 }
 
-declare module 'vitest' {
-  interface TaskMeta {
-    /** Set by the e2e harness; read by the e2e reporter. */
-    e2e?: E2eRecord;
-  }
-}
+// The vitest TaskMeta augmentation for `e2e` lives in ./task-meta.ts, so this file stays free of
+// test-only modules: the dev sandbox image compiles it without vitest installed (Dockerfile.sandbox).

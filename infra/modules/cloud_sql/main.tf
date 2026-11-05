@@ -45,6 +45,8 @@ resource "google_sql_database_instance" "postgres" {
     backup_configuration {
       enabled                        = true
       point_in_time_recovery_enabled = true
+      # Cloud SQL refuses a transaction log retention longer than the backups kept (default 7 days).
+      transaction_log_retention_days = min(7, var.retained_backups)
       start_time                     = "01:00"
       backup_retention_settings {
         retained_backups = var.retained_backups

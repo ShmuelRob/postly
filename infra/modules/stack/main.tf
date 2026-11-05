@@ -31,6 +31,11 @@ variable "image_tag" {
   type        = string
   default     = "bootstrap"
 }
+variable "app_metric_alerts" {
+  description = "Create the alerts on postly.* metrics; turn on after the first deploy (see the monitoring module)."
+  type        = bool
+  default     = false
+}
 variable "public_base_url" {
   description = "The public HTTPS base URL of the web service (provider webhooks, media links). Null uses the web service's run.app URL."
   type        = string
@@ -444,8 +449,13 @@ module "migrate" {
   service_account = module.accounts.emails.migrate
   subnetwork_id   = module.network.subnetwork_id
   env             = local.app_env
-  secret_env      = merge(local.app_secret_env, { MIGRATE_ADMIN_URL = module.secrets.ids["db-admin-url"] })
-  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+  # Only what `main.ts migrate` reads: the admin URL and every login password. Not the webhook
+  # secret, which the migrate account has no access to (least privilege).
+  secret_env = merge(
+    { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
+    { MIGRATE_ADMIN_URL = module.secrets.ids["db-admin-url"] },
+  )
+  depends_on = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "monitoring" {
@@ -460,6 +470,7 @@ module "monitoring" {
 
   worker_service      = module.worker.name
   sql_max_connections = var.sql_max_connections
+  app_metric_alerts   = var.app_metric_alerts
 }
 
 output "image_repository" { value = module.registry.repository_url }

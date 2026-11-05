@@ -26,6 +26,11 @@ variable "runbook_url" {
   type        = string
   default     = "https://github.com/ShmuelRob/postly/blob/main/docs/runbook.md"
 }
+variable "app_metric_alerts" {
+  description = "Create the alerts on the app's own postly.* metrics. Cloud Monitoring refuses an alert on a metric that has never been written, so this stays false until the first deploy has run and the metrics exist (docs/deploy-dev-guide.md, step 6)."
+  type        = bool
+  default     = false
+}
 variable "alert_email" {
   description = "Where alerts go. Null creates no channel (alerts still show in the console)."
   type        = string
@@ -141,7 +146,7 @@ resource "google_monitoring_alert_policy" "errors" {
   conditions {
     display_name = "errors logged"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.errors.name}\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.errors.name}\" AND resource.type=one_of(\"cloud_run_revision\", \"cloud_run_job\")"
       comparison      = "COMPARISON_GT"
       threshold_value = 10
       duration        = "0s"
