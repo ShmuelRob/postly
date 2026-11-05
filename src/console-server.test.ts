@@ -52,7 +52,7 @@ describe('console process', () => {
     const named = new Proxy({}, { get: (_t, key) => async () => (key === 'businesses' ? [{ id, name: 'מאפיית רחל' }] : []) }) as unknown as ConsoleService;
     const server = buildConsoleServer({ console: named, access: 'loopback', cancelBusiness: async (b) => cancelled.push(b) });
     const cancel = (payload?: object) => server.inject({ method: 'POST', url: `/console/api/businesses/${id}/cancel`, remoteAddress: '127.0.0.1', ...(payload ? { payload } : {}) });
-    expect((await cancel()).statusCode).toBe(400);
+    expect((await cancel({})).statusCode).toBe(400);
     expect((await cancel({ confirmName: 'מאפיה אחרת' })).statusCode).toBe(400);
     expect(cancelled).toEqual([]);
     const unknown = await server.inject({ method: 'POST', url: '/console/api/businesses/00000000-0000-4000-8000-000000000002/cancel', remoteAddress: '127.0.0.1', payload: { confirmName: 'מאפיית רחל' } });
