@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { FixedWindowLimiter, rateLimitHook } from '../../shared/rate-limit.js';
 import { ConsoleActionError, type ConsoleService } from './console.js';
 import { IAP_HEADER, IapAssertionError, type IapVerifier } from './iap.js';
 import { log } from '../../shared/logger.js';
@@ -29,6 +30,8 @@ export interface ConsoleRouteOptions {
    * default is the loopback names; deployed, it is the console's domain (`CONSOLE_HOST`).
    */
   allowedHosts?: readonly string[];
+  /** Console requests admitted per minute in this process before 429 (docs/security.md, D12). */
+  perMinute?: number;
   /** One line per console action (actor, method, path, status); defaults to the shared logger. */
   log?(line: Record<string, unknown>): void;
 }
@@ -77,12 +80,14 @@ export function consoleActor(request: FastifyRequest): string {
 /** GET /console (React page) and the JSON API under /console/api. */
 export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRouteOptions): void {
   const c = options.console;
+  const limiter = new FixedWindowLimiter({ limit: options.perMinute ?? 300 });
   const auth = options.auth ?? { mode: 'dev-bypass' };
   const logAction =
     options.log ??
     (({ msg, ...fields }) => log.info(String(msg), Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, typeof v === 'number' ? v : String(v)]))));
   app.register(
     async (scope) => {
+      scope.addHook('onRequest', rateLimitHook(limiter));
       scope.addHook('onRequest', async (request, reply) => {
         // The socket peer, never `request.ip`: with trustProxy set, `request.ip` comes from X-Forwarded-For,
         // which a caller can spoof (docs/security.md, D8).

@@ -3,17 +3,22 @@ import { trustHops } from './trust-proxy.js';
 import { registerConsoleRoutes, type ConsoleRouteOptions } from './modules/console/index.js';
 import { observeRequests } from './http-telemetry.js';
 
+/** Console request bodies above this are refused with 413 (docs/security.md, D12). */
+export const CONSOLE_BODY_LIMIT = 64 * 1024;
+
 /**
  * The console process (docs/security.md, "Console exposure"): only the console routes and `/healthz`.
  * It runs as its own Cloud Run service behind a load balancer with IAP, because ingress is set per
  * service and the web service must stay public for the provider webhooks. `/healthz` needs no
  * sign-in, so Cloud Run's probes reach it.
  */
-export function buildConsoleServer(options: ConsoleRouteOptions & { trustProxyHops?: number }): FastifyInstance {
-  // Cloud Run's front end is one hop (docs/security.md, D8); unset locally.
-  const app = Fastify({ logger: false, ...trustHops(options.trustProxyHops) });
+export function buildConsoleServer(
+  options: ConsoleRouteOptions & { limits?: { consolePerMinute?: number }; trustProxyHops?: number },
+): FastifyInstance {
+  // D12: console bodies are small JSON actions. Cloud Run's front end is one hop (D8); unset locally.
+  const app = Fastify({ logger: false, bodyLimit: CONSOLE_BODY_LIMIT, ...trustHops(options.trustProxyHops) });
   observeRequests(app);
   app.get('/healthz', async () => ({ ok: true }));
-  registerConsoleRoutes(app, options);
+  registerConsoleRoutes(app, { ...options, ...(options.limits?.consolePerMinute ? { perMinute: options.limits.consolePerMinute } : {}) });
   return app;
 }
