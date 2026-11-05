@@ -325,7 +325,7 @@ module "web" {
   max_instances   = var.web_max_instances
   cpu             = "1"
   memory          = "2Gi"
-  depends_on = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "worker" {
@@ -345,7 +345,7 @@ module "worker" {
   max_instances   = var.worker_max_instances
   cpu             = "2"
   memory          = "4Gi"
-  depends_on = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 # The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
