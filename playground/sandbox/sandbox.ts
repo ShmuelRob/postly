@@ -40,7 +40,7 @@ export interface Sandbox {
   readonly webUrl: string;
   /** Connect-style middleware for `/api/*`; anything else goes to `next`. */
   handle(req: IncomingMessage, res: ServerResponse, next: () => void): void;
-  /** A new sign-up for the owner's number: a business in onboarding (an earlier one keeps its data). */
+  /** A new sign-up for the owner's number: a business in onboarding with an empty chat (an earlier one keeps its data). */
   signUp(): Promise<string>;
   send(input: OwnerInput): Promise<void>;
   /** The owner finishes the connection link on the publishing simulator. */
@@ -116,7 +116,9 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     await db.withSystem('console', (tx) =>
       tx.update(schema.business).set({ approverPhone: `+97250${randomInt(1_000_000, 10_000_000)}` }).where(eq(schema.business.approverPhone, owner)),
     );
+    // The new sign-up's chat starts empty: neither side of the earlier conversation stays.
     await log((l) => void (l.inbound = []));
+    await world.messaging.run((sim) => sim.forgetSentTo(owner));
     return app.onboarding.createBusiness({ approverPhone: owner });
   };
 
@@ -162,7 +164,13 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     const [{ inbound }, sent, posts, connectionLinkSent] = await Promise.all([
       log((l) => l),
       world.messaging.run((sim) => sim.sentTo(owner)),
-      world.publishing.run((sim) => sim.posts),
+      // Only this sign-up's posts: those on the accounts its business connected.
+      world.publishing.run(async (sim) => {
+        if (!b) return [];
+        const statuses = await Promise.all(NETWORKS.map((network) => sim.getConnectionStatus({ businessId: b.id, network })));
+        const accounts = new Set(statuses.flatMap((s) => (s.providerAccountId ? [s.providerAccountId] : [])));
+        return sim.posts.filter((p) => accounts.has(p.request.providerAccountId));
+      }),
       world.publishing.run((sim) => !!b && sim.connectionLinks.some((l) => l.request.businessId === b.id)),
     ]);
     const c = rows.conversation[0];

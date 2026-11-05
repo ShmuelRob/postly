@@ -52,6 +52,20 @@ describe('MessagingSimulator', () => {
     expect(sim.sent).toHaveLength(3);
   });
 
+  it('forgets the messages sent to one number and keeps the others', async () => {
+    const sim = new MessagingSimulator();
+    await sim.sendText({ to: owner, text: 'היי' });
+    await sim.sendText({ to: '+972501234563', text: 'someone else' });
+    await sim.sendTemplate({ to: owner, templateName: 'weekly_reminder', language: 'he', variables: {} });
+
+    sim.forgetSentTo(owner);
+
+    expect(sim.sentTo(owner)).toEqual([]);
+    expect(sim.sent.map((m) => m.request.to)).toEqual(['+972501234563']);
+    await sim.sendText({ to: owner, text: 'שוב' });
+    expect(sim.sentTo(owner).map((m) => m.kind)).toEqual(['text']);
+  });
+
   it('builds signed webhooks for every inbound kind', async () => {
     const sim = new MessagingSimulator({ businessNumber: '+972501234562' });
     const voiceId = sim.addMedia('audio/ogg', new Uint8Array([1, 2, 3]));

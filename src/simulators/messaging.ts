@@ -130,6 +130,11 @@ export class MessagingSimulator implements MessagingProvider {
     return this.sent.filter((m) => m.request.to === phone);
   }
 
+  /** Drops the messages sent to one number (the dev sandbox's new sign-up from that number). */
+  forgetSentTo(phone: string): void {
+    refill(this.sent, this.sent.filter((m) => m.request.to !== phone));
+  }
+
   /** Stores media the owner "uploaded" and returns its provider media id. */
   addMedia(mimeType: string, data: Uint8Array): string {
     const id = `ME-sim-${this.nextId++}`;
