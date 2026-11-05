@@ -11,6 +11,7 @@ import { buildServer } from './server.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
 import { log, setLogLabels } from './shared/logger.js';
+import { startTelemetry } from './shared/telemetry-gcp.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
@@ -53,6 +54,14 @@ async function main(command: string | undefined) {
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
   const config = loadConfig(process.env);
+  // Metrics and traces (docs/observability.md, WP-48): exported only in dev, stage and prod.
+  const stopTelemetry = startTelemetry({
+    service: command,
+    env: config.env,
+    exportMode: process.env.TELEMETRY_EXPORT,
+    project: process.env.GOOGLE_CLOUD_PROJECT,
+    sampleRatio: process.env.TRACE_SAMPLE_RATIO,
+  });
   const db = createDatabase(config.databaseUrls);
   const media = memoryMedia(config.publicBaseUrl);
   const design = createDesignRenderer({
@@ -66,7 +75,7 @@ async function main(command: string | undefined) {
     store: { put: (path, bytes, mimeType) => media.put(path, bytes, mimeType) },
   });
   // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
-  const queue = await createPgBossQueue({ connectionString: config.jobsUrl });
+  const queue = await createPgBossQueue({ connectionString: config.jobsUrl, observeDepth: command === 'worker' });
   const app = createApp({
     db,
     burstWake: jobBurstWake(queue),
@@ -103,6 +112,7 @@ async function main(command: string | undefined) {
   process.once('SIGTERM', async () => {
     for (const stop of stops) await stop();
     await db.close();
+    await stopTelemetry();
     process.exit(0);
   });
 }

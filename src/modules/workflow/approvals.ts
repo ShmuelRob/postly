@@ -4,6 +4,7 @@ import type { ApprovalButtonPayload, InboundMessage } from '../../contracts/prov
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import type { Workflow } from './workflow.js';
+import { metrics } from '../../shared/telemetry.js';
 
 // The approval guard (state-machines.md, Approval guard; technical-design.md, Approval flow). Code
 // only, no model: an approval exists only for a button tap from the business's approver number,
@@ -42,6 +43,12 @@ export interface Approvals extends ApprovalService {
 const STALE = 'stale_version';
 
 const refused = (reason: ApprovalRefusal): ApprovalDecision => ({ outcome: 'refused', reason });
+
+/** Counts a decision by outcome and refusal reason (docs/observability.md, Metrics); returns it unchanged. */
+function counted(decision: ApprovalDecision): ApprovalDecision {
+  metrics.count('postly.approvals.count', { outcome: decision.outcome, reason: decision.outcome === 'refused' ? decision.reason : 'none' });
+  return decision;
+}
 
 const isUniqueViolation = (error: unknown): boolean => {
   for (let e: unknown = error; e; e = (e as { cause?: unknown }).cause) {
@@ -124,15 +131,15 @@ export function createApprovals(deps: ApprovalsDeps): Approvals {
   return {
     async handleApprovalReply(businessId, message) {
       const checked = await precheck(businessId, message.from, message.content);
-      if (checked.refusal) return checked.refusal;
+      if (checked.refusal) return counted(checked.refusal);
       const messageId = await deps.recordInbound(businessId, message);
-      return decide(businessId, messageId, checked.phone, checked.payload);
+      return counted(await decide(businessId, messageId, checked.phone, checked.payload));
     },
 
     async handleStoredTap(businessId, tap) {
       const checked = await precheck(businessId, tap.from, tap.content);
-      if (checked.refusal) return checked.refusal;
-      return decide(businessId, tap.messageId, checked.phone, checked.payload);
+      if (checked.refusal) return counted(checked.refusal);
+      return counted(await decide(businessId, tap.messageId, checked.phone, checked.payload));
     },
 
     async invalidate(businessId, postId) {

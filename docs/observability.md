@@ -33,7 +33,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 
 **One catalogue.** Every metric is declared once in `src/shared/telemetry.ts` (`METRICS`) with its kind, unit and the labels it may carry, and code records it only through `metrics.count` and `metrics.record`. The table below is that catalogue; `src/shared/telemetry.test.ts` checks the two match, so a change to one changes the other.
 
-**Export.** The processes use the OpenTelemetry API. Deployed (`POSTLY_ENV` `dev`, `stage` or `prod`), `src/shared/telemetry-gcp.ts` exports metrics to Cloud Monitoring every 60 seconds with the Google Cloud exporter, so each metric's type is `workload.googleapis.com/<name>`, on the `generic_task` resource, with the resource labels `service` (`web`, `worker`, `console`) and `env`. Locally and in tests nothing is exported unless `TELEMETRY_EXPORT=log` is set, which writes each point as a `metric` log line every 10 seconds (the playground); tests read points from an in-memory reader.
+**Export.** The processes use the OpenTelemetry API. Deployed (`POSTLY_ENV` `dev`, `stage` or `prod`), `src/shared/telemetry-gcp.ts` exports metrics to Cloud Monitoring every 60 seconds with the Google Cloud exporter, so each metric's type is `workload.googleapis.com/<name>`, on the `generic_task` resource, whose `job` label is the process (`web`, `worker`, `console`), `namespace` the environment, and `task_id` the instance. Locally and in tests nothing is exported unless `TELEMETRY_EXPORT=log` is set, which writes each point as a `metric` log line every 10 seconds (the playground); tests read points from an in-memory reader.
 
 | Metric | Kind (unit) | Labels | Recorded when |
 | --- | --- | --- | --- |
@@ -56,7 +56,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 
 **Cloud Trace through OpenTelemetry.** Deployed, `src/shared/telemetry-gcp.ts` registers a tracer provider with the Cloud Trace exporter, a batch span processor, and parent-based sampling at 10% (`TRACE_SAMPLE_RATIO`), and the `AsyncLocalStorage` context manager. Cloud Run's `traceparent` header is the parent of the request span, so one trace covers Cloud Run's own span and ours.
 
-**Spans.** `withSpan(name, attributes, fn)` from `src/shared/telemetry.ts` is the only way code opens a span. The spans are: `http <method> <route>` per web and console request (the route pattern, never the URL), `job <name>` per job run, `model <task>` per model attempt, `publication run` per publication, and `inbound burst`. A span that throws gets status `ERROR` with the scrubbed error text and no exception event.
+**Spans.** `withSpan(name, attributes, fn)` from `src/shared/telemetry.ts` is the only way code opens a span. The spans are: `http <method> <route>` per web and console request (the route pattern, never the URL), `job <name>` per job run, `model <task>` per model attempt, `draft post` per draft run, `publication run` per publication, and `inbound burst`. A span that throws gets status `ERROR` with the scrubbed error text and no exception event.
 
 **No customer content in an attribute.** Only these attribute keys exist: `businessId`, `postId`, `publicationId`, `messageId`, `jobId`, `job`, `task`, `attempt`, `network`, `outcome`, `http.method`, `http.route`, `http.status_code`. `withSpan` drops any other key, and drops a string value that is not a UUID or a short code word (`[a-z0-9_./-]{1,64}`), so free text never reaches a span.
 
