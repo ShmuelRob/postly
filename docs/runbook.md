@@ -188,7 +188,7 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 **Escalate / pause:** pause all publishing is not needed; pause the offending business. Tell the human if the cost continues after the pause or exceeds the budget.
 
-## Model validation failure spike
+## Model validation failures
 
 **Alert:** "model validation failure spike" (5 or more invalid model outputs in 30 minutes; log metric `postly-ENV-model-validation-failed`).
 
