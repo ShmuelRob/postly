@@ -27,6 +27,27 @@ describe('pg-boss pool (D7, WP-87)', () => {
   });
 });
 
+// Cloud SQL (docs/deployment.md): every URL says sslmode=require, which postgres.js reads as libpq does
+// (encrypt, no certificate check). pg, under pg-boss, reads it as verify-full, and the Cloud SQL server
+// certificate is not signed by a public CA, so the first dev migrate failed with "unable to verify the
+// first certificate". pg-boss gets libpq semantics too.
+describe('pg-boss TLS mode (Cloud SQL)', () => {
+  it('reads sslmode=require as libpq does: encrypted, no CA check', () => {
+    const { connectionString } = pgBossConstructorOptions({ connectionString: 'postgres://app_jobs:pw@10.0.0.3:5432/postly?sslmode=require' });
+    const url = new URL(connectionString);
+    expect(url.searchParams.get('sslmode')).toBe('require');
+    expect(url.searchParams.get('uselibpqcompat')).toBe('true');
+  });
+
+  it('leaves a URL without sslmode, or with its own choice, unchanged', () => {
+    expect(pgBossConstructorOptions({ connectionString: 'postgres://app_jobs@db/p' }).connectionString).toBe('postgres://app_jobs@db/p');
+    const verified = 'postgres://app_jobs@db/p?sslmode=verify-full';
+    expect(pgBossConstructorOptions({ connectionString: verified }).connectionString).toBe(verified);
+    const explicit = 'postgres://app_jobs@db/p?sslmode=require&uselibpqcompat=false';
+    expect(pgBossConstructorOptions({ connectionString: explicit }).connectionString).toBe(explicit);
+  });
+});
+
 // docs/observability.md, Metrics (WP-48): job durations and failures, one span per job run.
 describe('job metrics and spans', () => {
   it('records the duration and outcome of every job run, and a failure count when it throws', async () => {
