@@ -14,7 +14,11 @@ export interface H5Db {
   postStatus(postId: string): Promise<string | undefined>;
   approvals(postId: string): Promise<{ approvalId: string; versionHash: string; invalidated: boolean; approverPhone: string }[]>;
   publication(publicationId: string): Promise<{ status: string; providerPostId: string | null; attempts: number } | undefined>;
-  publicationCount(): Promise<number>;
+  /**
+   * Publications of these businesses. Scoped, not global: other db and e2e test files share the
+   * database and insert publications concurrently, so a global count is not stable.
+   */
+  publicationCount(businessIds: string[]): Promise<number>;
   setGlobalPause(paused: boolean): Promise<void>;
   setBusinessPaused(businessId: string, paused: boolean): Promise<void>;
   setHandoff(businessId: string, on: boolean): Promise<void>;
@@ -66,8 +70,9 @@ export function openH5Db(): H5Db {
       const [row] = await rows(sql`select status, provider_post_id, attempts from publication where id = ${publicationId}`);
       return row && { status: row.status as string, providerPostId: row.provider_post_id as string | null, attempts: Number(row.attempts) };
     },
-    async publicationCount() {
-      const [row] = await rows(sql`select count(*)::int as n from publication`);
+    async publicationCount(businessIds) {
+      const ids = sql.join(businessIds.map((id) => sql`${id}`), sql`, `);
+      const [row] = await rows(sql`select count(*)::int as n from publication where business_id in (${ids})`);
       return Number(row?.n);
     },
     async setGlobalPause(paused) {

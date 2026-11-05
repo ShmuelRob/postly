@@ -182,7 +182,7 @@ gh variable list --repo ShmuelRob/postly --env dev
 
 ## 6. The first deploy
 
-The Deploy workflow (`.github/workflows/deploy.yml`) runs on every push to `dev`, which with protection means every **merged pull request into `dev`**. For the first one, open a pull request from `main` into `dev` (they are equal right after the apply, so make it carry the next change, or use the manual run below):
+The Deploy workflow (`.github/workflows/deploy.yml`) runs on every push to `dev`, which with protection means every **merged pull request into `dev`**. It first runs CI and Infra on that commit and deploys only when both pass ([deployment.md](deployment.md#ci)). For the first one, open a pull request from `main` into `dev` (they are equal right after the apply, so make it carry the next change, or use the manual run below):
 
 ```powershell
 gh pr create --repo ShmuelRob/postly --base dev --head main --title "First dev deploy" --body "Deploy main to dev"
@@ -195,7 +195,7 @@ gh workflow run Deploy --repo ShmuelRob/postly --ref dev -f image_tag=bootstrap
 gh run watch --repo ShmuelRob/postly
 ```
 
-What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/health`. About **10 to 15 minutes** for a push (most of it the image build), 3 to 5 for a manual redeploy.
+What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/health`. About **15 to 20 minutes** for a push (CI and Infra first, then mostly the image build), 3 to 5 for a manual redeploy.
 
 ### 6a. Turn on the alerts on the app's own metrics
 

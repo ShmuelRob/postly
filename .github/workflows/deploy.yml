@@ -1,13 +1,19 @@
 name: Deploy
 
-# CD (docs/deployment.md, CI). A push to `dev`, `stage` or `main` deploys to dev, stage or prod.
+# CD (docs/deployment.md, CI). A push to `dev`, `stage` or `main` deploys to dev, stage or prod, but
+# only after CI and Infra passed for that exact commit: both run here as reusable workflows
+# (`workflow_call`) and the deploy job needs them. (`workflow_run` would not do: it runs the default
+# branch's copy of this file with the default branch as its ref, which the stage and prod
+# environments and their Workload Identity conditions refuse.) A commit that is no longer the head of
+# its branch when its checks pass is not deployed; the newer commit deploys instead.
 # The job runs in the GitHub environment of that name: dev deploys at once, stage and prod wait for
 # the environment's required reviewer (the approval gate). Each environment accepts only its own
 # branch, in GitHub and in the Workload Identity condition. `workflow_dispatch` redeploys an image
-# tag that already exists (a rollback); run it from the environment's branch. The job authenticates
-# with Workload Identity Federation (no key file), builds and pushes the image once, runs the
-# migration job, and rolls out web and worker. It never runs Terraform: the human applies infra
-# (gate H8). Until Terraform has set the environment variables, it stops at its first step.
+# tag that already exists (a rollback) without re-running the checks; run it from the environment's
+# branch. The job authenticates with Workload Identity Federation (no key file), builds and pushes
+# the image once, runs the migration job, and rolls out web and worker. It never runs Terraform: the
+# human applies infra (gate H8). Until Terraform has set the environment variables, it stops at its
+# first step.
 
 on:
   push:
@@ -23,20 +29,61 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: deploy-${{ github.ref_name }}
-  cancel-in-progress: false
-
 jobs:
+  # The gate: the same jobs a PR runs (ci.yml, with its aggregate `check`) and the image and Terraform
+  # checks (infra.yml), for this commit. A failure stops the deploy; re-running the failed jobs of this
+  # run re-checks and, when they pass, deploys.
+  ci:
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  infra:
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/infra.yml
+
+  # CI can finish out of push order. Deploy only the branch head, so an older commit whose checks
+  # finish late never replaces a newer one that is already live.
+  current:
+    needs: [ci, infra]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      head: ${{ steps.head.outputs.head }}
+    steps:
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)"
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo head=true >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$GITHUB_REF_NAME is now at $head; that commit deploys instead of $GITHUB_SHA"
+            echo head=false >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
     # Skip (not fail) until Terraform configured this environment. A job-level `if` cannot read the
     # environment's own variables (GCP_PROJECT_ID lives there), so modules/github_environment also
     # sets a repository variable POSTLY_DEPLOY_<ENV> = "true" (docs/deployment.md, CI).
+    # On a push it also needs the gate above: CI and Infra passed and the commit is still the head.
+    needs: [current]
     if: >-
-      (github.ref_name == 'dev' && vars.POSTLY_DEPLOY_DEV == 'true') ||
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' || needs.current.outputs.head == 'true') &&
+      ((github.ref_name == 'dev' && vars.POSTLY_DEPLOY_DEV == 'true') ||
       (github.ref_name == 'stage' && vars.POSTLY_DEPLOY_STAGE == 'true') ||
-      (github.ref_name == 'main' && vars.POSTLY_DEPLOY_PROD == 'true')
+      (github.ref_name == 'main' && vars.POSTLY_DEPLOY_PROD == 'true'))
     runs-on: ubuntu-latest
+    # One deploy per environment at a time, never cancelled midway (a migration may be running).
+    concurrency:
+      group: deploy-${{ github.ref_name }}
+      cancel-in-progress: false
     # dev, stage or main (prod). Any other ref (or an unconfigured environment) skips the job.
     environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}
     env:

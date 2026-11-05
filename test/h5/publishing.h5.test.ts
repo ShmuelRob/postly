@@ -148,7 +148,9 @@ describe('H5 publishing: cross-business references', () => {
     const s = await open();
     const a = await approvedPost(s);
     const b = await businessWithDraft(s, OTHER_APPROVER);
-    const before = await s.db.publicationCount();
+    // Both businesses: a forged row carries one of them. Other test files insert publications too.
+    const count = () => s.db.publicationCount([a.businessId, b.businessId]);
+    const before = await count();
 
     let forged: string | undefined;
     try {
@@ -156,7 +158,7 @@ describe('H5 publishing: cross-business references', () => {
     } catch {
       // The database refusing the row (composite same-business keys, WP-24) is also a pass.
     }
-    if (forged === undefined) expect(await s.db.publicationCount()).toBe(before);
+    if (forged === undefined) expect(await count()).toBe(before);
     else await refused(s, forged, 'cross_business');
     expect(s.publishing.posts).toEqual([]);
   });
