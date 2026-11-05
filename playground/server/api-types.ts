@@ -1,5 +1,6 @@
 // What the playground API returns and accepts; shared by the server and the React UI.
 import type { Network } from '../../src/contracts/common.js';
+import type { SubscriptionState } from '../../src/contracts/state-machines/index.js';
 
 /** One chat bubble as the UI shows it. */
 export interface ChatMessage {
@@ -37,7 +38,20 @@ export interface PlaygroundState {
   reviewQueue: { id: string; kind: string; status: string; details: unknown }[];
   messages: ChatMessage[];
   feed: Record<Network, FeedPost[]>;
+  /** `sandbox` is the deployed dev sandbox (WP-51): real clock, so no time jump; a sign-up button. */
+  mode?: 'playground' | 'sandbox';
+  /** The owner's latest payment link and where it stands (the sandbox's mock checkout). */
+  payment?: CheckoutState;
 }
+
+export interface CheckoutState {
+  customerId: string;
+  url: string;
+  /** `awaiting_payment` until the owner acts on the checkout page, then the provider's status. */
+  status: 'awaiting_payment' | SubscriptionState;
+}
+
+export type CheckoutOutcome = 'pay' | 'fail' | 'cancel';
 
 export type OwnerInput =
   | { kind: 'text'; text: string }

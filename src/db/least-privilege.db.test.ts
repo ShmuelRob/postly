@@ -4,7 +4,7 @@ import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { grants, has, MATRIX_ROLES, type Role, type Verb } from '../../test/db/grant-matrix.js';
-import { BUSINESS_ROLES, createDatabase, loginFor, SYSTEM_PURPOSES, type Tx } from './index.js';
+import { BUSINESS_ROLES, createDatabase, loginFor, SIMULATOR_LOGIN, SYSTEM_PURPOSES, type Tx } from './index.js';
 import * as schema from './schema.js';
 
 // Least privilege from database-schema.md: one login per role, each reaching only the tables and
@@ -54,7 +54,9 @@ it('the matrix covers every table in the schema', () => {
 
 describe('logins', () => {
   it('exist for every role, and the WP-20 app_user and app_system are gone', async () => {
-    const rows = await catalog`select rolname from pg_roles where rolname like 'app\\_%'`;
+    // The simulated-mode store's login (WP-51) exists only where SIMULATOR_STORE=postgres; its own
+    // attributes and isolation are checked in simulator-store.db.test.ts.
+    const rows = await catalog`select rolname from pg_roles where rolname like 'app\\_%' and rolname <> ${SIMULATOR_LOGIN}`;
     expect(rows.map((r) => r.rolname).sort()).toEqual([...LOGINS].sort());
   });
 
