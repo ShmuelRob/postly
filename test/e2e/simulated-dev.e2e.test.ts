@@ -18,6 +18,7 @@ import * as schema from '../../src/db/schema.js';
 import { BILLING_COPY } from '../../src/modules/billing/index.js';
 import { draftsCopy, onboardingCopy as copy, scheduleCopy } from '../../src/modules/workflow/index.js';
 import { startSimulatedProcess, type SimulatedProcess } from '../../src/simulated.js';
+import { holdSharedDatabaseLock } from '../db/shared-lock.js';
 import { e2eTest } from './harness/index.js';
 import type { E2eRecord } from './harness/record.js';
 
@@ -31,7 +32,7 @@ const SECRET = 'test-only';
 const NAMESPACE = `e2e-${Date.now()}`;
 
 const store = createPostgresSimulatorStore(inject('simulatorStoreUrl'));
-const db = createDatabase(inject('databaseUrls'), { max: 2 });
+const db = createDatabase(inject('databaseUrls'), { max: 3 });
 /** The dev clock: real time, moved forward to the scheduled time so the posts can go live in the test. */
 let skewMs = 0;
 const clock = () => new Date(Date.now() + skewMs);
@@ -156,8 +157,17 @@ e2eTest('dev on the simulators: onboarding, payment, drafts, approval and publis
   const scheduled = await db.withSystem('console', (tx) => tx.select().from(schema.publication).where(eq(schema.publication.businessId, businessId)));
   const last = Math.max(...scheduled.map((p) => new Date(p.scheduledFor).getTime()));
   skewMs = last + 60_000 - Date.now();
-  await worker.app.publishing.tick(clock(), { businessId });
-  const feed = (await sandbox.state()).feed;
+  // The publishing pause is global to the shared database: another e2e file that holds it (the
+  // console's pause test) would defer these publications and the feed would be short. Hold the shared
+  // lock, as every H5 world does, for the tick and the read of the feed.
+  const releaseLock = await holdSharedDatabaseLock(db);
+  let feed: Awaited<ReturnType<Sandbox['state']>>['feed'];
+  try {
+    await worker.app.publishing.tick(clock(), { businessId });
+    feed = (await sandbox.state()).feed;
+  } finally {
+    await releaseLock();
+  }
   expect({ instagram: feed.instagram.length, facebook: feed.facebook.length }).toEqual({ instagram: approveButtons.length, facebook: approveButtons.length });
   expect([...feed.instagram, ...feed.facebook].every((p) => p.status === 'published')).toBe(true);
   await expect.poll(async () => (await replies()).some((r) => r.text?.includes(scheduleCopy.PUBLISHED_TEMPLATE)), timeout).toBe(true);
@@ -201,6 +211,10 @@ e2eTest('the mock checkout reports a failed payment and a cancelled one', async 
     await expect
       .poll(async () => (await db.withSystem('console', (tx) => tx.select().from(schema.business).where(eq(schema.business.id, businessId))))[0]?.status, { timeout: 30_000 })
       .toBe('cancelled');
+    // The text above is read as a weekly update, and web answers it in steps (the update is counted,
+    // a draft, then the team takes over because the clock is days ahead). Wait for the last step: an
+    // answer still on its way would land in the next test's chat, which opens on the same number.
+    await expect.poll(async () => (await other.state()).messages.some((m) => m.text === draftsCopy.draftsNeedReview), { timeout: 60_000 }).toBe(true);
   } finally {
     await other.close();
   }

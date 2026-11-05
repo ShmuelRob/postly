@@ -10,6 +10,7 @@ import * as schema from '../../src/db/schema.js';
 import { createChannels } from '../../src/modules/publishing/index.js';
 import { draftsCopy } from '../../src/modules/workflow/index.js';
 import { ModelSimulator, PaymentSimulator } from '../../src/simulators/index.js';
+import { holdSharedDatabaseLock } from '../db/shared-lock.js';
 import { placeholderPng } from '../e2e/harness/png.js';
 import type { Draft, H5World, H5WorldFactory } from './world.js';
 
@@ -43,7 +44,6 @@ export function subjectExtras(world: H5World): { payment: PaymentSimulator; file
  */
 
 const MEDIA_ORIGIN = 'https://media.h5.test/';
-const H5_LOCK = 330_033;
 
 /** Price and discount facts for every price and percent in the caption, so the code fact check passes. */
 function factsFor(caption: string): Fact[] {
@@ -56,17 +56,8 @@ function factsFor(caption: string): Fact[] {
 export const createH5World: H5WorldFactory = async ({ messaging, publishing, now, databaseUrls }) => {
   const db = createDatabase(databaseUrls, { max: 4 });
 
-  // Held until close(): a console transaction waiting on `release`.
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => (release = resolve));
-  let locked!: () => void;
-  const lockTaken = new Promise<void>((resolve) => (locked = resolve));
-  const holder = db.withSystem('console', async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(${H5_LOCK})`);
-    locked();
-    await released;
-  });
-  await Promise.race([lockTaken, holder]);
+  // Held until close(); the same lock other e2e tests take around global state (test/db/shared-lock.ts).
+  const release = await holdSharedDatabaseLock(db);
 
   const files = new Map<string, Uint8Array>();
   const model = new ModelSimulator();
@@ -303,8 +294,7 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
         // Leave no business holding the shared numbers for tests outside the H5 lock.
         for (const phone of new Set(phones.values())) await freeNumber(phone);
       } finally {
-        release();
-        await holder.catch(() => {});
+        await release();
         await db.close();
       }
     },
