@@ -59,12 +59,14 @@ Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#photo-edits)), qu
 | Rule | Value |
 | --- | --- |
 | Kinds | `discount` (such as `-15%`), `price` (such as `₪29.90`), and the fixed-word stickers `new` (חדש), `sale` (מבצע), `holiday` (חג שמח) per language |
-| Text | At most 8 characters, one line, Latin digits, the % sign after the number |
+| Text | At most 8 characters, one line, Latin digits, the % sign after the number. A number reads left to right even in a right-to-left post (`-15%`, not `15%-`) |
+| Sticker words | `new`, `sale`, `holiday` per language: he חדש, מבצע, חג שמח; ar جديد, تخفيضات, عيد سعيد; en NEW, SALE, HOLIDAY; ru НОВОЕ, АКЦИЯ, ПРАЗДНИК (`src/modules/design/badge.ts`; the ar and ru words wait for a native check) |
 | Facts | Checked in code before rendering: `discount` and `price` equal a recorded fact; `sale` needs a promotion or discount fact; `holiday` needs a holiday in the post's week ([agent.md](agent.md#badge-element)) |
 | Shape | Clean: a square-cornered accent tag. Warm: a round stamp in the accent color with the card's paper tone. Dynamic: a circle in the secondary color rotated by -8 degrees with the shadow offset edge |
-| Size and place | A 220 px circle or an equivalent box, cover slide only, the top corner opposite the logo, inside the safe area, never over the title panel or the logo |
+| Size and place | A 220 px circle or an equivalent box (Clean's tag is 260 x 140 px), cover slide only, the top corner opposite the logo, inside the safe area, never over the title panel or the logo. Clean and Dynamic put it at the start corner, Warm at the end corner (its logo circle is at the start) |
+| Edge | The badge sits on the photo, so it carries a 3:1 edge: a white ring in Clean, a paper-tone ring in Warm, the shadow offset edge in Dynamic. Its fill is the style's accent (Clean, Warm) or secondary (Dynamic), darkened or lightened only as far as 4.5:1 for its text needs |
 | Contrast | Text 4.5:1 against the badge; the badge 3:1 against what it sits on (the graphic-contrast rule above) |
-| Text area | The title panel and the badge together stay within the 20% text-to-image rule |
+| Text area | The title panel and the badge together stay within the 20% text-to-image rule; measured as the title text box plus the badge box, at most 20% of the canvas |
 | Count | At most one badge per post |
 
 ## Brand colors and logo

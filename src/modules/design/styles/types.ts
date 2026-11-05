@@ -2,6 +2,7 @@
 // checks, photo crop, logo fit, fonts, text fitting, safe-area checks, JPEG output);
 // a style only declares its rules and returns the HTML and CSS of one slide.
 
+import type { BadgeKind } from '../../../contracts/design-spec.js';
 import type { Palette } from '../color.js';
 import type { FontFace } from '../fonts.js';
 import type { Direction, Size } from '../layout.js';
@@ -25,6 +26,8 @@ export type SlideContext = {
   logo: LogoImage | LogoText;
   /** Plain text; escape it with `escapeHtml`. Empty on photo slides. */
   overlayText: string;
+  /** The cover's badge, its text already resolved by the caller; absent on photo slides. */
+  badge?: { kind: BadgeKind; text: string };
   /** 64 px on every side; elements marked `data-safe` must stay inside it. */
   safeArea: number;
 };
@@ -40,7 +43,7 @@ export type StyleTemplate = {
    * The slide body. Contract with the engine:
    * - the overlay text element carries `data-overlay` and a numeric `line-height`; the
    *   engine sets its `font-size`, so the style must not set one on it;
-   * - the overlay text and the logo carry `data-safe="<name>"`;
+   * - the overlay text and the logo carry `data-safe="<name>"`, and so does the badge (`badgeHtml`);
    * - nothing loads over the network (use the data URIs from the context).
    */
   html(ctx: SlideContext): string;
