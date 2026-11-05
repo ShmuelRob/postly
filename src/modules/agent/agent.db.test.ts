@@ -1,0 +1,314 @@
+import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { and, eq } from 'drizzle-orm';
+import { afterAll, afterEach, beforeEach, describe, expect, inject, it } from 'vitest';
+import type { AgentContext, AgentStep } from '../../contracts/agent.js';
+import { type SendTextRequest, WindowClosedError } from '../../contracts/providers/messaging.js';
+import { createDatabase } from '../../db/index.js';
+import * as schema from '../../db/schema.js';
+import { ModelSimulator } from '../../simulators/model.js';
+import { createModelLayer, type ModelLayer } from '../model-layer/index.js';
+import { createAgent, handOffLine, type AgentDeps } from './index.js';
+
+// The agent runtime (WP-90, agent.md: Runtime, Limits, Tools) against the migrated database and the
+// model simulator with scripted agent steps. No test calls a real model.
+
+const db = createDatabase(inject('databaseUrls'), { max: 3 });
+afterAll(() => db.close());
+
+const OWNER_TEXT = 'השבוע 15% הנחה על ורדים עד יום חמישי';
+
+let businessId: string;
+let approver: string;
+let sim: ModelSimulator;
+let models: ModelLayer;
+let sent: SendTextRequest[];
+let windowOpen: boolean;
+let questions: { key: string; askedFields: string[]; postId?: string }[];
+
+const messaging: AgentDeps['messaging'] = {
+  async sendText(_businessId, request) {
+    if (!windowOpen) throw new WindowClosedError(request.to, null);
+    sent.push(request);
+    return { providerMessageId: randomUUID() };
+  },
+};
+const events: AgentDeps['events'] = { questionAsked: async (_b, q) => void questions.push(q) };
+const agentWith = (overrides: Partial<AgentDeps> = {}) => createAgent({ db, models, messaging, events, ...overrides });
+
+const step = (calls: AgentStep['calls'], confidence = 0.9): AgentStep => ({ calls, confidence });
+const ask = (text: string, topic = 'detail:date', expects: 'answer' | 'none' = 'answer') => ({ tool: 'ask_owner' as const, text, topic, expects });
+const decline = (ownerQuote = 'עד יום חמישי') => ({ tool: 'record_decline' as const, what: 'anything_else', ownerQuote });
+const END = { tool: 'end_turn' as const };
+const trigger = { kind: 'event', name: 'test' } as const;
+
+async function newBusiness(): Promise<void> {
+  businessId = randomUUID();
+  approver = `+9725${Math.floor(1e7 + Math.random() * 9e7)}`;
+  await db.withBusiness('workflow', businessId, async (tx) => {
+    await tx.insert(schema.business).values({
+      id: businessId,
+      name: 'פרחי דנה',
+      status: 'active',
+      approverPhone: approver,
+      profile: { name: 'פרחי דנה', approverPhone: approver, contact: { phone: '+972501234567' } },
+    });
+    await tx.insert(schema.conversationState).values({ businessId, step: 'processing_update' });
+  });
+  await db.withBusiness('messaging', businessId, (tx) =>
+    tx.insert(schema.message).values({
+      businessId,
+      direction: 'inbound',
+      kind: 'text',
+      provider: 'sim',
+      providerMessageId: randomUUID(),
+      fromPhone: approver,
+      toPhone: '+972500000000',
+      body: OWNER_TEXT,
+    }),
+  );
+}
+
+const turnRow = (turnId: string) =>
+  db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.agentTurn).where(eq(schema.agentTurn.id, turnId)))[0]!);
+const consoleItems = () => db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem).where(eq(schema.consoleItem.businessId, businessId)));
+const handoffAt = () =>
+  db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.conversationState).where(eq(schema.conversationState.businessId, businessId)))[0]!.handoffAt);
+const contextOf = (n: number, task: 'agent_weekly' | 'agent_onboarding' = 'agent_weekly') => sim.callsFor(task)[n]!.request as unknown as { input: AgentContext };
+
+const DEFAULT_LIMITS = { maxSteps: 12, maxToolCalls: 24, maxRefusals: 3, maxRepeatedQuestions: 3, minConfidence: 0.4, timeoutMs: 90_000 };
+const setLimits = (values: Partial<typeof schema.agentConfig.$inferInsert>) =>
+  db.withSystem('console', (tx) => tx.update(schema.agentConfig).set(values).where(eq(schema.agentConfig.agent, 'onboarding')));
+
+beforeEach(async () => {
+  await newBusiness();
+  sim = new ModelSimulator({ defaults: false });
+  models = createModelLayer({ db, providers: { google: sim } });
+  sent = [];
+  windowOpen = true;
+  questions = [];
+});
+afterEach(() => setLimits(DEFAULT_LIMITS));
+
+describe('a turn', () => {
+  it('sends a question to the approver, waits for the answer, and records the turn', async () => {
+    sim.script('agent_weekly', step([ask('עד מתי המבצע של 15%?')]));
+    const result = await agentWith().runTurn(businessId, 'weekly', { kind: 'burst', messageIds: [] });
+
+    expect(result).toMatchObject({ status: 'waiting', stopReason: 'waiting_for_owner' });
+    expect(sent).toEqual([{ to: approver, text: 'עד מתי המבצע של 15%?' }]);
+    expect(questions).toEqual([{ agent: 'weekly', key: 'detail:date', askedFields: [] }]);
+    const turn = await turnRow(result.turnId!);
+    expect(turn).toMatchObject({ agent: 'weekly', status: 'waiting', stopReason: 'waiting_for_owner', trigger: { kind: 'burst', messageIds: [] } });
+    expect(turn.steps).toMatchObject([{ confidence: 0.9, calls: [{ call: { tool: 'ask_owner' }, result: { status: 'ok' } }] }]);
+    expect(Number(turn.costUsd)).toBeGreaterThan(0);
+    expect(turn.endedAt).not.toBeNull();
+    const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun).where(eq(schema.modelRun.businessId, businessId)));
+    expect(runs.map((r) => [r.task, r.agentTurnId])).toEqual([['agent_weekly', result.turnId]]);
+  });
+
+  it('reports each finished turn to onTurnEnd, with every call and its result', async () => {
+    const ends: unknown[] = [];
+    sim.script('agent_weekly', step([decline(), END]));
+    const result = await agentWith({ onTurnEnd: (t) => void ends.push(t) }).runTurn(businessId, 'weekly', trigger);
+    expect(ends).toEqual([
+      {
+        agent: 'weekly',
+        businessId,
+        turnId: result.turnId,
+        stopReason: 'end_turn',
+        steps: [{ calls: [decline(), END], results: [expect.objectContaining({ status: 'ok' }), expect.objectContaining({ status: 'ok' })] }],
+      },
+    ]);
+  });
+
+  it('builds the context from this business only, with the persona and without the approver number', async () => {
+    sim.script('agent_weekly', step([END]));
+    await agentWith().runTurn(businessId, 'weekly', trigger);
+    const { input } = contextOf(0);
+    expect(input.persona).toEqual({ name: 'פוסטלי', gender: 'feminine' });
+    expect(input.messages).toEqual([expect.objectContaining({ role: 'owner', text: OWNER_TEXT })]);
+    expect(input.tools).toEqual(['ask_owner', 'request_photo', 'record_decline', 'hand_off_to_console', 'end_turn']);
+    expect(JSON.stringify(input)).not.toContain(approver);
+  });
+
+  it('a closed window refuses the message, and the refusal goes back to the agent', async () => {
+    windowOpen = false;
+    sim.script('agent_weekly', step([ask('עד מתי המבצע?')]), step([END]));
+    const result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(result).toMatchObject({ status: 'done', stopReason: 'end_turn' });
+    expect(sent).toEqual([]);
+    expect(contextOf(1).input.toolResults).toEqual([{ tool: 'ask_owner', result: expect.objectContaining({ status: 'refused', reason: 'window_closed' }) }]);
+  });
+
+  it('a refused call changes nothing and skips the rest of its step', async () => {
+    sim.script('agent_weekly', step([decline('ציטוט שלא נשלח'), ask('עוד משהו?', 'anything_else', 'none')]), step([END]));
+    await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(sent).toEqual([]);
+    expect(contextOf(1).input.toolResults).toEqual([{ tool: 'record_decline', result: expect.objectContaining({ reason: 'quote_not_found' }) }]);
+  });
+
+  it('refuses a tool the agent may not use, and one whose package has not landed', async () => {
+    sim.script(
+      'agent_weekly',
+      step([{ tool: 'record_fact', type: 'discount_percent', value: '15', sourceQuote: '15% הנחה' }]),
+      step([END]),
+    );
+    await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(contextOf(1).input.toolResults[0]!.result).toMatchObject({ status: 'refused', reason: 'not_allowed' });
+  });
+
+  it('refuses text with a number that has no source, a link, or approval language', async () => {
+    sim.script('agent_weekly', step([ask('המחיר 39 ש"ח?', 'detail:price')]), step([ask('ראית את www.example.com?', 'info', 'none')]), step([ask('הפוסט אושר!', 'info', 'none')]));
+    const result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    // Three refusals reach the limit: only the hand-off line goes out.
+    expect(result.stopReason).toBe('refusals');
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי') }]);
+    const turn = await turnRow(result.turnId!);
+    expect((turn.steps as { calls: { result: { reason: string } }[] }[]).map((st) => st.calls[0]!.result.reason)).toEqual([
+      'fact_mismatch',
+      'forbidden_content',
+      'forbidden_content',
+    ]);
+  });
+
+  it('accepts numbers the owner wrote', async () => {
+    sim.script('agent_weekly', step([ask('ה-15% הנחה בתוקף עד יום חמישי?')]));
+    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'waiting' });
+  });
+
+  it('sends at most two messages and one question a turn', async () => {
+    sim.script('agent_weekly', step([ask('קיבלתי, תודה', 'info', 'none'), ask('רגע אחד', 'info', 'none'), ask('ועוד אחת', 'info', 'none')]), step([END]));
+    await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(sent).toHaveLength(2);
+    expect(contextOf(1).input.toolResults.at(-1)!.result).toMatchObject({ reason: 'question_limit' });
+  });
+
+  it('hand_off_to_console sets the handoff, opens a console item and tells the owner', async () => {
+    sim.script('agent_weekly', step([{ tool: 'hand_off_to_console', reason: 'owner_asked_for_person', note: 'ביקש נציג' }]));
+    const result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(result).toMatchObject({ status: 'handed_off', stopReason: 'handed_off' });
+    expect(await handoffAt()).not.toBeNull();
+    expect(await consoleItems()).toEqual([
+      expect.objectContaining({ kind: 'handoff', referenceId: result.turnId, details: expect.objectContaining({ reason: 'owner_asked_for_person', note: 'ביקש נציג' }) }),
+    ]);
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי') }]);
+  });
+});
+
+describe('one turn per business', () => {
+  it('runs nothing while another turn runs, or while a person handles the conversation', async () => {
+    await db.withBusiness('workflow', businessId, (tx) => tx.insert(schema.agentTurn).values({ businessId, agent: 'weekly', trigger }));
+    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toEqual({ turnId: null, status: 'skipped', stopReason: null });
+
+    await newBusiness();
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx.update(schema.conversationState).set({ handoffAt: new Date() }).where(eq(schema.conversationState.businessId, businessId)),
+    );
+    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'skipped' });
+    expect(sim.callsFor('agent_weekly')).toHaveLength(0);
+  });
+
+  it('closes a crashed turn (running for twice the timeout) and runs', async () => {
+    const [stale] = await db.withBusiness('workflow', businessId, (tx) =>
+      tx.insert(schema.agentTurn).values({ businessId, agent: 'weekly', trigger, startedAt: new Date(Date.now() - 200_000) }).returning(),
+    );
+    sim.script('agent_weekly', step([END]));
+    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'done' });
+    expect((await turnRow(stale!.id)).status).toBe('failed');
+  });
+});
+
+// agent.md, Limits: every limit ends the turn and hands off, with an agent_limit console item.
+describe('limits', () => {
+  async function expectLimit(reason: string, run: Promise<{ turnId: string | null; status: string; stopReason: string | null }>) {
+    const result = await run;
+    expect(result).toMatchObject({ status: 'handed_off', stopReason: reason });
+    expect(await handoffAt()).not.toBeNull();
+    expect(await consoleItems()).toContainEqual(expect.objectContaining({ kind: 'agent_limit', referenceId: result.turnId, details: expect.objectContaining({ reason }) }));
+    expect(sent.at(-1)).toEqual({ to: approver, text: handOffLine('פוסטלי') });
+    expect((await turnRow(result.turnId!)).status).toBe('handed_off');
+  }
+
+  it('max_steps', async () => {
+    await setLimits({ maxSteps: 2 });
+    sim.script('agent_onboarding', step([decline()]), step([decline()]), step([END]));
+    await expectLimit('max_steps', agentWith().runTurn(businessId, 'onboarding', trigger));
+    expect(sim.callsFor('agent_onboarding')).toHaveLength(2);
+  });
+
+  it('max_tool_calls', async () => {
+    await setLimits({ maxToolCalls: 3 });
+    sim.script('agent_onboarding', step([decline(), decline(), decline(), decline()]));
+    await expectLimit('max_tool_calls', agentWith().runTurn(businessId, 'onboarding', trigger));
+  });
+
+  it('low_confidence runs none of the step calls', async () => {
+    sim.script('agent_onboarding', step([ask('עוד משהו?', 'anything_else', 'none')], 0.2));
+    await expectLimit('low_confidence', agentWith().runTurn(businessId, 'onboarding', trigger));
+    expect(sent).toHaveLength(1); // only the hand-off line
+  });
+
+  it('refusals', async () => {
+    sim.script('agent_onboarding', step([decline('לא נשלח')]), step([decline('לא נשלח')]), step([decline('לא נשלח')]));
+    await expectLimit('refusals', agentWith().runTurn(businessId, 'onboarding', trigger));
+  });
+
+  it('stuck: the same question asked too many times in scope', async () => {
+    await setLimits({ maxRepeatedQuestions: 1 });
+    sim.script('agent_onboarding', step([ask('עד מתי המבצע?')]));
+    await agentWith().runTurn(businessId, 'onboarding', trigger);
+    sim.script('agent_onboarding', step([ask('אז עד מתי המבצע?')]));
+    await expectLimit('stuck', agentWith().runTurn(businessId, 'onboarding', trigger));
+  });
+
+  it('timeout', async () => {
+    let clock = Date.now();
+    const now = () => new Date((clock += 60_000));
+    sim.script('agent_onboarding', step([decline()]), step([END]));
+    await expectLimit('timeout', agentWith({ now }).runTurn(businessId, 'onboarding', trigger));
+  });
+
+  it('invalid_output after the model layer gives up', async () => {
+    sim.scriptInvalid('agent_onboarding', { calls: [{ tool: 'approve' }] }, { calls: [] }, {});
+    await expectLimit('invalid_output', agentWith().runTurn(businessId, 'onboarding', trigger));
+    expect(await consoleItems()).toContainEqual(expect.objectContaining({ kind: 'model_validation_failed' }));
+  });
+
+  it('turn_budget: a step starts only when the turn can still pay its full cap', async () => {
+    sim.script('agent_onboarding', step([decline()]), step([decline()]), step([decline()]), step([END]));
+    // Each step spends its whole 0.02 cap here: three steps fit the 0.06 turn, a fourth does not start.
+    const fullSteps = { ...models, spentOnTurn: async () => 0.02 * sim.callsFor('agent_onboarding').length };
+    await expectLimit('turn_budget', agentWith({ models: fullSteps }).runTurn(businessId, 'onboarding', trigger));
+    expect(sim.callsFor('agent_onboarding')).toHaveLength(3);
+  });
+
+  it('daily_budget and global_budget are checked before the first step', async () => {
+    const overDaily = { ...models, spentSince: async () => 0.99 };
+    await expectLimit('daily_budget', agentWith({ models: overDaily }).runTurn(businessId, 'onboarding', trigger));
+    await newBusiness();
+    const overGlobal = { ...models, spentByAllSince: async () => 49.99 };
+    await expectLimit('global_budget', agentWith({ models: overGlobal }).runTurn(businessId, 'onboarding', trigger));
+    expect(sim.callsFor('agent_onboarding')).toHaveLength(0);
+  });
+});
+
+describe('flows', () => {
+  it('are off by default, and a business override wins over the global switch', async () => {
+    const agent = agentWith();
+    expect(await agent.flowEnabled(businessId, 'weekly')).toBe(false);
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx.update(schema.business).set({ agentFlows: { weekly: true } }).where(and(eq(schema.business.id, businessId))),
+    );
+    expect(await agent.flowEnabled(businessId, 'weekly')).toBe(true);
+    expect(await agent.flowEnabled(businessId, 'drafts')).toBe(false);
+  });
+});
+
+describe('module direction (agent.md)', () => {
+  it('the agent module never imports workflow', () => {
+    const dir = new URL('./', import.meta.url);
+    const files = readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.ts'));
+    for (const file of files) expect(readFileSync(new URL(file.replaceAll('\\', '/'), dir), 'utf8'), file).not.toMatch(/from '[./]*\/workflow\//);
+  });
+});

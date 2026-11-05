@@ -19,6 +19,7 @@ import {
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { AGENT_NAMES, AGENT_TURN_STOP_REASONS } from '../contracts/agent.js';
 import { NETWORKS, POST_FORMATS, VISUAL_STYLES } from '../contracts/common.js';
 import { MODEL_TASK_NAMES, PREFERENCE_SCOPES } from '../contracts/model-tasks.js';
 import {
@@ -94,7 +95,12 @@ export const consoleItemKind = pgEnum('console_item_kind', [
   'unknown_number',
   'handoff',
   'payment_link_failed',
+  'agent_limit',
 ]);
+export const agentName = pgEnum('agent_name', AGENT_NAMES);
+export const AGENT_TURN_STATUSES = ['running', 'done', 'waiting', 'handed_off', 'failed'] as const;
+export const agentTurnStatus = pgEnum('agent_turn_status', AGENT_TURN_STATUSES);
+export const agentTurnStopReason = pgEnum('agent_turn_stop_reason', AGENT_TURN_STOP_REASONS);
 export const consoleItemStatus = pgEnum('console_item_status', ['open', 'resolved']);
 
 // Column helpers
@@ -124,6 +130,8 @@ export const business = pgTable(
     timezone: text('timezone').notNull().default('Asia/Jerusalem'),
     cancelledAt: tz('cancelled_at'),
     dataDeleteAfter: tz('data_delete_after'),
+    /** Per-business override of which flows run on the agent (agent.md); null follows system_control. */
+    agentFlows: jsonb('agent_flows'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -293,6 +301,8 @@ export const postVersion = pgTable(
     factSources: jsonb('fact_sources').notNull(),
     factCheckPassed: boolean('fact_check_passed').notNull(),
     contentHash: text('content_hash').notNull(),
+    /** DesignSpec the version was rendered from; null before the agent (WP-90). Not in content_hash. */
+    designSpec: jsonb('design_spec'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -399,9 +409,32 @@ export const modelRun = pgTable(
     outputTokens: integer('output_tokens'),
     costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
     durationMs: integer('duration_ms'),
+    /** The agent turn this call belonged to (WP-90); a plain value, not a foreign key. */
+    agentTurnId: uuid('agent_turn_id'),
     createdAt: createdAt(),
   },
   (t) => [tenantIsolation(t.businessId)],
+);
+
+/** One row per agent turn (WP-90, agent.md, Runtime). */
+export const agentTurn = pgTable(
+  'agent_turn',
+  {
+    id: id(),
+    businessId: businessId(),
+    agent: agentName('agent').notNull(),
+    status: agentTurnStatus('status').notNull().default('running'),
+    stopReason: agentTurnStopReason('stop_reason'),
+    /** `{ kind: 'burst', messageIds }` or `{ kind: 'event', name }`. */
+    trigger: jsonb('trigger').notNull(),
+    /** Each step: tool calls, their results, confidence and cost. */
+    steps: jsonb('steps').notNull().default([]),
+    costUsd: numeric('cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+    durationMs: integer('duration_ms'),
+    startedAt: tz('started_at').notNull().defaultNow(),
+    endedAt: tz('ended_at'),
+  },
+  (t) => [tenantIsolation(t.businessId), index('agent_turn_business_started_idx').on(t.businessId, t.startedAt)],
 );
 
 export const consoleItem = pgTable(
@@ -485,10 +518,29 @@ export const systemControl = pgTable(
     pausedReason: text('paused_reason'),
     pausedAt: tz('paused_at'),
     pausedBy: text('paused_by'),
+    /** Which flows run on the agent for every business (agent.md); business.agent_flows wins. */
+    agentFlows: jsonb('agent_flows').notNull().default({}),
+    agentDailyCostCapUsd: numeric('agent_daily_cost_cap_usd', { precision: 10, scale: 6 }).notNull().default('50'),
+    /** The persona's global name per language (agent.md, A1). */
+    agentName: jsonb('agent_name').notNull().default({ he: 'פוסטלי', en: 'Postly', ar: 'Postly', ru: 'Postly' }),
     updatedAt: updatedAt(),
   },
   (t) => [check('system_control_single_row', sql`${t.id} = 1`)],
 );
+
+/** The agent limits per agent (agent.md, Limits; A4). Configuration, not code. */
+export const agentConfig = pgTable('agent_config', {
+  agent: agentName('agent').primaryKey(),
+  maxSteps: integer('max_steps').notNull(),
+  maxToolCalls: integer('max_tool_calls').notNull(),
+  maxTurnCostUsd: numeric('max_turn_cost_usd', { precision: 10, scale: 6 }).notNull(),
+  maxBusinessDailyCostUsd: numeric('max_business_daily_cost_usd', { precision: 10, scale: 6 }).notNull(),
+  timeoutMs: integer('timeout_ms').notNull(),
+  minConfidence: real('min_confidence').notNull(),
+  maxRefusals: integer('max_refusals').notNull(),
+  maxRepeatedQuestions: integer('max_repeated_questions').notNull(),
+  updatedAt: updatedAt(),
+});
 
 /** The monthly price of each plan, append-only: the rows are the history; the newest row is the price (T1). */
 export const planPrice = pgTable(

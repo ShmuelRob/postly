@@ -63,13 +63,15 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
 | `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
-| `model_run` |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
+| `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S | S | SI |
 | `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
 | `workflow_event` |  | I |  |  | I | I |  | I |  |  |  |  | S |  |
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
-| `system_control` |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
+| `system_control` |  | S |  |  |  | S |  |  |  |  |  | S | SIU |  |
 | `plan_price` |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
+| `agent_turn` |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
+| `agent_config` |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
@@ -363,19 +365,33 @@ The workflow audit trail (WP-46): one row for every event the workflow runtime a
 | `detail` | text | The guard's reason code when blocked |
 | `correlation_id` | text | For example the inbound message id; null when none |
 
-### Proposed with the agent
+### `agent_turn`
 
-Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#data)); the migration lands in WP-90 and needs H4. Nothing here exists yet.
+One row per agent turn (WP-90, [agent.md](agent.md#runtime)). Business-owned: FORCE RLS and `on delete cascade` like every business table. Written by the `workflow` role, which runs the agent module; the console reads it.
 
-- **`agent_turn`** (business-owned, FORCE RLS, `on delete cascade`): `id`, `business_id`, `agent` (`onboarding`, `weekly`, `drafts`), `trigger` (jsonb: `burst` with the message ids, or a code event name), `status` (`running`, `done`, `waiting`, `handed_off`, `failed`), `stop_reason` (`AgentTurnStopReason`), `steps` (jsonb: each step's tool calls and their results; no free-text reasoning is stored), `cost_usd` (numeric(10, 6)), `duration_ms`, `started_at`, `ended_at`. Written by a new business role `agent` (`app_agent`: SIU on `agent_turn`, S on `business`, `conversation_state`, `message`, `media_asset`, `preference_rule`, `weekly_update`, `post`, `post_version`); the console reads it. The agent role changes no other table: each tool applies its effect through the owning module's role.
-- **`model_run.agent_turn_id`**: uuid, nullable, same-business reference to `agent_turn`.
-- **`post_version.design_spec`**: jsonb, nullable (`DesignSpec`; null for versions drafted before the agent). Immutable like the rest of the row; not part of `content_hash`.
-- **`business.agent_flows`**: jsonb, nullable; a per-business override of which flows run on the agent.
-- **`business.profile.persona`**: inside the existing profile jsonb, no column.
-- **`console_item_kind`** gains `agent_limit`.
-- **System tables:** `agent_config` (one row per agent: `max_steps`, `max_tool_calls`, `max_turn_cost_usd`, `max_business_daily_cost_usd`, `timeout_ms`, `min_confidence`, `max_refusals`; read by `agent`, updated by `console`), and `system_control` gains `agent_flows` (jsonb), `agent_daily_cost_cap_usd` (default 50), and `agent_name` (jsonb per language, default `{"en": "Postly", "he": "פוסטלי"}`). The `agent_config` seed holds the decided limits (12, 24, 0.06, 1.00, 90 000 ms, 0.4, 3) (agent.md, A4).
-- **Landed in WP-89 (`0017_agent_tasks`):** the `model_task` enum gains `agent_onboarding`, `agent_weekly` and `agent_drafts`. The enum is recreated rather than extended, because drizzle applies pending migrations in one transaction and a value added with `ADD VALUE` cannot be used before commit; `model_run`, `model_task_config` and `prompt_template` move to the new type. The three tasks get `model_task_config` rows on `gemini-2.5-flash-lite` (A8; temperature 0.2, `max_cost_usd` 0.02, 2 retries) and a placeholder version 1 prompt that only hands off, until each agent package adds its real prompt as version 2 (H7).
-- **Daily cost.** The model layer sums `model_run.cost_usd` for the business since local midnight before each agent call (it already owns `model_run`); the global cap is summed by a `withSystem('scheduler')` read cached for one minute.
+| Column | Type | Notes |
+| --- | --- | --- |
+| `business_id` | uuid | |
+| `agent` | `agent_name` | `onboarding`, `weekly` or `drafts` |
+| `status` | `agent_turn_status` | `running`, `done`, `waiting`, `handed_off`, `failed` |
+| `stop_reason` | `agent_turn_stop_reason` | `AgentTurnStopReason`; null while running |
+| `trigger` | jsonb | `{ kind: 'burst', messageIds }` or `{ kind: 'event', name }` |
+| `steps` | jsonb | Each step: its tool calls, their results, the confidence and the step's cost; no free-text reasoning is stored |
+| `cost_usd` | numeric(10, 6) | The turn's model spend, default 0 |
+| `duration_ms` | integer | Set when the turn ends |
+| `started_at`, `ended_at` | timestamptz | |
+
+The agent's declines and the questions it already asked are read back from these rows (agent.md, Runtime).
+
+### Other changes with the agent
+
+- **`model_run.agent_turn_id`** (WP-90): uuid, nullable, the turn a model call belonged to. A plain value, not a foreign key: the console joins on it, and both rows belong to the same business by RLS.
+- **`post_version.design_spec`** (WP-90): jsonb, nullable (`DesignSpec`; null for versions drafted before the agent). Immutable like the rest of the row; not part of `content_hash`.
+- **`business.agent_flows`** (WP-90): jsonb, nullable; a per-business override of which flows run on the agent (`{ onboarding?, weekly?, drafts? }` booleans).
+- **`business.profile.persona`**: inside the existing profile jsonb, no column (WP-89).
+- **`console_item_kind`** gains `agent_limit` (WP-90).
+- **`model_task` enum** (WP-89, `0017_agent_tasks`): gains `agent_onboarding`, `agent_weekly` and `agent_drafts`. The enum is recreated rather than extended, because drizzle applies pending migrations in one transaction and a value added with `ADD VALUE` cannot be used before commit; `model_run`, `model_task_config` and `prompt_template` move to the new type. The three tasks get `model_task_config` rows on `gemini-2.5-flash-lite` (A8; temperature 0.2, `max_cost_usd` 0.02, 2 retries) and a placeholder version 1 prompt that only hands off, until each agent package adds its real prompt as version 2 (H7).
+- **No new login (WP-90).** The design proposed an `agent` role; WP-90 runs the agent module as `workflow` instead, so no secret, Terraform change or connection pool is added (security.md, D7 and D9). `workflow` gains SIU on `agent_turn` and S on `agent_config` and `system_control`; `scheduler` gains S on `model_run` to sum the spend across businesses for the global cap.
 
 ### System tables
 
@@ -383,6 +399,8 @@ Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md#data)); the migra
 
 `prompt_template`: `task`, `version`, and `template`, unique on `task` and `version`. Versions are immutable.
 
-`system_control`: a single row (`id` is always 1) with `publishing_paused`, `paused_reason`, `paused_at`, and `paused_by`. This is the global pause.
+`system_control`: a single row (`id` is always 1) with `publishing_paused`, `paused_reason`, `paused_at`, and `paused_by`. This is the global pause. With the agent (WP-90) it also holds `agent_flows` (jsonb, default `{}`: which flows run on the agent for every business; the per-business `business.agent_flows` wins), `agent_daily_cost_cap_usd` (numeric, default 50) and `agent_name` (jsonb per language, default `{"he": "פוסטלי", "en": "Postly", "ar": "Postly", "ru": "Postly"}`).
+
+`agent_config` (WP-90): one row per agent (`agent` is the key), the limits of [agent.md](agent.md#limits): `max_steps` (12), `max_tool_calls` (24), `max_turn_cost_usd` (0.06), `max_business_daily_cost_usd` (1.00), `timeout_ms` (90000), `min_confidence` (0.4), `max_refusals` (3), `max_repeated_questions` (3), `updated_at`. Read by `workflow`, changed by `console`.
 
 `plan_price`: the monthly price of each plan, append-only, so the rows are the history of changes (T1, 2026-11-04). Columns: `id` (identity), `plan` (text), `amount_agorot` (integer, greater than 0), `currency` (text, `ILS`), `changed_by` (text), `reason` (text, nullable), `created_at`. The current price of a plan is its row with the highest `id`. The migration seeds `basic` at 30000 agorot (ILS 300) by `seed`. The console inserts a new row to change the price; no role may update or delete a row. Billing reads the current price when it creates a payment link. Migration `0011_no_trial_plan_price` also renames the `subscription_status` value `trialing` to `pending` and drops `subscription.trial_ends_at` (no row was ever stored in a deployed database).

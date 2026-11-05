@@ -60,7 +60,7 @@ Steps that stay code-only and agent-free: the intro message, the style samples a
 
 A **turn** is one run of one agent for one business, triggered by a claimed inbound burst routed to that agent by the conversation step, or by a code event (the plan was stored, so drafting starts; a detail was provided; the team cleared a handoff).
 
-1. **Lock.** The turn takes the business's `conversation_state` row (`for update` in a short transaction that marks the turn `running`), so at most one turn runs per business. A second trigger while a turn runs waits for the burst sweep, as an unprocessed burst does today.
+1. **Lock.** The turn takes the business's `conversation_state` row (`for update` in a short transaction that inserts the turn's `agent_turn` row as `running`), so at most one turn runs per business: a second trigger that finds a `running` turn younger than twice the turn timeout runs nothing (the burst stays unprocessed and the sweep hands it over again). An older `running` turn is a crashed one; it is closed as `failed` and the new turn starts.
 2. **Context.** Code builds the agent's input from this business only ([Context](#context)).
 3. **Step.** The model layer runs the agent's task. Its output is an `AgentStep`: one to four tool calls and a `confidence` (0 to 1). The output is Zod-validated like every model task; an invalid output retries within `model_task_config.max_retries` and then routes to the console.
 4. **Execute.** Code runs the step's tool calls in order. Each call is checked (allowed for this agent and state, input schema, the tool's code checks) and then applied through the module that owns the data, in that module's transaction and role. A refused call stops the step: the later calls in it are skipped, and the refusal reason goes back to the agent.
@@ -68,7 +68,11 @@ A **turn** is one run of one agent for one business, triggered by a claimed inbo
 6. **Loop.** Otherwise the tool results are appended to the context and the next step runs.
 7. **Record.** The `agent_turn` row gets the stop reason, the steps (tool calls and results), the total cost and duration; every model call of the turn is a `model_run` with the turn's id.
 
-A crash mid-turn leaves the turn `running`; the burst it came from is still unprocessed (its claim is a lease), so the sweep re-runs it. Every tool call is idempotent by `(turnId, stepIndex, callIndex)`: a re-run turn starts a new turn row, and a tool call whose owner message was already sent for the same burst is not sent twice (messaging checks for an outbound message with the same idempotency key).
+A crash mid-turn leaves the turn `running`; the burst it came from is still unprocessed (its claim is a lease), so the sweep re-runs it as a new turn. Each tool call's effect is its own transaction and is recorded in the turn's `steps` right after it runs, so a re-run sees what the crashed turn already did (its recorded calls are in the context's history). A crash between a send and its record can repeat that one message once; WP-90 accepts this (messaging has no idempotency key for free-form sends) and the console shows both turns.
+
+**Where the agent's own memory lives.** Declines (`record_decline`) and the questions already asked (for the repeated-question limit) are read from the business's earlier `agent_turn` rows: the successful `record_decline` and `ask_owner` calls of the current onboarding, or of the current business week once the business is active. No other table stores them.
+
+**Roles (WP-90).** The agent module runs as the existing `workflow` role, which already reads the context tables and writes `conversation_state` and console items; it gains `agent_turn` and read access to `agent_config` and `system_control`. No new database login is created, so no new secret, Terraform change or connection pool is needed (security.md, D7 and D9). Spend is read by the model layer: a business's spend as the `model` role, and the all-business spend as the `scheduler` system role, which gains read access to `model_run`.
 
 ### Limits
 
@@ -78,9 +82,10 @@ All limits are configuration values (`agent_config`, a system table, one row per
 | --- | --- | --- |
 | Steps per turn | 12 | Hand off: `agent_limit` console item, reason `max_steps` |
 | Tool calls per turn | 24 | Same, reason `max_tool_calls` |
-| Cost per turn | USD 0.06 | Same, reason `turn_budget`; the model layer refuses a call whose `max_cost_usd` would pass the remaining turn budget |
-| Cost per business per day | USD 1.00 | Same, reason `daily_budget`; summed from `model_run.cost_usd` since local midnight. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
-| Cost across all businesses per day | USD 50 | Every agent turn hands off (reason `global_budget`) and the team gets an alert; the old one-shot path is not a fallback for cost |
+| Cost per step | `model_task_config.max_cost_usd`, USD 0.02 for the agent tasks | Counts every attempt of the step, retries included: the model layer starts a retry only when the step's spend so far plus the last attempt's cost stays within the cap, and otherwise fails the step (the step then hands off, reason `invalid_output`). Retries never get a cap of their own |
+| Cost per turn | USD 0.06 | Same, reason `turn_budget`. A step starts only when the turn's remaining budget is at least the step's cap, so three full steps fit a turn and a fourth does not start. With the retry rule above each step stays within its cap, and the caps of the steps that started fit the budget, so a turn stays within its budget (an attempt that costs more than the one before it can still overshoot by that difference) |
+| Cost per business per day | USD 1.00 | Same, reason `daily_budget`; summed from `model_run.cost_usd` of every task (not only the agents') since local midnight in `business.timezone`, checked before each step against the step's cap. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
+| Cost across all businesses per day | USD 50 (`system_control.agent_daily_cost_cap_usd`) | Every agent turn hands off (reason `global_budget`) and the team gets an alert; the old one-shot path is not a fallback for cost. Summed from `model_run.cost_usd` of every business since 00:00 UTC, checked before each step |
 | Turn duration | 90 seconds | The turn stops after the current tool call, reason `timeout` |
 | Repeated question | The same `ask_owner.topic` 3 times in a week or an onboarding step | Hand off, reason `stuck` (the existing three-attempt rule) |
 | Low confidence | `confidence` below 0.4 on a step | The step's calls are not run; hand off, reason `low_confidence` |
@@ -105,6 +110,8 @@ The agent sees only what its task needs, all from one business (`withBusiness`):
 - the tool list for this agent and state, the done rule in words, and the remaining step and cost budget.
 
 It never sees phone numbers (the approver's number is replaced by "the owner"), other businesses, tokens, provider ids, or payment data.
+
+**Not yet in WP-90's context builder.** Three items above are still missing: `rules` is empty, posts carry their plan and state but not their current captions and `DesignSpec`, and photos are asset ids without their `image_review` notes. The `workflow` role the module runs as cannot read `preference_rule` or `post_version`, and no `image_review` v2 notes exist yet. The agent package that first needs each item adds it to `context.ts`, together with the grants (H4): the rules and the current version by WP-94 at the latest (`apply_change` works on the current captions), the photo notes with `image_review` v2 (WP-94).
 
 ### Photos the agent sees
 

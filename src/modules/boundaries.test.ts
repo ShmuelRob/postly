@@ -18,6 +18,7 @@ const modules = [
   'business-data',
   'billing',
   'console',
+  'agent',
 ];
 
 // In-process, not a spawned CLI: a cold dependency-cruiser process costs several
