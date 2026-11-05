@@ -449,8 +449,13 @@ module "migrate" {
   service_account = module.accounts.emails.migrate
   subnetwork_id   = module.network.subnetwork_id
   env             = local.app_env
-  secret_env      = merge(local.app_secret_env, { MIGRATE_ADMIN_URL = module.secrets.ids["db-admin-url"] })
-  depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
+  # Only what `main.ts migrate` reads: the admin URL and every login password. Not the webhook
+  # secret, which the migrate account has no access to (least privilege).
+  secret_env = merge(
+    { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
+    { MIGRATE_ADMIN_URL = module.secrets.ids["db-admin-url"] },
+  )
+  depends_on = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
 module "monitoring" {
