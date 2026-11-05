@@ -27,7 +27,9 @@ it('the simulator login reaches no business table, and the business roles cannot
   }
   const db = createDatabase(inject('databaseUrls'), { max: 1 });
   try {
-    await expect(db.withSystem('console', (tx) => tx.execute('select count(*) from simulator.state'))).rejects.toThrow(/permission denied/);
+    // Drizzle wraps the driver's error; the Postgres message is its cause.
+    const error = (await db.withSystem('console', (tx) => tx.execute('select count(*) from simulator.state')).catch((e: unknown) => e)) as Error & { cause?: unknown };
+    expect(String(error.cause ?? error)).toMatch(/permission denied/);
   } finally {
     await db.close();
   }

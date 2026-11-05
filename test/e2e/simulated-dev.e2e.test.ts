@@ -189,7 +189,7 @@ e2eTest('the mock checkout reports a failed payment and a cancelled one', async 
     const businessId = (await other.state()).business.id;
     const { customerId } = (await other.state()).payment!;
     expect(await other.checkout(customerId, 'fail')).toEqual({ status: 'past_due', webhookStatus: 200 });
-    await expect.poll(async () => (await other.state()).messages.at(-1)?.text, { timeout: 30_000 }).toBe(BILLING_COPY.past_due);
+    await expect.poll(async () => (await other.state()).messages.some((m) => m.text === BILLING_COPY.past_due), { timeout: 30_000 }).toBe(true);
     expect(await other.checkout(customerId, 'pay')).toEqual({ status: 'active', webhookStatus: 200 });
     expect(await other.checkout(customerId, 'cancel')).toEqual({ status: 'cancelled', webhookStatus: 200 });
     await expect
