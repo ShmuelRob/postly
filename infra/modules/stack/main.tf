@@ -105,6 +105,26 @@ variable "alert_email" {
   type    = string
   default = null
 }
+variable "console_iap_client_id" {
+  description = "The OAuth client id made by hand for IAP (docs/deployment.md, Console sign-in). Null creates no load balancer: the console stays unreachable."
+  type        = string
+  default     = null
+}
+variable "console_domain" {
+  description = "The console's domain, with a Google-managed certificate. Null uses <ip>.sslip.io (dev only)."
+  type        = string
+  default     = null
+  validation {
+    # sslip.io is a third party's DNS; it may only stand in for a domain on dev (docs/security.md).
+    condition     = var.console_domain != null || var.console_iap_client_id == null || var.env_name == "dev"
+    error_message = "Stage and prod need console_domain; the sslip.io fallback is for dev only."
+  }
+}
+variable "console_members" {
+  description = "Who passes IAP to the console: user:<email>, group:<email> or domain:<domain>. Empty lets nobody in."
+  type        = list(string)
+  default     = []
+}
 
 data "google_project" "this" {
   project_id = var.project_id
@@ -186,6 +206,8 @@ module "secrets" {
     # Only the migration job reads the admin password.
     { "db-admin-url" = [module.accounts.emails.migrate] },
     { for name in local.vendor_secrets : name => [module.accounts.emails.web, module.accounts.emails.worker] },
+    # Read only by Terraform, into the console backend's IAP settings; no service account reads it.
+    { "console-iap-client-secret" = [] },
   )
 }
 
@@ -320,8 +342,44 @@ module "sandbox" {
 }
 
 # The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
-# and web must stay public. Internal-only ingress and no allUsers invoker; reached with
-# an identity token from inside the VPC (docs/security.md); not from a laptop. It runs as the web account for now (D9).
+# and web must stay public. Ingress internal and load balancer, no allUsers invoker: team members come
+# in through the load balancer with IAP (console_ingress). It runs as the web account for now (D9).
+locals {
+  console_enabled = var.console_iap_client_id != null
+  console_env = merge(
+    local.app_env,
+    { CONSOLE_AUTH = "iap" },
+    local.console_enabled ? { CONSOLE_IAP_AUDIENCE = module.console_ingress[0].audience, CONSOLE_HOST = module.console_ingress[0].domain } : {},
+  )
+}
+
+module "console_ingress" {
+  count                  = local.console_enabled ? 1 : 0
+  depends_on             = [google_project_service.this]
+  source                 = "../console_ingress"
+  project_id             = var.project_id
+  project_number         = data.google_project.this.number
+  region                 = var.region
+  prefix                 = local.prefix
+  service_name           = "${local.prefix}-console"
+  domain                 = var.console_domain
+  members                = var.console_members
+  oauth_client_id        = var.console_iap_client_id
+  oauth_client_secret_id = module.secrets.ids["console-iap-client-secret"]
+}
+
+# Only IAP's service agent may invoke the console.
+resource "google_cloud_run_v2_service_iam_member" "console_iap_invoker" {
+  count    = local.console_enabled ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = module.console.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${module.console_ingress[0].iap_service_agent}"
+  # The module's name output is only a string; wait for the service itself.
+  depends_on = [module.console]
+}
+
 module "console" {
   source               = "../cloud_run"
   project_id           = var.project_id
@@ -332,9 +390,10 @@ module "console" {
   command              = "console"
   service_account      = module.accounts.emails.web
   subnetwork_id        = module.network.subnetwork_id
-  env                  = local.app_env
+  env                  = local.console_env
   secret_env           = local.app_secret_env
   public               = false
+  ingress              = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -381,6 +440,8 @@ output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
 output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
 output "console_service" { value = module.console.name }
+output "console_url" { value = local.console_enabled ? module.console_ingress[0].url : null }
+output "console_ip" { value = local.console_enabled ? module.console_ingress[0].ip : null }
 output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }

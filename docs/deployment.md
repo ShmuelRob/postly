@@ -13,7 +13,8 @@ GitHub Actions (on push; stage/prod approval-guarded) ── WIF ──> deploy 
 Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 instance, webhooks + /healthz
                              Cloud Run: worker (pg-boss)   internal, 1 or 2 instances, /healthz only
                              Cloud Run: sandbox (dev only)  own image, no public invoker (WP-51)
-                             Cloud Run: console            internal only, no public invoker (docs/security.md)
+                             Cloud Run: console            internal + load balancer ingress, no public invoker
+Team browser ── HTTPS ──> load balancer (managed cert) ── IAP sign-in ──> serverless NEG ──> console
                              Cloud Run job: migrate        runs before each rollout
                                      │ direct VPC egress (private ranges)
                                      v
@@ -29,7 +30,7 @@ Cloud Monitoring: uptime check, alerts, log-based metrics, web SLO, three dashbo
 
 - **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, `console`, or `migrate` (`src/main.ts`).
 - **web** serves the messaging webhook, the billing webhook when configured, and `/healthz`, and runs the `inbound-burst` job and the inbound sweep (technical-design.md, Onboarding flow). It is the only public service.
-- **console** serves only the internal console and `/healthz`, as its own service with internal-only ingress and no public invoker, because ingress is set per service ([security.md](security.md#console-exposure)). It is not a sign-in.
+- **console** serves only the internal console and `/healthz`, as its own service, because ingress is set per service. Its ingress is internal and load balancer, it has no public invoker, and team members reach it through an external HTTPS load balancer with IAP sign-in; the console also verifies IAP's signed header on every request ([security.md](security.md#console-exposure), WP-82).
 - **worker** runs pg-boss jobs. Its first job is the weekly tick: `WeeklyUpdates.tick` every hour on the hour (UTC cron `0 * * * *`), on a pg-boss queue with the `singleton` policy, so with several worker instances only one tick is active at a time and each hourly job is created once (`src/worker.ts`). A failed tick fails the job and pg-boss retries it (3 retries). The worker serves only `/healthz`, because Cloud Run services need a port to probe.
 - **migrate** is a Cloud Run job (`src/db/provision.ts`), run as the Cloud SQL admin user before each rollout. It applies the Drizzle migrations in `drizzle/`, which create one login per role of [database-schema.md](database-schema.md#least-privilege); sets each login's password from Secret Manager; creates the pg-boss login `app_jobs` and its schema `pgboss`, owned by that login; and lets pg-boss create its tables as `app_jobs`. Terraform never creates database roles. **Keep `log_statement` off.** The `ALTER ROLE ... PASSWORD` statements carry the login passwords in clear text, so Cloud SQL's `log_statement` flag must stay `none` (Terraform sets it explicitly in `infra/modules/cloud_sql`); never turn on `ddl`, `mod` or `all`, or pgAudit statement logging, on this instance. `log_min_duration_statement` stays at 1 s for slow queries; the password statements run in milliseconds.
 - **Providers.** Until the vendor adapters land (WP-41), only `dev` (and `local` and `test`) can run, on the simulators; `stage` and `prod` refuse to start until WP-41 ([Simulated mode](#simulated-mode-dev-wp-51)). WP-41 adds the vendor adapters, the Cloud Storage media adapter and the reading of the vendor secrets.
@@ -50,10 +51,14 @@ Cloud Monitoring: uptime check, alerts, log-based metrics, web SLO, three dashbo
 | `PUBLIC_BASE_URL`, `BUSINESS_NUMBER` | Terraform variables | The web service's HTTPS URL and Postly's WhatsApp number |
 | `MEDIA_BUCKET` | Terraform | The media bucket name, for WP-41 |
 | `PORT` | Cloud Run | 8080 |
+| `CONSOLE_AUTH` | Terraform (unset), docker-compose | `iap` or `dev-bypass`. Defaults to `dev-bypass` in `local` and `test` and to `iap` elsewhere; `dev-bypass` in `stage` or `prod` refuses to start |
+| `CONSOLE_IAP_AUDIENCE` | Terraform, from the console load balancer | `/projects/<project number>/global/backendServices/<id>`, the audience of IAP's signed header. Unset (no load balancer yet), the console refuses every console request |
+| `CONSOLE_HOST` | Terraform | The console's domain; any other `Host` is refused (D3) |
+| `CONSOLE_DEV_ACTOR` | docker-compose, tests | The actor recorded with `dev-bypass` (default `local-dev`) |
 
 ### Terraform
 
-`infra/modules/stack` is one environment; `infra/environments/dev`, `infra/environments/stage` and `infra/environments/prod` call it with their sizes, and each also calls `infra/modules/github_environment` for its GitHub environment. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`. `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow.
+`infra/modules/stack` is one environment; `infra/environments/dev`, `infra/environments/stage` and `infra/environments/prod` call it with their sizes, and each also calls `infra/modules/github_environment` for its GitHub environment. Submodules: `network` (VPC, subnet for direct VPC egress, private services access for Cloud SQL), `artifact_registry`, `service_accounts`, `secrets` (names and reader bindings), `cloud_sql`, `storage`, `cloud_run` (a service or a job), `monitoring`, `console_ingress` (the console's load balancer with IAP, created only once `console_iap_client_id` is set). `stack/github_oidc.tf` sets up Workload Identity Federation for the deploy workflow.
 
 Terraform does everything that needs no human decision:
 
@@ -98,6 +103,8 @@ Terraform does everything that needs no human decision:
 | `postly-<env>-worker` | the same as web | the admin URL |
 | `postly-<env>-migrate` | Cloud SQL client, log, metric and trace writer; the login password secrets and the admin URL; image pull | the bucket, vendor secrets |
 | `postly-<env>-deploy` | `run.developer`, act as the three runtime accounts, image push on this repository | a direct grant on any secret, the bucket, or the database |
+| IAP service agent (`service-<number>@gcp-sa-iap.iam.gserviceaccount.com`) | `run.invoker` on the console service only | any other service, secret or data |
+| `console_members` (team accounts) | `iap.httpsResourceAccessor` on the console's backend service only | anything in the project |
 
 Every secret and bucket binding is on the resource, not on the project. Only GitHub Actions jobs of the named repository running in the GitHub environment of the same name (`dev`, `stage` or `prod`) and on that environment's branch (`dev`, `stage` or `main`) can act as the deploy account.
 
@@ -172,9 +179,22 @@ terraform -chdir=infra/environments/dev plan -out=dev.tfplan
 terraform -chdir=infra/environments/dev apply dev.tfplan
 ```
 
-Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console access path**: the console runs as its own internal-only service ([security.md](security.md#console-exposure)), reached from a bastion VM in the VPC over `gcloud compute ssh --tunnel-through-iap`; the bastion is not in Terraform yet, so the deployed console is unreachable until it is, and the team sign-in (D1) comes after. WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** below; until it is done the deployed console is unreachable. WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 
 Gemini needs no vendor account or key: Terraform enables `aiplatform.googleapis.com` and grants `roles/aiplatform.user` to the web and worker service accounts, which call Vertex AI with their own credentials (Application Default Credentials).
+
+### Console sign-in: one-time steps
+
+The console is reached through an external HTTPS load balancer with IAP ([security.md](security.md#console-exposure)). Terraform builds it once `console_iap_client_id` is set; before that, nothing is created and nothing is billed. Per environment project:
+
+1. **OAuth consent screen (brand).** Console → Google Auth Platform → Branding: app name (for example "Postly console <env>"), support email, developer contact. Audience: **External** (a gmail.com account has no Workspace organization, so Internal is not offered). Leave the app in **Testing** and add each team member's Google account as a test user, or publish it; IAP asks only for the basic `openid` and `email` scopes, which need no Google verification. Google's API for creating brands (`google_iap_brand`) is deprecated and makes only Internal brands, so this step stays manual.
+2. **OAuth client.** Google Auth Platform → Clients → Create client → **Web application**. After it is created, add the authorized redirect URI `https://iap.googleapis.com/v1/oauth/clientIds/<CLIENT_ID>:handleRedirect` (with the new client's id).
+3. **Client secret.** `printf %s '<secret>' | gcloud secrets versions add postly-<env>-console-iap-client-secret --data-file=-` (Terraform created the empty secret on the first apply).
+4. **IAP service agent.** `gcloud beta services identity create --service=iap.googleapis.com --project=<project>`, so the account that Terraform grants `run.invoker` on the console exists.
+5. **Variables.** In `terraform.tfvars`: `console_iap_client_id = "<CLIENT_ID>"`, `console_members = ["user:<you>@gmail.com"]` (empty by default: nobody gets in), and `console_domain = "console.<your domain>"` or leave it unset to start on `<ip>.sslip.io` (dev only, see security.md). Then `terraform plan` and `terraform apply`.
+6. **DNS and certificate.** With a domain, add an `A` record for it pointing at the output `console_ip`. The managed certificate turns active within about an hour after the record resolves (`gcloud compute ssl-certificates list`); until then the browser shows a TLS error. Open `https://<domain>/console` and sign in with a listed account.
+
+Cost: about 18 USD a month per environment for the load balancer's forwarding rule; the certificate and IAP are free.
 
 ## Migrations and rollback
 

@@ -13,7 +13,8 @@ import { createConsole, registerConsoleRoutes } from './index.js';
 const db = createDatabase(inject('databaseUrls'), { max: 4 });
 const workflow = createWorkflow(db, { rejected: () => {} });
 const app = Fastify();
-registerConsoleRoutes(app, { console: createConsole(db, workflow) });
+// Signed in as `team@postly` through the local dev bypass (the actor of every action, D4).
+registerConsoleRoutes(app, { console: createConsole(db, workflow), auth: { mode: 'dev-bypass', actor: 'team@postly' }, log: () => {} });
 afterAll(async () => {
   await app.close();
   await db.close();
@@ -128,17 +129,27 @@ describe('pause', () => {
     await read((tx) => tx.update(schema.channelConnection).set({ status: 'verified' }).where(eq(schema.channelConnection.businessId, s.id)));
     expect((await api('POST', `/businesses/${s.id}/resume`)).status).toBe(200);
     expect((await row(schema.business, s.id)).status).toBe('active');
+    // The workflow audit trail (WP-46) names the signed-in team member (WP-82).
+    const events = await read((tx) => tx.select().from(schema.workflowEvent).where(eq(schema.workflowEvent.businessId, s.id)).orderBy(schema.workflowEvent.createdAt));
+    expect(events.filter((e) => e.machine === 'business').map((e) => [e.event, e.outcome, e.actor])).toEqual([
+      ['PAUSE', 'applied', 'team:team@postly'],
+      ['RESUME', 'rejected', 'team:team@postly'],
+      ['RESUME', 'applied', 'team:team@postly'],
+    ]);
   });
 
   it('pauses and resumes all publishing', async () => {
-    expect((await api('POST', '/system/pause', { by: 'team@postly', reason: 'incident' })).status).toBe(200);
+    expect((await api('POST', '/system/pause', { reason: 'incident' })).status).toBe(200);
     expect((await api('GET', '/system')).body).toMatchObject({ publishingPaused: true, pausedBy: 'team@postly', pausedReason: 'incident' });
-    expect((await api('POST', '/system/resume', { by: 'team@postly' })).status).toBe(200);
+    expect((await api('POST', '/system/resume', {})).status).toBe(200);
     expect((await api('GET', '/system')).body).toMatchObject({ publishingPaused: false });
   });
 
-  it('requires who paused', async () => {
-    expect((await api('POST', '/system/pause', {})).status).toBe(400);
+  it('records the signed-in team member, never a name from the body (D4)', async () => {
+    expect((await api('POST', '/system/pause', {})).status).toBe(200);
+    expect((await api('GET', '/system')).body).toMatchObject({ publishingPaused: true, pausedBy: 'team@postly', pausedReason: null });
+    expect((await api('POST', '/system/pause', { by: 'someone else', reason: 'incident' })).status).toBe(200);
+    expect((await api('GET', '/system')).body).toMatchObject({ pausedBy: 'team@postly', pausedReason: 'incident (by: someone else)' });
   });
 });
 

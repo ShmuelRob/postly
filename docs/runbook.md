@@ -21,9 +21,9 @@ gcloud run services describe postly-ENV-web --region REGION --project PROJECT
 gcloud run revisions list --service postly-ENV-web --region REGION --project PROJECT
 ```
 
-**The console and the pause flags.** The deployed console has internal-only ingress and no sign-in ([security.md](security.md#console-exposure)). Reach it through the bastion path described there: `gcloud compute ssh --tunnel-through-iap` to a VM in the VPC, then call the console's internal URL with `Authorization: Bearer $(gcloud auth print-identity-token)`. If no bastion exists yet, the deployed console is unreachable; ask the human.
+**The console and the pause flags.** The deployed console is reached only through its load balancer with IAP sign-in ([security.md](security.md#console-exposure)): open the Terraform output `console_url` and sign in with a Google account listed in `console_members`. Every action is recorded with that account's email. If the environment has no `console_iap_client_id` yet, the deployed console is unreachable; ask the human ([deployment.md](deployment.md#console-sign-in-one-time-steps)).
 
-- **Pause all publishing:** `POST /console/api/system/pause` with `{"by": "<your name>", "reason": "<why>"}`, or the pause control on the console home page. Resume with the same control. The flag is the `system_control` row (`publishing_paused`, `paused_reason`, `paused_at`, `paused_by`).
+- **Pause all publishing:** `POST /console/api/system/pause` with `{"reason": "<why>"}` (the signed-in email is recorded as `paused_by`), or the pause control on the console home page. Resume with the same control. The flag is the `system_control` row (`publishing_paused`, `paused_reason`, `paused_at`, `paused_by`).
 - **Pause one business:** `POST /console/api/businesses/<id>/pause`; resume with `/resume` (needs a verified channel connection).
 - A pause defers work; it changes no post or publication state, and the publishing job re-checks the flags right before calling the provider ([state-machines.md](state-machines.md)). Pausing is always safe and reversible; prefer it to guessing.
 

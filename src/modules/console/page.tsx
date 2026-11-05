@@ -13,6 +13,8 @@ export interface ConsolePageData {
   /** The monthly price and its history (T1); absent when not loaded. */
   price?: Awaited<ReturnType<ConsoleService['price']>>;
   conversations: Record<string, Array<typeof schema.message.$inferSelect>>;
+  /** The signed-in team member (IAP email, or the local dev actor); absent in older callers. */
+  actor?: string;
 }
 
 const api = (path: string) => `/console/api${path}`;
@@ -74,9 +76,9 @@ function SystemBar({ system }: { system: ConsolePageData['system'] }) {
         )}
       </div>
       {system.publishingPaused ? (
-        <Action path="/system/resume" label="Resume all publishing" tone="go" body={{ by: 'console' }} />
+        <Action path="/system/resume" label="Resume all publishing" tone="go" />
       ) : (
-        <Action path="/system/pause" label="Pause all publishing" tone="warn" body={{ by: 'console', reason: 'paused from the console' }} />
+        <Action path="/system/pause" label="Pause all publishing" tone="warn" body={{ reason: 'paused from the console' }} />
       )}
     </section>
   );
@@ -201,6 +203,7 @@ function ConsolePage({ data }: { data: ConsolePageData }) {
       </head>
       <body>
         <h1>Postly console</h1>
+        {data.actor && <p className="muted">Signed in as {data.actor}</p>}
         <SystemBar system={data.system} />
         {data.price && <Price price={data.price} />}
         <Items items={data.items} names={names} />
@@ -239,7 +242,7 @@ document.addEventListener('click', async (e) => {
 document.getElementById('price-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  const body = { amountAgorot: Math.round(Number(f.get('amount')) * 100), by: 'console', ...(f.get('reason') ? { reason: f.get('reason') } : {}) };
+  const body = { amountAgorot: Math.round(Number(f.get('amount')) * 100), ...(f.get('reason') ? { reason: f.get('reason') } : {}) };
   const res = await fetch('/console/api/price', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (res.ok) return location.reload();
   document.getElementById('status').textContent = 'Refused: ' + res.status;
