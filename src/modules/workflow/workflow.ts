@@ -55,7 +55,8 @@ export interface WorkflowLogger {
 }
 
 export const consoleLogger: WorkflowLogger = {
-  rejected: (entry) => log.warn('workflow event rejected', { ...entry }),
+  // `from` would be redacted as a sender field (docs/observability.md), so the state goes as `fromState`.
+  rejected: ({ from, ...entry }) => log.warn('workflow event rejected', { ...entry, fromState: from }),
 };
 
 export interface Workflow {
