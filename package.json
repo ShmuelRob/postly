@@ -10,11 +10,12 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p playground/web",
     "build": "tsc -p tsconfig.build.json",
     "lint:links": "node scripts/check-links.ts",
+    "lint:conflicts": "node scripts/check-conflict-markers.ts",
     "lint:boundaries": "depcruise src playground --config .dependency-cruiser.mjs",
     "test": "vitest run",
     "test:e2e": "vitest run --project e2e --project e2e-browser",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run lint:links && npm run lint:boundaries && npm run test",
+    "check": "npm run typecheck && npm run lint:conflicts && npm run lint:links && npm run lint:boundaries && npm run test",
     "gallery": "vitest run --config vitest.gallery.config.ts",
     "db:generate": "drizzle-kit generate",
     "playground": "vite --config playground/vite.config.ts"

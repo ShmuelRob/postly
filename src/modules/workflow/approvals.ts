@@ -109,6 +109,9 @@ export function createApprovals(deps: ApprovalsDeps): Approvals {
                 .where(and(eq(schema.postVersion.id, post.currentVersionId), eq(schema.postVersion.postId, payload.postId)))
             : [];
           if (!current || current.hash !== payload.versionHash) return STALE;
+          // The button is bound to the exact version row it was sent for (T15), not only its hash,
+          // so a later version with the same hash never revives an old button.
+          if (payload.versionId !== undefined && current.id !== payload.versionId) return STALE;
           const [row] = await tx
             .insert(a)
             .values({ businessId, postId: payload.postId, postVersionId: current.id, approvedVersionHash: current.hash, approverPhone: phone, messageId, approvedAt: now() })
