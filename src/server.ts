@@ -13,6 +13,8 @@ export interface ServerOptions {
    * leave it off.
    */
   sweepEveryMs?: number;
+  /** Per-process webhook rate limits (docs/security.md, D12); defaults in the routes. */
+  limits?: { messagingPerMinute?: number; paymentPerMinute?: number };
 }
 
 /**
@@ -22,7 +24,7 @@ export interface ServerOptions {
 export function buildServer(options: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   app.get('/healthz', async () => ({ ok: true }));
-  registerMessagingRoutes(app, options);
+  registerMessagingRoutes(app, { ...options, ...(options.limits?.messagingPerMinute ? { perMinute: options.limits.messagingPerMinute } : {}) });
   const sweepEveryMs = options.sweepEveryMs;
   if (sweepEveryMs !== undefined) {
     let stop = () => {};
@@ -31,7 +33,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     });
     app.addHook('onClose', async () => stop());
   }
-  if (options.billing) registerBillingRoutes(app, { billing: options.billing, publicBaseUrl: options.publicBaseUrl });
+  if (options.billing) registerBillingRoutes(app, { billing: options.billing, publicBaseUrl: options.publicBaseUrl, ...(options.limits?.paymentPerMinute ? { perMinute: options.limits.paymentPerMinute } : {}) });
   app.addHook('onClose', () => options.messaging.close());
   return app;
 }

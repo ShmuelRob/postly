@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { FixedWindowLimiter, rateLimitHook } from '../../shared/rate-limit.js';
 import { ConsoleActionError, type ConsoleService } from './console.js';
 import { renderConsolePage } from './page.js';
 
@@ -21,6 +22,8 @@ export interface ConsoleRouteOptions {
    * loopback names; deployed, unset leaves the Host check to the internal-only ingress.
    */
   allowedHosts?: readonly string[];
+  /** Console requests admitted per minute in this process before 429 (docs/security.md, D12). */
+  perMinute?: number;
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -50,8 +53,10 @@ const PriceBody = z.object({
 /** GET /console (React page) and the JSON API under /console/api. */
 export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRouteOptions): void {
   const c = options.console;
+  const limiter = new FixedWindowLimiter({ limit: options.perMinute ?? 300 });
   app.register(
     async (scope) => {
+      scope.addHook('onRequest', rateLimitHook(limiter));
       const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
         if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
