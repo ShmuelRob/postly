@@ -41,11 +41,21 @@ const ok = (data: Record<string, unknown> = {}): AgentToolResult => ({ status: '
 const tools = (s: AgentStep) => s.calls.map((c) => c.tool);
 
 /** Plays a whole turn: each step's calls succeed with the given result data, until the turn ends. */
-function playTurn(context: AgentContext, data: (c: AgentToolCall) => Record<string, unknown> = () => ({})): AgentToolCall[] {
+const defaultData = (c: AgentToolCall): Record<string, unknown> => (c.tool === 'create_draft' || c.tool === 'apply_change' ? { postId: c.postId, versionId: 'v1' } : {});
+
+/**
+ * Plays a whole turn: each step's calls succeed with the given result data, until the turn ends.
+ * `rebuild` stands in for the runtime rebuilding the context before each step (WP-90).
+ */
+function playTurn(
+  context: AgentContext,
+  data: (c: AgentToolCall) => Record<string, unknown> = defaultData,
+  rebuild: (context: AgentContext, done: AgentToolCall[]) => AgentContext = (c) => c,
+): AgentToolCall[] {
   const played: AgentToolCall[] = [];
   let results: AgentContext['toolResults'] = [];
   for (let i = 0; i < 12; i++) {
-    const s = AgentStep.parse(playgroundAgent({ ...context, toolResults: results }));
+    const s = AgentStep.parse(playgroundAgent({ ...rebuild(context, played), toolResults: results }));
     played.push(...s.calls);
     results = [...results, ...s.calls.map((c) => ({ tool: c.tool, result: ok(data(c)) }))];
     const last = s.calls.at(-1)!;
@@ -92,6 +102,21 @@ describe('playgroundAgent: onboarding', () => {
     expect(tools(first)).toEqual(['set_profile_field', 'set_profile_field', 'set_profile_field', 'set_profile_field']);
     const played = playTurn(context);
     expect(played.map((c) => c.tool)).toEqual([...tools(first), 'ask_owner']);
+    expect(played.at(-1)).toMatchObject({ topic: 'profile:differentiator' });
+  });
+
+  it('works the same when the runtime rebuilds the context between steps', () => {
+    const answer = 'רחוב הרצל 5 בחיפה, פתוח 9:00-19:00, יש משלוחים';
+    const context = ctx({
+      step: 'profile_questions',
+      missingFields: ['location', 'differentiator', 'channels', 'style'],
+      messages: [owner(answer)],
+      openQuestion: { key: 'profile:location', askedFields: ['location'], attempts: 1, photoAssetIds: [] },
+    });
+    const rebuilt = (c: AgentContext, done: AgentToolCall[]) =>
+      done.some((d) => d.tool === 'set_profile_field') ? { ...c, missingFields: c.missingFields.filter((f) => f !== 'location') } : c;
+    const played = playTurn(context, defaultData, rebuilt);
+    expect(played.map((c) => c.tool)).toEqual(['set_profile_field', 'set_profile_field', 'set_profile_field', 'set_profile_field', 'ask_owner']);
     expect(played.at(-1)).toMatchObject({ topic: 'profile:differentiator' });
   });
 
@@ -204,6 +229,21 @@ describe('playgroundAgent: drafts', () => {
       captions: { instagram: { text: 'זרי סתיו אצלנו\nתוסיפו שאנחנו פתוחים עד 20:00', hashtags: [] } },
       rule: { text: 'תוסיפו שאנחנו פתוחים עד 20:00', scope: 'caption' },
     });
+  });
+
+  it('does not draft a post twice when the rebuilt context shows it drafted', () => {
+    const posts = [
+      { id: POST_1, state: 'planned' as const, format: 'single' as const, plan: plan('זרי סתיו', [PHOTO]) },
+      { id: POST_2, state: 'planned' as const, format: 'single' as const, plan: plan('טיפ להשקיה', [PHOTO_2]) },
+    ];
+    const rebuilt = (c: AgentContext, done: AgentToolCall[]) => ({
+      ...c,
+      posts: c.posts.map((p) =>
+        done.some((d) => d.tool === 'create_draft' && d.postId === p.id) ? { ...p, state: 'awaiting_approval' as const, captions: { instagram: { text: p.plan.brief, hashtags: [] } } } : p,
+      ),
+    });
+    const played = playTurn(drafts({ posts }), defaultData, rebuilt);
+    expect(played.map((c) => (c.tool === 'create_draft' ? c.postId : c.tool))).toEqual([POST_1, POST_2, 'end_turn']);
   });
 
   it('ends the turn when there is nothing to do', () => {

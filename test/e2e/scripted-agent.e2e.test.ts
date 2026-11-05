@@ -57,7 +57,7 @@ function stubAgentApp(onTurnEnd: (turn: AgentTurnReport) => void): AppFactory {
       async deliverInbound(message) {
         if (message.content.kind !== 'text') return;
         owner.push(message.content.text);
-        const report: AgentTurnReport = { agent: 'weekly', turnId: `turn-${++turns}`, stopReason: 'max_steps', steps: [] };
+        const report: AgentTurnReport = { agent: 'weekly', businessId: 'stub-business', turnId: `turn-${++turns}`, stopReason: 'max_steps', steps: [] };
         const toolResults: AgentContext['toolResults'] = [];
         for (let i = 0; i < 6; i++) {
           const input = AgentContext.parse({
@@ -91,12 +91,16 @@ function stubAgentApp(onTurnEnd: (turn: AgentTurnReport) => void): AppFactory {
           const done = { calls: [] as AgentToolCall[], results: [] as AgentTurnReport['steps'][number]['results'] };
           report.steps.push(done);
           let stop: AgentTurnReport['stopReason'] | undefined;
+          done.calls.push(...agentStep.calls);
           for (const c of agentStep.calls) {
             const result = await run(c);
-            done.calls.push(c);
-            done.results.push({ tool: c.tool, result });
+            done.results.push(result);
             toolResults.push({ tool: c.tool, result });
-            if (result.status === 'refused') break;
+            if (result.status === 'refused') {
+              // The later calls of the step never run.
+              done.results.push(...agentStep.calls.slice(done.results.length).map(() => null));
+              break;
+            }
             if (c.tool === 'end_turn') stop = 'end_turn';
             if (c.tool === 'ask_owner' && c.expects === 'answer') stop = 'waiting_for_owner';
           }

@@ -188,8 +188,21 @@ function renderAgentSteps(steps: AgentStepEntry[], turns: AgentTurnEntry[]): str
   <td>${what}</td><td>${results(s.results)}</td></tr>`;
     })
     .join('');
+  // Every step of a reported turn, including the last one's results, which no later step carries.
+  const turnSteps = (t: AgentTurnEntry) =>
+    t.steps
+      .map((st, i) =>
+        `${i + 1}. ${st.calls
+          .map((c, j) => {
+            const r = st.results[j];
+            const verdict = r === null || r === undefined ? 'not run' : r.status === 'ok' ? 'ok' : `refused: ${r.reason}`;
+            return `${esc(c.tool)} (${esc(verdict)})`;
+          })
+          .join(', ')}`,
+      )
+      .join('<br>');
   const turnRows = turns
-    .map((t) => `<tr><td>${esc(t.at)}</td><td>${esc(t.agent)}</td><td>${esc(t.turnId)}</td><td>${esc(t.stopReason)}</td><td>${t.steps.length}</td></tr>`)
+    .map((t) => `<tr><td>${esc(t.at)}</td><td>${esc(t.agent)}<br><span class="meta">${esc(t.turnId)}</span></td><td>${esc(t.stopReason)}</td><td>${turnSteps(t)}</td></tr>`)
     .join('');
   return `<section><h3>Agent steps</h3>${
     stepRows
@@ -197,7 +210,7 @@ function renderAgentSteps(steps: AgentStepEntry[], turns: AgentTurnEntry[]): str
       : ''
   }${
     turnRows
-      ? `<table><thead><tr><th>At</th><th>Agent</th><th>Turn</th><th>Stop reason</th><th>Steps</th></tr></thead><tbody>${turnRows}</tbody></table>`
+      ? `<table><thead><tr><th>At</th><th>Agent and turn</th><th>Stop reason</th><th>Steps</th></tr></thead><tbody>${turnRows}</tbody></table>`
       : ''
   }</section>`;
 }

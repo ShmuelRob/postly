@@ -63,12 +63,17 @@ export interface AgentStepRecord {
   results: ToolResultEntry[];
 }
 
-/** A turn as the runtime reports it (WP-90's optional `onTurnEnd` hook). */
+/**
+ * A turn as the runtime reports it: the argument of WP-90's optional `AgentDeps.onTurnEnd`, called
+ * once per turn that ran, after its `agent_turn` row is final. `results[i]` answers `calls[i]`;
+ * `null` means the call never ran (a refusal earlier in the step, or low confidence).
+ */
 export interface AgentTurnReport {
   agent: AgentName;
+  businessId: string;
   turnId: string;
   stopReason: AgentTurnStopReason;
-  steps: { calls: AgentToolCall[]; results: ToolResultEntry[] }[];
+  steps: { calls: AgentToolCall[]; results: (AgentToolResult | null)[] }[];
 }
 
 // Builder

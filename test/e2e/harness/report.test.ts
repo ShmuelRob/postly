@@ -156,7 +156,16 @@ describe('renderReport', () => {
         },
         { at, agent: 'weekly', turn: 1, step: 2, output: { calls: [] }, results: [] },
       ],
-      agentTurns: [{ at, agent: 'weekly', turnId: 'turn-1', stopReason: 'waiting_for_owner', steps: [] }],
+      agentTurns: [
+        {
+          at,
+          agent: 'weekly',
+          businessId: 'b1',
+          turnId: 'turn-1',
+          stopReason: 'waiting_for_owner',
+          steps: [{ calls: [{ tool: 'end_turn' }, { tool: 'ask_owner', text: 'עד מתי?', topic: 'info', expects: 'answer' }], results: [{ status: 'ok', data: {} }, null] }],
+        },
+      ],
     };
     const html = renderReport(run([test({ record: r })]));
     expect(html).toContain('<h3>Agent steps</h3>');
@@ -165,6 +174,7 @@ describe('renderReport', () => {
     expect(html).toContain('refused: quote_not_found');
     expect(html).toContain('invalid output');
     expect(html).toContain('waiting_for_owner');
+    expect(html).toContain('end_turn (ok), ask_owner (not run)');
   });
 
   it('handles a test that recorded nothing', () => {

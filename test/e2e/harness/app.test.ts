@@ -122,7 +122,7 @@ describe('startE2eRun: the agent and the model provider', () => {
     const app: AppFactory = (p) => ((wrapped = p.model), { async deliverInbound() {} });
     const run = await startE2eRun(record, { providers: providers({ model }), app, ownerPhone: OWNER, businessPhone: BUSINESS });
     await wrapped!.generateStructured({ task: 'agent_weekly', model: 'm', prompt: 'p', input: weeklyContext, outputJsonSchema: taskOutputJsonSchema('agent_weekly'), temperature: 0 });
-    run.recordAgentTurn({ agent: 'weekly', turnId: 't1', stopReason: 'waiting_for_owner', steps: [{ calls: [call.askOwner('עד מתי המבצע?')], results: [{ tool: 'ask_owner', result: { status: 'ok', data: {} } }] }] });
+    run.recordAgentTurn({ agent: 'weekly', businessId: 'b1', turnId: 't1', stopReason: 'waiting_for_owner', steps: [{ calls: [call.askOwner('עד מתי המבצע?')], results: [{ status: 'ok', data: {} }] }] });
 
     expect(record.agentSteps).toEqual([expect.objectContaining({ agent: 'weekly', turn: 1, step: 1, calls: [expect.objectContaining({ tool: 'ask_owner' })] })]);
     expect(record.agentTurns).toEqual([expect.objectContaining({ agent: 'weekly', turnId: 't1', stopReason: 'waiting_for_owner' })]);
