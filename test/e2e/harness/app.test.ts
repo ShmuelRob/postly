@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MessagingProvider, PublishingProvider } from '../../../src/contracts/providers/index.js';
-import { startE2eRun, type AppFactory, type Providers } from './app.js';
+import { ModelSimulator, taskOutputJsonSchema } from '../../../src/simulators/model.js';
+import { REAL_MODEL_PROVIDER_NAMES, call, step } from '../../../src/simulators/scripted-agent.js';
+import { assertAgentScripts, startE2eRun, type AppFactory, type Providers } from './app.js';
 import { emptyRecord } from './record.js';
 
 const OWNER = '+972501234567';
@@ -101,3 +103,57 @@ describe('startE2eRun', () => {
     expect(run.networkPosts('facebook')[0]?.media[0]?.src).toBeUndefined();
   });
 });
+
+describe('startE2eRun: the agent and the model provider', () => {
+  const noApp: AppFactory = () => ({ async deliverInbound() {} });
+
+  it('refuses a model provider named like a real adapter, so no e2e run can reach a paid model', async () => {
+    for (const name of REAL_MODEL_PROVIDER_NAMES) {
+      const model = { name, generateStructured: async () => ({ output: {}, inputTokens: 0, outputTokens: 0, costUsd: 0 }), analyzeImage: async () => ({ output: {}, inputTokens: 0, outputTokens: 0, costUsd: 0 }), transcribeAudio: async () => ({ text: '', language: 'he' as const, costUsd: 0 }) };
+      await expect(startE2eRun(emptyRecord(), { providers: providers({ model }), app: noApp, ownerPhone: OWNER, businessPhone: BUSINESS })).rejects.toThrow(/real model provider/);
+    }
+  });
+
+  it("records the scripted agent's steps live, and the turns the runtime reports", async () => {
+    const record = emptyRecord();
+    const model = new ModelSimulator();
+    model.scriptAgent('weekly', [step(call.askOwner('עד מתי המבצע?'))]);
+    let wrapped: Providers['model'] | undefined;
+    const app: AppFactory = (p) => ((wrapped = p.model), { async deliverInbound() {} });
+    const run = await startE2eRun(record, { providers: providers({ model }), app, ownerPhone: OWNER, businessPhone: BUSINESS });
+    await wrapped!.generateStructured({ task: 'agent_weekly', model: 'm', prompt: 'p', input: weeklyContext, outputJsonSchema: taskOutputJsonSchema('agent_weekly'), temperature: 0 });
+    run.recordAgentTurn({ agent: 'weekly', businessId: 'b1', turnId: 't1', stopReason: 'waiting_for_owner', steps: [{ calls: [call.askOwner('עד מתי המבצע?')], results: [{ status: 'ok', data: {} }] }] });
+
+    expect(record.agentSteps).toEqual([expect.objectContaining({ agent: 'weekly', turn: 1, step: 1, calls: [expect.objectContaining({ tool: 'ask_owner' })] })]);
+    expect(record.agentTurns).toEqual([expect.objectContaining({ agent: 'weekly', turnId: 't1', stopReason: 'waiting_for_owner' })]);
+    expect(run.agentScriptProblems()).toEqual([]);
+  });
+
+  it('reports scripted steps the test never reached, so the fixture can fail the test', async () => {
+    const model = new ModelSimulator();
+    model.scriptAgent('drafts', [step(call.endTurn())]);
+    const run = await startE2eRun(emptyRecord(), { providers: providers({ model }), app: noApp, ownerPhone: OWNER, businessPhone: BUSINESS });
+    expect(run.agentScriptProblems()).toEqual([expect.stringMatching(/drafts.*unused/)]);
+    expect(() => assertAgentScripts([run])).toThrow(/scripted agent/);
+  });
+});
+
+const weeklyContext = {
+  agent: 'weekly',
+  persona: { name: 'פוסטלי', gender: 'feminine' },
+  languages: ['he'],
+  tone: { register: 'warm', address: 'plural', emoji: true },
+  profile: {},
+  missingFields: [],
+  messages: [],
+  step: 'processing_update',
+  openQuestion: null,
+  week: null,
+  posts: [],
+  rules: [],
+  history: [],
+  tools: ['ask_owner'],
+  doneRule: 'done',
+  budget: { stepsLeft: 12, costLeftUsd: 0.06 },
+  toolResults: [],
+};

@@ -1,9 +1,9 @@
 import { test } from 'vitest';
-import { startE2eRun, type E2eRun, type StartOptions } from './app.js';
+import { assertAgentScripts, startE2eRun, type E2eRun, type StartOptions } from './app.js';
 import { emptyRecord } from './record.js';
 
 export type { AppFactory, AppUnderTest, E2eRun, MediaReader, Owner, Providers, StartOptions } from './app.js';
-export type { ConsoleEntry, E2eRecord, ModelCallEntry, PublishingEntry, RenderedImage, ScreenshotEntry, TranscriptEntry } from './record.js';
+export type { AgentStepEntry, AgentTurnEntry, ConsoleEntry, E2eRecord, ModelCallEntry, PublishingEntry, RenderedImage, ScreenshotEntry, TranscriptEntry } from './record.js';
 export { placeholderPng } from './png.js';
 
 export interface E2eHarness {
@@ -28,5 +28,7 @@ export const e2eTest = test.extend<{ e2e: E2eHarness }>({
       },
     });
     for (const run of runs) await run.close();
+    // An off-script agent call fails the test even if the app's retry or console fallback hid it.
+    assertAgentScripts(runs);
   },
 });

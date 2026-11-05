@@ -15,7 +15,9 @@ import {
   TranscribeAudioRequest,
   type TranscriptionResult,
 } from '../contracts/providers/model.js';
+import type { AgentName } from '../contracts/agent.js';
 import { defaultOutput } from './model-fixtures.js';
+import { type AgentStepRecord, ScriptedAgent, type ScriptTurn, agentOfTask } from './scripted-agent.js';
 
 /**
  * The JSON schema of a task's output. Requests name their task, and the
@@ -61,6 +63,7 @@ export class ModelSimulator implements ModelProvider {
   private readonly overrides = new Map<ModelTaskName, Fixture<ModelTaskName>>();
   private readonly transcriptQueue: Transcript[] = [];
   private readonly transcriptsByUrl = new Map<string, Transcript>();
+  private readonly agent = new ScriptedAgent();
 
   constructor(options: ModelSimulatorOptions = {}) {
     this.useDefaults = options.defaults ?? true;
@@ -100,6 +103,26 @@ export class ModelSimulator implements ModelProvider {
       if (typeof fixture !== 'function') modelTasks[task].output.parse(fixture);
       this.queue(task).push({ kind: 'valid', fixture: fixture as Fixture<ModelTaskName> });
     }
+  }
+
+  /**
+   * Scripts an agent turn by turn (agent.md, Testing without paying for a model): each call of its
+   * agent_* task returns the next entry of the current turn, and a call with empty `toolResults`
+   * starts the next turn. Once any agent is scripted, a call to an agent with no script, a script
+   * that runs out, or a turn left with unused steps is a violation (`agentScriptProblems()`).
+   */
+  scriptAgent(agent: AgentName, ...turns: ScriptTurn[]): void {
+    this.agent.script(agent, turns);
+  }
+
+  /** Every scripted agent step served, with the tool results the runtime passed back after it. */
+  get agentSteps(): AgentStepRecord[] {
+    return this.agent.steps;
+  }
+
+  /** Off-script calls and scripted steps never played; the e2e harness fails a test on any. */
+  agentScriptProblems(): string[] {
+    return this.agent.problems();
   }
 
   /** Queues raw output returned as is, for validation and retry tests. */
@@ -143,8 +166,10 @@ export class ModelSimulator implements ModelProvider {
     const next = this.queue(task).shift();
     if (next?.kind === 'error') throw next.error;
     let output: unknown;
+    const agent = agentOfTask(task);
     if (next?.kind === 'raw') output = next.output;
     else if (next?.kind === 'valid') output = this.resolve(task, next.fixture, input);
+    else if (agent && (this.agent.has(agent) || (this.agent.active && !this.overrides.has(task)))) output = this.agent.respond(agent, input);
     else if (this.useDefaults || this.overrides.has(task)) output = this.defaultOutput(task, input);
     else throw new Error(`No scripted output for model task ${task}`);
 
