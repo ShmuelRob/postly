@@ -7,7 +7,7 @@ Nothing here has been applied. Agents write and validate the deployment code onl
 ## Architecture
 
 ```
-GitHub Actions (manual, approval-guarded) ── WIF ──> deploy service account
+GitHub Actions (on push; stage/prod approval-guarded) ── WIF ──> deploy service account
         │ push image                          │ update job and services
         v                                     v
 Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 instance, webhooks + /healthz
@@ -116,9 +116,9 @@ The inbound burst buffer lives in the web process's memory. The sweep (`App.star
 All of this costs money or creates cloud resources, so agents never do it. Per environment (one GCP project each, or start with dev):
 
 1. **GCP project and billing.** Create the project and link billing. Each environment needs its own project: dev's 7-day `_Default` log retention applies to the whole project.
-2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Environments and Variables write on the repository).
+2. **Sign in.** `gcloud auth application-default login`, and `export GITHUB_TOKEN=<token>` (a fine-grained token with Administration, Contents, Environments and Variables write on the repository; Contents is needed to create the `dev` and `stage` branches).
 3. **State bucket.** In `infra/bootstrap`: `terraform init`, `terraform apply -var project_id=<project>`.
-4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services start from the tag `bootstrap`, which does not exist yet, so the first apply reports them unhealthy until the first deploy; that is expected.
+4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services and the migrate job start from the image tag `bootstrap`, which does not exist yet, and Cloud Run cannot create a service from a missing image or pass the startup probe before the migrate job has created the logins, so a single first apply fails on the services. Apply in three passes instead: the image repository, then push an image tagged `bootstrap`; then the database, secrets and migrate job, and run the job; then everything else. [deploy-dev-guide.md](deploy-dev-guide.md) has the exact commands.
 5. **First deploy.** The dev apply creates the `dev` branch and the stage apply the `stage` branch; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
 
 **Dev first.** Applying only bootstrap and `infra/environments/dev` works on its own: the dev root creates the `dev` branch from `main`, its protection, the `dev` GitHub environment with its variables and `POSTLY_DEPLOY_DEV`, and nothing of stage or prod. The `main` branch protection, the `stage` branch and their environments are created only by the prod and stage roots, so until those run, pushes to `stage` or `main` skip the deploy job cleanly (no `POSTLY_DEPLOY_STAGE` or `POSTLY_DEPLOY_PROD`). The roots share no GitHub resource (each manages its own branch, environment and flag, and only reads the repository), so a later stage or prod apply does not fight dev. Each root's state sits under its own prefix (`postly/dev`, `postly/stage`, `postly/prod`) in `<project>-tfstate`; with one project per environment, run bootstrap once in each project.
@@ -128,13 +128,14 @@ export GITHUB_TOKEN=<token>
 gcloud auth application-default login
 terraform -chdir=infra/bootstrap init
 terraform -chdir=infra/bootstrap apply -var project_id=<dev-project>
+# first apply: three passes, see deploy-dev-guide.md
 cp infra/environments/dev/terraform.tfvars.example infra/environments/dev/terraform.tfvars   # fill in the three values
 terraform -chdir=infra/environments/dev init -backend-config="bucket=<dev-project>-tfstate"
 terraform -chdir=infra/environments/dev plan -out=dev.tfplan
 terraform -chdir=infra/environments/dev apply dev.tfplan
 ```
 
-Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console sign-in** (the console answers only loopback requests, review queue item 16, so it is unreachable on Cloud Run until the team's sign-in is decided, for example IAP). WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
+Later: **vendor accounts** (WP-41: WhatsApp, publishing, payments; test accounts and test keys on dev and stage) and their secret values, and the **console access path**: the console runs as its own internal-only service ([security.md](security.md#console-exposure)), reached from a bastion VM in the VPC over `gcloud compute ssh --tunnel-through-iap`; the bastion is not in Terraform yet, so the deployed console is unreachable until it is, and the team sign-in (D1) comes after. WP-44 is done when stage runs the end-to-end suite with test accounts, which needs WP-41.
 
 Gemini needs no vendor account or key: Terraform enables `aiplatform.googleapis.com` and grants `roles/aiplatform.user` to the web and worker service accounts, which call Vertex AI with their own credentials (Application Default Credentials).
 
