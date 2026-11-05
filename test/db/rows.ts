@@ -78,6 +78,7 @@ export function rowsFor(b: string): [PgTable, Record<string, unknown>][] {
     [schema.subscription, { id: sub, businessId: b, plan: 'basic', provider: 'placeholder' }],
     [schema.modelRun, { id: run, businessId: b, task: 'fact_extraction', promptVersion: 1, provider: 'sim', model: 'm', input: {}, valid: true }],
     [schema.consoleItem, { id: item, businessId: b, kind: 'handoff' }],
+    [schema.workflowEvent, { id: k(), businessId: b, machine: 'conversation', rowId: b, event: 'UPDATE_RECEIVED', source: 'inbound', role: 'workflow', actor: 'owner', outcome: 'applied' }],
   ];
 }
 

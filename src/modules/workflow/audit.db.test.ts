@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, inject, it } from 'vitest';
+import { expectDbError } from '../../../test/db/rows.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { createWorkflow } from './index.js';
@@ -97,7 +98,7 @@ describe('workflow audit trail', () => {
         outcome: 'applied',
       }),
     );
-    await expect(insert).rejects.toThrow(/row-level security/);
+    await expectDbError(insert, /row-level security/);
   });
 
   it('keeps the audit rows after the business is deleted', async () => {
