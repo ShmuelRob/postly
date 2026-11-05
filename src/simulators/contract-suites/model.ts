@@ -64,6 +64,7 @@ export function describeModelProviderContract(
     it('transcribes audio', async () => {
       const result = await ctx.provider.transcribeAudio({
         model: ctx.model,
+        prompt: 'Transcribe the voice note word for word.',
         audioUrl: ctx.audioUrl,
         languageHint: ctx.audioLanguage,
       });

@@ -127,6 +127,17 @@ describe('VertexModelProvider', () => {
     });
   });
 
+  it('transcribes with the prompt it is given, not one of its own', async () => {
+    const fake = fakeTransport();
+    await provider(fake.transport).transcribeAudio({
+      model: MODEL,
+      prompt: 'תמלל מילה במילה.',
+      audioUrl: 'https://storage.example.test/voice.ogg',
+      languageHint: 'he',
+    });
+    expect(fake.calls[0]!.body.systemInstruction.parts).toEqual([{ text: 'תמלל מילה במילה.' }]);
+  });
+
   it('throws when the model returns no text', async () => {
     const transport: VertexTransport = async () => ({ candidates: [{ finishReason: 'SAFETY' }] });
     await expect(

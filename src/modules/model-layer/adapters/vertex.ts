@@ -105,8 +105,9 @@ export class VertexModelProvider implements ModelProvider {
       properties: { text: { type: 'string' }, language: { type: 'string', enum: Language.options } },
       required: ['text', 'language'],
     };
-    const prompt = `Transcribe the voice note word for word in the language it was spoken (most likely "${r.languageHint}"). Do not correct, summarise or add anything.`;
-    const result = await this.call(r.model, prompt, [audio], schema, 0);
+    // The language hint is part of the input, so the versioned prompt stays the only instruction.
+    const input = { text: `languageHint: ${r.languageHint}` };
+    const result = await this.call(r.model, r.prompt, [input, audio], schema, 0);
     const output = result.output as { text: string; language: string };
     return { text: output.text, language: Language.parse(output.language), costUsd: result.costUsd };
   }
