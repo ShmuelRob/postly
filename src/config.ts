@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
+import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
 
 export { PROCESS_LOGINS };
@@ -30,6 +30,8 @@ const Env = z.object({
   PUBLIC_BASE_URL: z.url(),
   BUSINESS_NUMBER: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(8080),
+  /** Connections per database login in this process (docs/security.md, D7); Terraform sets it from its budget. */
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(10).default(3),
   /** Console sign-in (docs/security.md, "Console exposure"): IAP when deployed, the dev bypass locally. */
   CONSOLE_AUTH: z.enum(['iap', 'dev-bypass'], { error: 'CONSOLE_AUTH must be iap or dev-bypass' }).optional(),
   /** From Terraform: the console backend service the IAP assertion must name. */
@@ -49,6 +51,9 @@ export interface Config {
   publicBaseUrl: string;
   businessNumber: string;
   port: number;
+  dbPoolMax: number;
+  /** The most connections this process opens (poolConnections), logged at startup. */
+  maxConnections: number;
   console: ConsoleConfig;
   /** Simulated mode (WP-51): where the simulators keep their state. */
   simulators: { store: 'memory' } | { store: 'postgres'; storeUrl: string };
@@ -113,6 +118,8 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
     publicBaseUrl: parsed.data.PUBLIC_BASE_URL,
     businessNumber: parsed.data.BUSINESS_NUMBER,
     port: parsed.data.PORT,
+    dbPoolMax: parsed.data.DB_POOL_MAX,
+    maxConnections: poolConnections(logins, parsed.data.DB_POOL_MAX),
     console: consoleConfig,
     simulators: store === 'postgres' ? { store, storeUrl: loginUrl(parsed.data.DATABASE_URL, SIMULATOR_LOGIN, env[passwordVar(SIMULATOR_LOGIN)]!) } : { store },
     models,

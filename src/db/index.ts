@@ -4,7 +4,8 @@ import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema.js';
 
-export { createMemoryQueue, createPgBossQueue, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
+import { JOBS_POOL } from './jobs.js';
+export { createMemoryQueue, createPgBossQueue, JOBS_POOL, pgBossConstructorOptions, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
 export { passwordStatements, provisionDatabase, quoteLiteral, type ProvisionOptions } from './provision.js';
 export { createPostgresSimulatorStore, provisionSimulatorStore, SIMULATOR_LOGIN, SIMULATOR_SCHEMA } from './simulator-store.js';
 
@@ -59,6 +60,15 @@ export const PROCESS_LOGINS: Record<'web' | 'worker' | 'console', readonly strin
   worker: ALL_LOGINS,
   console: ['app_sys_console', 'app_workflow', 'app_publishing', 'app_billing', 'app_messaging', JOBS_LOGIN],
 };
+
+
+/**
+ * The most connections a process opens (docs/security.md, D7): poolMax per database login it uses,
+ * plus pg-boss's pool for `app_jobs`. The Terraform budget in infra/modules/stack/main.tf uses the same sum.
+ */
+export function poolConnections(logins: readonly string[], poolMax: number): number {
+  return logins.filter((l) => l !== JOBS_LOGIN).length * poolMax + (logins.includes(JOBS_LOGIN) ? JOBS_POOL : 0);
+}
 
 export interface DatabaseUrls {
   /**

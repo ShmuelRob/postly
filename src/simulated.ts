@@ -87,6 +87,8 @@ export function storeMedia(store: SimulatorStore, publicBaseUrl: string, prefix:
 
 export interface SimulatedAppOptions extends SimulatedWorldOptions {
   databaseUrls: DatabaseUrls;
+  /** Connections per database login (DB_POOL_MAX, docs/security.md D7); createDatabase's default otherwise. */
+  poolMax?: number;
   /** Defaults to the conversational model simulator (POSTLY_MODELS=simulator). */
   models?: Record<string, ModelProvider>;
   burstQuietMs?: number;
@@ -98,7 +100,7 @@ export interface SimulatedAppOptions extends SimulatedWorldOptions {
 /** The app on the simulated world: what main.ts runs as web or worker in simulated mode. */
 export async function createSimulatedApp(options: SimulatedAppOptions) {
   const world = simulatedWorld(options);
-  const db = createDatabase(options.databaseUrls);
+  const db = createDatabase(options.databaseUrls, options.poolMax ? { max: options.poolMax } : {});
   if (!(await world.media.read(SAMPLE_PHOTO_PATH))) {
     await world.media.put(SAMPLE_PHOTO_PATH, placeholderPng(1080, 1080, [246, 232, 210], [150, 82, 40]), 'image/png');
   }

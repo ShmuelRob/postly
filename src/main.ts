@@ -41,6 +41,7 @@ async function main(command: string | undefined) {
     project: process.env.GOOGLE_CLOUD_PROJECT,
     sampleRatio: process.env.TRACE_SAMPLE_RATIO,
   });
+  log.info('database pools', { poolMax: config.dbPoolMax, maxConnections: config.maxConnections });
   // Simulated mode (docs/deployment.md, "Simulated mode"): config allows it only in local, test and dev.
   const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
   // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
@@ -49,6 +50,7 @@ async function main(command: string | undefined) {
     store,
     burstWake: jobBurstWake(queue),
     databaseUrls: config.databaseUrls,
+    poolMax: config.dbPoolMax,
     webhookSecret: config.webhookSecret,
     publicBaseUrl: config.publicBaseUrl,
     businessNumber: config.businessNumber,

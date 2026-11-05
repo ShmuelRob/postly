@@ -60,9 +60,17 @@ export interface PgBossQueueOptions {
   observeDepth?: boolean;
 }
 
-export async function createPgBossQueue(options: PgBossQueueOptions): Promise<JobQueue> {
+/** pg-boss's own pool in every process, on the `app_jobs` login; the connection budget counts it (docs/security.md, D7). */
+export const JOBS_POOL = 10;
+
+/** The PgBoss constructor options, with its pool capped at JOBS_POOL. */
+export function pgBossConstructorOptions(options: PgBossQueueOptions) {
   const migrate = options.migrate ?? false;
-  const boss = new PgBoss({ connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate });
+  return { connectionString: options.connectionString, schema: options.schema ?? 'pgboss', migrate, createSchema: options.createSchema ?? migrate, max: JOBS_POOL };
+}
+
+export async function createPgBossQueue(options: PgBossQueueOptions): Promise<JobQueue> {
+  const boss = new PgBoss(pgBossConstructorOptions(options));
   boss.on('error', (error) => log.error('pg-boss error', { error: String(error) }));
   await boss.start();
   // Queue depth (docs/observability.md, Metrics), read from pg-boss at each export.
