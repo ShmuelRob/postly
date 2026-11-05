@@ -6,6 +6,8 @@ declare module 'vitest' {
   export interface ProvidedContext {
     /** One login per role in database-schema.md; tests never use the migration superuser. */
     databaseUrls: DatabaseUrls;
+    /** The simulated-mode store's login (WP-51). */
+    simulatorStoreUrl: string;
   }
 }
 
@@ -13,5 +15,6 @@ declare module 'vitest' {
 export default async function setup(project: TestProject) {
   const database = await startTestDatabase();
   project.provide('databaseUrls', database.urls);
+  project.provide('simulatorStoreUrl', database.simulatorStoreUrl);
   return database.stop;
 }

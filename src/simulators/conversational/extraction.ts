@@ -1,5 +1,5 @@
-import type { BusinessProfileDraft } from '../../src/contracts/business-profile.js';
-import type { Network } from '../../src/contracts/common.js';
+import type { BusinessProfileDraft } from '../../contracts/business-profile.js';
+import type { Network } from '../../contracts/common.js';
 
 /**
  * A stand-in for the model's profile_extraction on the model simulator, so the human can answer the

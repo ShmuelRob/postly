@@ -9,14 +9,13 @@ import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
 import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
 import { buildServer } from '../../src/server.js';
-import { MessagingSimulator, ModelSimulator, PublishingSimulator } from '../../src/simulators/index.js';
+import { conversationalModelSimulator } from '../../src/simulators/conversational/index.js';
+import { MessagingSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 import { placeholderPng } from '../../test/e2e/harness/png.js';
 import type { PublishingEntry, TranscriptEntry } from '../../test/e2e/harness/record.js';
 import type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-types.js';
-import { playgroundExtraction } from './extraction.js';
-import { playgroundIntent } from './intent.js';
 import { seedFeed } from './seed.js';
-import { playgroundPlanning } from './weekly.js';
+import { allowed, chatMessages, feedPosts, MEDIA_TYPES, mediaUrl, NETWORKS } from './views.js';
 
 export interface PlaygroundOptions {
   databaseUrls: DatabaseUrls;
@@ -53,8 +52,6 @@ export interface Playground {
   close(): Promise<void>;
 }
 
-const NETWORKS: Network[] = ['instagram', 'facebook'];
-
 /** Where the in-memory storage (standing in for Cloud Storage) serves files from. */
 const MEDIA_ORIGIN = 'https://media.playground.test/';
 
@@ -72,10 +69,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
   let skewMs = 0;
   const clock = () => new Date(Date.now() + skewMs);
   const publishing = new PublishingSimulator({ now: clock });
-  const model = new ModelSimulator();
-  model.setDefault('profile_extraction', playgroundExtraction);
-  model.setDefault('intent_detection', playgroundIntent);
-  model.setDefault('weekly_planning', (input) => playgroundPlanning(input) as never);
+  const model = conversationalModelSimulator();
 
   /** Files the browser can load, by storage path or URL: inbound media, renders, seeded posts. */
   const files = new Map<string, { mimeType: string; data: Uint8Array }>();
@@ -168,66 +162,9 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     return (await app.publishing.tick(clock(), { businessId })).ran;
   };
 
-  const messages = (): ChatMessage[] => {
-    const fromOwner = inbound.map(({ at, message }): ChatMessage => {
-      const c = message.content;
-      const base = { id: message.providerMessageId, at, direction: 'from_owner' as const, kind: c.kind };
-      switch (c.kind) {
-        case 'text':
-          return { ...base, text: c.text };
-        case 'button_reply':
-          return { ...base, text: c.buttonId };
-        case 'image':
-          return { ...base, ...(c.caption ? { text: c.caption } : {}), media: { url: mediaUrl(c.providerMediaId), mimeType: 'image' } };
-        case 'voice':
-          return { ...base, media: { url: mediaUrl(c.providerMediaId), mimeType: 'audio' } };
-      }
-    });
-    const toOwner = sim.sent.filter((m) => m.request.to === ownerPhone).map((m): ChatMessage => {
-      const base = { id: m.providerMessageId, at: m.sentAt, direction: 'to_owner' as const };
-      switch (m.kind) {
-        case 'text':
-          return {
-            ...base,
-            kind: 'text',
-            text: m.request.text,
-            ...(m.request.mediaUrl ? { media: { url: mediaUrl(m.request.mediaUrl), mimeType: 'image' } } : {}),
-          };
-        case 'buttons':
-          return {
-            ...base,
-            kind: 'buttons',
-            text: m.request.text,
-            buttons: m.request.buttons,
-            ...(m.request.mediaUrl ? { media: { url: mediaUrl(m.request.mediaUrl), mimeType: 'image' } } : {}),
-          };
-        case 'template':
-          return { ...base, kind: 'template', text: `[${m.request.templateName}] ${Object.values(m.request.variables).join(' · ')}` };
-      }
-    });
-    // Stable: an owner message and its reply can share a millisecond.
-    return [...fromOwner, ...toOwner].sort((a, b) => a.at.localeCompare(b.at));
-  };
+  const messages = (): ChatMessage[] => chatMessages(inbound, sim.sentTo(ownerPhone));
 
-  const feed = async (): Promise<Record<Network, FeedPost[]>> => {
-    const entries = await Promise.all(
-      NETWORKS.map(async (network) => {
-        const posts = await Promise.all(
-          publishing.postsOn(network).map(async (p): Promise<FeedPost> => ({
-            id: p.providerPostId,
-            network,
-            caption: p.request.caption,
-            format: p.request.format,
-            scheduledFor: p.request.scheduledFor,
-            status: (await publishing.getPublicationStatus(p.providerPostId)).status,
-            images: p.request.mediaUrls.map(mediaUrl),
-          })),
-        );
-        return [network, posts.reverse()] as const;
-      }),
-    );
-    return Object.fromEntries(entries) as Record<Network, FeedPost[]>;
-  };
+  const feed = () => feedPosts(publishing.posts, async (id) => (await publishing.getPublicationStatus(id)).status);
 
   const state = async (): Promise<PlaygroundState> => {
     const rows = await db.withBusiness('workflow', businessId, async (tx) => ({
@@ -330,26 +267,6 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     },
   };
 }
-
-/** Media types the playground accepts and serves; anything else is served as a download. */
-const MEDIA_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'audio/ogg',
-  'audio/mpeg',
-  'audio/mp4',
-  'audio/aac',
-  'audio/wav',
-  'audio/webm',
-]);
-
-function allowed(mimeType: string, kind: 'image' | 'audio') {
-  if (!MEDIA_TYPES.has(mimeType) || !mimeType.startsWith(`${kind}/`)) throw new Error(`unsupported ${kind} type: ${mimeType}`);
-}
-
-const mediaUrl = (ref: string) => `/api/media?ref=${encodeURIComponent(ref)}`;
 
 /** approver_phone is unique: free the playground number from an earlier run on the same database. */
 async function freePhone(db: Database, ownerPhone: string) {

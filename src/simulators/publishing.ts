@@ -15,6 +15,7 @@ import {
   TestScheduleRequest,
   type TestScheduleResult,
 } from '../contracts/providers/publishing.js';
+import { refill } from './persistent.js';
 
 type Metrics = Omit<PostMetrics[number], 'providerPostId'>;
 
@@ -35,6 +36,19 @@ export interface ScriptedPublishFailure {
    */
   mode: 'reject' | 'reject_after_create' | 'fail_status';
   error?: string;
+}
+
+interface PublishingState {
+  posts: SimulatedPost[];
+  connectionLinks: PublishingSimulator['connectionLinks'];
+  accounts: Account[];
+  pending: string[];
+  failures: ScriptedPublishFailure[];
+  testFailures: string[];
+  scheduleTests: TestScheduleRequest[];
+  disconnections: DisconnectAccountRequest[];
+  disconnectFailures: string[];
+  nextId: number;
 }
 
 interface Account {
@@ -69,6 +83,37 @@ export class PublishingSimulator implements PublishingProvider {
 
   constructor(options: PublishingSimulatorOptions = {}) {
     this.now = options.now ?? (() => new Date());
+  }
+
+  /** Everything the simulator holds, as JSON (simulated mode, src/simulators/persistent.ts). */
+  exportState(): unknown {
+    return {
+      posts: this.posts,
+      connectionLinks: this.connectionLinks,
+      accounts: this.accounts,
+      pending: [...this.pending],
+      failures: this.failures,
+      testFailures: this.testFailures,
+      scheduleTests: this.scheduleTests,
+      disconnections: this.disconnections,
+      disconnectFailures: this.disconnectFailures,
+      nextId: this.nextId,
+    };
+  }
+
+  importState(state: unknown): void {
+    const s = state as PublishingState;
+    refill(this.posts, s.posts);
+    refill(this.connectionLinks, s.connectionLinks);
+    refill(this.accounts, s.accounts);
+    this.pending.clear();
+    for (const k of s.pending) this.pending.add(k);
+    refill(this.failures, s.failures);
+    refill(this.testFailures, s.testFailures);
+    refill(this.scheduleTests, s.scheduleTests);
+    refill(this.disconnections, s.disconnections);
+    refill(this.disconnectFailures, s.disconnectFailures);
+    this.nextId = s.nextId;
   }
 
   async createConnectionLink(request: CreateConnectionLinkRequest): Promise<ConnectionLink> {
