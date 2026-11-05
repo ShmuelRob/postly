@@ -27,6 +27,23 @@ describe('trustProxy (D8)', () => {
     expect(await ipOf(buildServer({ messaging: stubMessaging, publicBaseUrl: 'http://x' }), '203.0.113.9')).toBe('10.1.2.3');
   });
 
+  // The loopback gate reads the socket's remote address, never X-Forwarded-For, whatever trustProxy is.
+  for (const trustProxyHops of [undefined, 1]) {
+    it(`console loopback gate: a spoofed X-Forwarded-For 127.0.0.1 from a non-loopback socket is refused (hops ${trustProxyHops ?? 'unset'})`, async () => {
+      const app = buildConsoleServer({ console: stubConsole, access: 'loopback', ...(trustProxyHops ? { trustProxyHops } : {}) });
+      const res = await app.inject({ method: 'GET', url: '/console/api/businesses', remoteAddress: '10.0.0.5', headers: { host: 'localhost', 'x-forwarded-for': '127.0.0.1' } });
+      await app.close();
+      expect(res.statusCode).toBe(403);
+    });
+
+    it(`console loopback gate: a loopback socket is served even with a foreign X-Forwarded-For (hops ${trustProxyHops ?? 'unset'})`, async () => {
+      const app = buildConsoleServer({ console: stubConsole, access: 'loopback', ...(trustProxyHops ? { trustProxyHops } : {}) });
+      const res = await app.inject({ method: 'GET', url: '/console/api/businesses', remoteAddress: '127.0.0.1', headers: { host: 'localhost', 'x-forwarded-for': '203.0.113.9' } });
+      await app.close();
+      expect(res.statusCode).toBe(200);
+    });
+  }
+
   it('console: trusts one hop when set', async () => {
     const app = buildConsoleServer({ console: stubConsole, access: 'private-ingress', trustProxyHops: 1 });
     expect(await ipOf(app, '6.6.6.6, 203.0.113.9')).toBe('203.0.113.9');
