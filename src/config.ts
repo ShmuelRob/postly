@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Phone } from './contracts/common.js';
 import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
 
@@ -28,7 +29,8 @@ const Env = z.object({
   /** The server and database, with no user or password: each login gets its own. */
   DATABASE_URL: z.url().refine((u) => new URL(u).username === '', 'DATABASE_URL must have no user; each role login is built from it'),
   PUBLIC_BASE_URL: z.url(),
-  BUSINESS_NUMBER: z.string().min(1),
+  /** Postly's WhatsApp number, E.164 like every phone in the contracts (a made-up one such as +15550000001 on the simulators). */
+  BUSINESS_NUMBER: Phone,
   PORT: z.coerce.number().int().positive().default(8080),
   /** Connections per database login in this process (docs/security.md, D7); Terraform sets it from its budget. */
   DB_POOL_MAX: z.coerce.number().int().min(1).max(10).default(3),
