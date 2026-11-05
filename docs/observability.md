@@ -93,7 +93,7 @@ The line `channel disconnected` (severity `WARNING`, with `businessId`, `channel
 
 | Alert | Fires when | Signal | Runbook anchor |
 | --- | --- | --- | --- |
-| Web health check failing | `/healthz` fails for 5 min | uptime check | `web-health-check-failing` |
+| Web health check failing | `/health` fails for 5 min | uptime check | `web-health-check-failing` |
 | Web 5xx responses | more than 5 in 5 min | `run.googleapis.com/request_count` | `web-5xx-responses` |
 | Error log lines | more than 10 in 10 min | `postly-<env>-error-lines` | `error-log-lines` |
 | Cloud SQL CPU or disk high | CPU above 80% or disk above 85% for 10 min | Cloud SQL | `cloud-sql-cpu-or-disk-high` |
