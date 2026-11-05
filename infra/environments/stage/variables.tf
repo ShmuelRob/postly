@@ -52,3 +52,9 @@ variable "console_members" {
   type        = list(string)
   default     = []
 }
+
+variable "app_metric_alerts" {
+  description = "Set to true after the first deploy, once the app has written its postly.* metrics, then apply again."
+  type        = bool
+  default     = false
+}

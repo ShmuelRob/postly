@@ -7,6 +7,9 @@ locals {
 }
 
 resource "google_monitoring_alert_policy" "publishing_failures" {
+  # Alert policies on postly.* need the metric to exist; see var.app_metric_alerts.
+  count = var.app_metric_alerts ? 1 : 0
+
   project               = var.project_id
   display_name          = "Postly ${var.env_name}: publishing failure rate"
   combiner              = "AND"
@@ -18,12 +21,11 @@ resource "google_monitoring_alert_policy" "publishing_failures" {
   conditions {
     display_name = "over 20% of publication runs failed in 1h"
     condition_threshold {
-      filter                  = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\" AND resource.type=\"generic_task\""
-      denominator_filter      = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=monitoring.regex.full_match(\"published|failed\") AND resource.type=\"generic_task\""
-      comparison              = "COMPARISON_GT"
-      threshold_value         = 0.2
-      duration                = "0s"
-      evaluation_missing_data = "EVALUATION_MISSING_DATA_INACTIVE"
+      filter             = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=\"failed\" AND resource.type=\"generic_task\""
+      denominator_filter = "metric.type=\"${local.workload}/postly.publications.count\" AND metric.label.outcome=monitoring.regex.full_match(\"published|failed\") AND resource.type=\"generic_task\""
+      comparison         = "COMPARISON_GT"
+      threshold_value    = 0.2
+      duration           = "0s"
       aggregations {
         alignment_period     = "3600s"
         per_series_aligner   = "ALIGN_DELTA"
@@ -79,6 +81,9 @@ resource "google_monitoring_alert_policy" "webhook_errors" {
 }
 
 resource "google_monitoring_alert_policy" "queue_backlog" {
+  # Alert policies on postly.* need the metric to exist; see var.app_metric_alerts.
+  count = var.app_metric_alerts ? 1 : 0
+
   project               = var.project_id
   display_name          = "Postly ${var.env_name}: job queue stuck"
   combiner              = "OR"
@@ -168,6 +173,9 @@ resource "google_monitoring_alert_policy" "channel_disconnected" {
 }
 
 resource "google_monitoring_alert_policy" "model_cost" {
+  # Alert policies on postly.* need the metric to exist; see var.app_metric_alerts.
+  count = var.app_metric_alerts ? 1 : 0
+
   project               = var.project_id
   display_name          = "Postly ${var.env_name}: model cost spike"
   combiner              = "OR"
@@ -193,6 +201,9 @@ resource "google_monitoring_alert_policy" "model_cost" {
 }
 
 resource "google_monitoring_alert_policy" "model_validation" {
+  # Alert policies on postly.* need the metric to exist; see var.app_metric_alerts.
+  count = var.app_metric_alerts ? 1 : 0
+
   project               = var.project_id
   display_name          = "Postly ${var.env_name}: model validation failures"
   combiner              = "OR"
