@@ -109,7 +109,7 @@ e2eTest('the team cancels a business from the console: channels are disconnected
     // The team's console action (loopback only).
     const server = Fastify({ logger: false });
     registerConsoleRoutes(server, { console: createConsole(ctx.db.db, app.workflow), cancelBusiness: (id) => app.cancellation.cancel(id, 'console') });
-    const response = await server.inject({ method: 'POST', url: `/console/api/businesses/${businessId}/cancel` });
+    const response = await server.inject({ method: 'POST', url: `/console/api/businesses/${businessId}/cancel`, payload: {} });
     await server.close();
     expect(response.statusCode).toBe(200);
 
