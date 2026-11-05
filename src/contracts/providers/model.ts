@@ -35,7 +35,13 @@ export type AnalyzeImageRequest = z.infer<typeof AnalyzeImageRequest>;
 export const StructuredResult = z.object({ output: z.unknown(), ...usage });
 export type StructuredResult = z.infer<typeof StructuredResult>;
 
-export const TranscribeAudioRequest = z.object({ model: z.string().min(1), audioUrl: Url, languageHint: Language });
+export const TranscribeAudioRequest = z.object({
+  model: z.string().min(1),
+  /** The active version of the `transcription` prompt. */
+  prompt: z.string().min(1),
+  audioUrl: Url,
+  languageHint: Language,
+});
 export type TranscribeAudioRequest = z.infer<typeof TranscribeAudioRequest>;
 
 export const TranscriptionResult = z.object({ text: z.string(), language: Language, costUsd: usage.costUsd });

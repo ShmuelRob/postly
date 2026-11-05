@@ -89,7 +89,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
       if (task === 'transcription') {
         const { voiceAssetId, languageHint } = input as ModelTaskInput<'transcription'>;
         const audioUrl = await mediaUrl(businessId, voiceAssetId);
-        const t = await provider.transcribeAudio({ model, audioUrl, languageHint });
+        const t = await provider.transcribeAudio({ model, prompt, audioUrl, languageHint });
         result = { output: { text: t.text, language: t.language }, inputTokens: 0, outputTokens: 0, costUsd: t.costUsd };
       } else if (task === 'image_review') {
         const { mediaAssetId, purpose } = input as ModelTaskInput<'image_review'>;
