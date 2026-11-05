@@ -77,3 +77,44 @@ describe('H5 console statements', () => {
     );
   });
 });
+
+// T11 (security.md D5): the console login bypasses RLS, so its updates are limited by column. It may
+// not move a row to another business or re-key it; Postgres refuses the statement before any row.
+describe('console cannot move a row between businesses', () => {
+  const refused = /permission denied for table/;
+  let b: string;
+  beforeAll(async () => {
+    b = await newBusiness(db);
+  });
+
+  it.each(['channel_connection', 'conversation_state', 'post', 'publication', 'console_item'])(
+    'refuses an update of %s.business_id',
+    async (table) => {
+      const message = await asConsole(sql`update ${sql.identifier(table)} set business_id = ${b} where business_id = ${a.id}`).then(
+        () => '',
+        (e: Error) => (e.cause instanceof Error ? e.cause.message : e.message),
+      );
+      expect(message).toMatch(refused);
+    },
+  );
+
+  it.each(['channel_connection', 'post', 'publication', 'console_item'])('refuses an update of %s.id', async (table) => {
+    const message = await asConsole(sql`update ${sql.identifier(table)} set id = gen_random_uuid() where business_id = ${a.id}`).then(
+      () => '',
+      (e: Error) => (e.cause instanceof Error ? e.cause.message : e.message),
+    );
+    expect(message).toMatch(refused);
+  });
+
+  it('refuses an update of business.id', async () => {
+    const message = await asConsole(sql`update business set id = gen_random_uuid() where id = ${a.id}`).then(
+      () => '',
+      (e: Error) => (e.cause instanceof Error ? e.cause.message : e.message),
+    );
+    expect(message).toMatch(refused);
+  });
+
+  it('still resolves a console item', async () => {
+    await asConsole(sql`update console_item set status = 'resolved', resolved_at = now(), updated_at = now() where business_id = ${a.id}`);
+  });
+});
