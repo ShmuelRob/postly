@@ -102,9 +102,18 @@ variable "sandbox_owner_phone" {
   default     = "+972500000001"
 }
 variable "sandbox_url" {
-  description = "Where payment links point: the sandbox as the human reaches it (gcloud run services proxy on port 8081)."
+  description = "Where payment links point; null uses the sandbox's run.app URL with IAP, else the proxy's http://localhost:8081."
   type        = string
-  default     = "http://localhost:8081"
+  default     = null
+}
+variable "sandbox_iap_client_id" {
+  description = "The project's OAuth client id, made by hand (docs/deployment.md, \"The sandbox\"). Set: the sandbox opens in a browser through Cloud Run's built-in IAP. Null: the proxy only."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.sandbox_iap_client_id == null || var.sandbox_enabled
+    error_message = "sandbox_iap_client_id needs sandbox_enabled (dev only)."
+  }
 }
 variable "alert_email" {
   type    = string
@@ -138,6 +147,13 @@ data "google_project" "this" {
 
 locals {
   prefix = "postly-${var.env_name}"
+  # The sandbox's browser path (docs/deployment.md "The sandbox", docs/security.md "Sandbox exposure").
+  sandbox_iap = var.sandbox_enabled && var.sandbox_iap_client_id != null
+  # Cloud Run's deterministic URL, computed so that SANDBOX_URL (in app_env, which the sandbox also
+  # reads) does not depend on the sandbox service itself.
+  sandbox_url = coalesce(var.sandbox_url, local.sandbox_iap ? "https://${local.prefix}-sandbox-${data.google_project.this.number}.${var.region}.run.app" : "http://localhost:8081")
+  # gcloud's own OAuth client: the identity token `gcloud run services proxy` sends has it as audience.
+  gcloud_oauth_client = "32555940559.apps.googleusercontent.com"
   # Simulated mode (WP-51, docs/deployment.md): dev runs on the simulators with their state in Postgres;
   # stage and prod are set to vendors, which refuses to start until WP-41.
   simulated = var.env_name == "dev"
@@ -176,7 +192,7 @@ locals {
     }, local.simulated ? {
     SIMULATOR_STORE = "postgres"
     POSTLY_MODELS   = "simulator"
-    SANDBOX_URL     = var.sandbox_url
+    SANDBOX_URL     = local.sandbox_url
   } : {})
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
@@ -349,8 +365,9 @@ module "worker" {
 }
 
 # The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
-# allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy`. Runs as the web
-# account: it needs the same login passwords and the webhook secret.
+# allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy` and, with
+# sandbox_iap_client_id, in a browser through Cloud Run's built-in IAP. Runs as the web account: it
+# needs the same login passwords and the webhook secret.
 module "sandbox" {
   count                = var.sandbox_enabled ? 1 : 0
   source               = "../cloud_run"
@@ -366,6 +383,7 @@ module "sandbox" {
   secret_env           = local.app_secret_env
   public               = false
   external_ingress     = true
+  iap_enabled          = local.sandbox_iap
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -438,6 +456,50 @@ resource "google_cloud_run_v2_service_iam_member" "sandbox" {
   member   = each.value
 }
 
+# Browser path (docs/security.md, "Sandbox exposure"): IAP on the service itself, no load balancer.
+# Only sandbox_invokers pass IAP, on this service only; IAP calls the service as its service agent.
+resource "google_iap_web_cloud_run_service_iam_member" "sandbox" {
+  for_each               = local.sandbox_iap ? toset(var.sandbox_invokers) : toset([])
+  project                = var.project_id
+  location               = var.region
+  cloud_run_service_name = module.sandbox[0].name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = each.value
+  depends_on             = [module.sandbox]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "sandbox_iap_invoker" {
+  count      = local.sandbox_iap ? 1 : 0
+  project    = var.project_id
+  location   = var.region
+  name       = module.sandbox[0].name
+  role       = "roles/run.invoker"
+  member     = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  depends_on = [module.sandbox]
+}
+
+# Google's managed OAuth client admits only users inside a Workspace organization, so IAP uses the
+# project's own client (External consent screen, made by hand like the console's). gcloud's client is
+# a programmatic client, so the proxy's identity token passes IAP too.
+data "google_secret_manager_secret_version" "sandbox_iap_client_secret" {
+  count   = local.sandbox_iap ? 1 : 0
+  project = var.project_id
+  secret  = module.secrets.ids["console-iap-client-secret"]
+}
+
+resource "google_iap_settings" "sandbox" {
+  count      = local.sandbox_iap ? 1 : 0
+  name       = "projects/${data.google_project.this.number}/iap_web/cloud_run-${var.region}/services/${module.sandbox[0].name}"
+  depends_on = [module.sandbox]
+  access_settings {
+    oauth_settings {
+      client_id            = var.sandbox_iap_client_id
+      client_secret        = data.google_secret_manager_secret_version.sandbox_iap_client_secret[0].secret_data
+      programmatic_clients = [local.gcloud_oauth_client]
+    }
+  }
+}
+
 module "migrate" {
   source          = "../cloud_run"
   project_id      = var.project_id
@@ -476,6 +538,8 @@ module "monitoring" {
 output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
 output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
+# Open it in a browser when sandbox_iap_client_id is set; else it is the proxy's local address.
+output "sandbox_url" { value = var.sandbox_enabled ? local.sandbox_url : null }
 output "console_service" { value = module.console.name }
 output "console_url" { value = local.console_enabled ? module.console_ingress[0].url : null }
 output "console_ip" { value = local.console_enabled ? module.console_ingress[0].ip : null }

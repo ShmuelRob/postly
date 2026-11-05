@@ -135,13 +135,30 @@ A dev-only service, `postly-dev-sandbox`, built from the WP-45 playground (`play
 - the mock checkout page for the payment link.
 - a **new sign-up from this number** button (`/api/sign-up`): it starts onboarding for a new business with the human's number as the approver. The earlier business keeps its data in the database, but its approver number moves to a free one, and the sandbox starts empty: the sandbox drops the messages from that number, the messaging simulator drops the messages it sent to it, and the feed shows only the posts on the new business's connected accounts (the earlier business's posts stay on the publishing simulator). Other numbers' messages are untouched.
 
-It never enters the product image: it has its own `Dockerfile.sandbox` (with `Dockerfile.sandbox.dockerignore`), and the deploy workflow builds and rolls it out only for `dev`. Terraform creates the service only when `sandbox_enabled` is true, which only `infra/environments/dev` sets. It is not public: it has no `allUsers` invoker, and only the accounts in `sandbox_invokers` (the human) may invoke it, so every request needs that person's Google identity token. Its ingress accepts requests from outside the VPC, unlike the console's internal-only ingress (T3), because internal-only ingress would also block the human's proxy. The human reaches it with:
+It never enters the product image: it has its own `Dockerfile.sandbox` (with `Dockerfile.sandbox.dockerignore`), and the deploy workflow builds and rolls it out only for `dev`. Terraform creates the service only when `sandbox_enabled` is true, which only `infra/environments/dev` sets (stage and prod refuse it). It is never public: it has no `allUsers` or `allAuthenticatedUsers` access (Terraform refuses both in `sandbox_invokers`), and only the accounts in `sandbox_invokers` (the human) get in. Its ingress accepts requests from outside the VPC, unlike the console's ingress (T3), so that the human can reach it without a load balancer. There are two ways in.
+
+**In a browser, phone included (`sandbox_iap_client_id` set).** Cloud Run's built-in Identity-Aware Proxy (IAP) guards the service itself (`iap_enabled` on the service, no load balancer, no extra cost). The human opens `sandbox_url` (Terraform output; the service's `https://postly-dev-sandbox-<project number>.me-west1.run.app` URL), signs in with Google, and IAP lets in only the accounts in `sandbox_invokers`; anyone else gets IAP's access-denied page before any request reaches the sandbox. Terraform then:
+
+- turns on `iap_enabled` on the sandbox service;
+- grants each account in `sandbox_invokers` `roles/iap.httpsResourceAccessor` on the sandbox service only (not the project, not the console);
+- grants IAP's service agent (`service-<project number>@gcp-sa-iap.iam.gserviceaccount.com`) `roles/run.invoker` on the sandbox, since IAP calls the service as that agent;
+- points IAP at the project's own OAuth client (`google_iap_settings` on the sandbox service). A personal Google account such as gmail.com has no Workspace organization, and Google's managed OAuth client admits only users inside an organization, so IAP needs a custom client with an External consent screen. Make it with the console's one-time steps ([Console sign-in: one-time steps](#console-sign-in-one-time-steps), steps 1 to 4; one client can serve both), put its id in `sandbox_iap_client_id` and its secret in the `postly-dev-console-iap-client-secret` secret. Terraform reads the secret into the sandbox's IAP settings, so it is also in the Terraform state. The sandbox needs no load balancer, so this costs nothing, and setting only `sandbox_iap_client_id` (not `console_iap_client_id`) does not create the console's load balancer;
+- lists gcloud's own OAuth client (`32555940559.apps.googleusercontent.com`) as an IAP programmatic client, so the identity token `gcloud run services proxy` sends still passes IAP and the proxy below keeps working. Only accounts with `roles/iap.httpsResourceAccessor` pass either way;
+- sets `SANDBOX_URL` (where payment links point) to the sandbox's run.app URL, unless `sandbox_url` is set.
+
+With IAP on, a cross-site page could make the signed-in browser post to the sandbox (its session is a cookie), so the sandbox refuses an `/api/` `POST` whose `Origin` is neither its own host nor a loopback address (the proxy page) (403).
+
+**Through the proxy (always; the only way while `sandbox_iap_client_id` is unset, the default).** Each account in `sandbox_invokers` also has `roles/run.invoker` on the service, and the human runs:
 
 ```
 gcloud run services proxy postly-dev-sandbox --project <dev project> --region me-west1 --port 8081
 ```
 
-and opens `http://localhost:8081`. The proxy adds the human's identity token; anyone else gets 403 from Cloud Run before the request reaches the sandbox.
+and opens `http://localhost:8081`. The proxy adds the human's identity token; without IAP, anyone else gets 403 from Cloud Run before the request reaches the sandbox. Without IAP, `SANDBOX_URL` stays `http://localhost:8081`.
+
+The sandbox UI uses only relative URLs (`/api/...`, `/checkout/<id>`), so it works the same on either address.
+
+If the first apply with `sandbox_iap_client_id` fails on the service agent's `run.invoker` grant because the agent does not exist yet, create it once with `gcloud beta services identity create --service=iap.googleapis.com --project <dev project>` and apply again. If, after the apply, the proxy gets IAP's sign-in page instead of the sandbox, use the browser URL; remove `sandbox_iap_client_id` and apply to go back to the proxy only.
 
 Posts go live at their real scheduled time (the worker's publishing job), since dev runs on the real clock.
 
@@ -165,7 +182,7 @@ All of this costs money or creates cloud resources, so agents never do it. Per e
 4. **Environment.** In `infra/environments/<env>`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in its three values, then `terraform init -backend-config="bucket=<project>-tfstate"`, `terraform plan`, review it, `terraform apply`. The services and the migrate job start from the image tag `bootstrap`, which does not exist yet, and Cloud Run cannot create a service from a missing image or pass the startup probe before the migrate job has created the logins, so a single first apply fails on the services. Apply in three passes instead: the image repository, then push an image tagged `bootstrap`; then the database, secrets and migrate job, and run the job; then everything else. [deploy-dev-guide.md](deploy-dev-guide.md) has the exact commands.
 5. **First deploy.** The dev apply creates the `dev` branch and the stage apply the `stage` branch; the next push to each branch deploys it (stage and prod wait for a reviewer), or run the Deploy workflow by hand from that branch.
 
-To reach the dev sandbox, set `sandbox_invokers = ["user:<your email>"]` in dev's `terraform.tfvars` before the apply ([The sandbox](#the-sandbox)).
+To reach the dev sandbox, set `sandbox_invokers = ["user:<your email>"]` in dev's `terraform.tfvars` before the apply ([The sandbox](#the-sandbox)). To open it in a browser or on a phone without the proxy, also do the console's OAuth steps 1 to 4, set `sandbox_iap_client_id` to the client's id, apply, and open the `sandbox_url` output.
 
 **Dev first.** Applying only bootstrap and `infra/environments/dev` works on its own: the dev root creates the `dev` branch from `main`, its protection, the `dev` GitHub environment with its variables and `POSTLY_DEPLOY_DEV`, and nothing of stage or prod. The `main` branch protection, the `stage` branch and their environments are created only by the prod and stage roots, so until those run, pushes to `stage` or `main` skip the deploy job cleanly (no `POSTLY_DEPLOY_STAGE` or `POSTLY_DEPLOY_PROD`). The roots share no GitHub resource (each manages its own branch, environment and flag, and only reads the repository), so a later stage or prod apply does not fight dev. Each root's state sits under its own prefix (`postly/dev`, `postly/stage`, `postly/prod`) in `<project>-tfstate`; with one project per environment, run bootstrap once in each project.
 

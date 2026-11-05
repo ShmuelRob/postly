@@ -2,8 +2,11 @@
 project_id      = "REPLACE_WITH_PROJECT_ID"
 business_number = "+15550000001"
 alert_email     = "REPLACE_WITH_ALERT_EMAIL"
-# Who may open the sandbox (gcloud run services proxy); never allUsers.
+# Who may open the sandbox (browser with IAP, or gcloud run services proxy); never allUsers.
 sandbox_invokers = ["user:REPLACE_WITH_YOUR_EMAIL"]
+# Open the sandbox in a browser or on a phone (output sandbox_url), free: the OAuth client from the
+# console's one-time steps 1 to 4, its secret in postly-dev-console-iap-client-secret. See docs/deployment.md.
+# sandbox_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
 # Console sign-in through IAP (optional; about 18 USD a month once set). See docs/deployment.md.
 # console_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
 # console_members       = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
