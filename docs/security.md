@@ -27,7 +27,7 @@ This is a network gate, not a sign-in: anyone holding `run.invoker` on the proje
 
 ## Technical debts (ranked)
 
-Ranked by what can go wrong and how soon. "Before" names the milestone each one blocks. Each becomes a work package; the ones marked H4 or H8 need the human's review.
+Ranked by what can go wrong and how soon. "Before" names the milestone each one blocks. Each becomes a work package ([implementation-plan.md](implementation-plan.md#phase-5b-security-debts): D3 is WP-80, D8 WP-81, D1 and D4 WP-82, D2 WP-83, D9 WP-84, D12 WP-85, D10 WP-86, D7 WP-87; D5 and D6 are T11, D11 T2, D13 WP-41, D14 WP-47); the ones marked H4 or H8 need the human's review.
 
 | # | Debt | Why it matters | Fix | Before |
 | --- | --- | --- | --- | --- |
