@@ -67,4 +67,35 @@ describe('process configuration', () => {
       expect(() => loadConfig({ ...base, POSTLY_ENV: 'staging' })).toThrow('POSTLY_ENV');
     });
   });
+
+  describe('console sign-in (WP-82, docs/security.md)', () => {
+    const deployed = { ...base, POSTLY_ENV: 'stage', MESSAGING_WEBHOOK_SECRET: 'real-secret' };
+    const AUDIENCE = '/projects/123456789012/global/backendServices/4567890123456789';
+
+    it('uses the dev bypass locally and in tests, with a default local actor', () => {
+      expect(loadConfig(base).console).toEqual({ auth: 'dev-bypass', devActor: 'local-dev' });
+      expect(loadConfig({ ...base, POSTLY_ENV: 'test', CONSOLE_DEV_ACTOR: 'me@local' }).console).toEqual({ auth: 'dev-bypass', devActor: 'me@local' });
+    });
+
+    it('uses IAP when deployed, with the audience and host from Terraform', () => {
+      const config = loadConfig({ ...deployed, CONSOLE_IAP_AUDIENCE: AUDIENCE, CONSOLE_HOST: 'console.example.com' });
+      expect(config.console).toEqual({ auth: 'iap', iapAudience: AUDIENCE, host: 'console.example.com' });
+      expect(loadConfig({ ...deployed, POSTLY_ENV: 'dev' }).console).toEqual({ auth: 'iap' });
+    });
+
+    it('refuses to start with the dev bypass in stage or prod', () => {
+      for (const env of ['stage', 'prod']) {
+        expect(() => loadConfig({ ...deployed, POSTLY_ENV: env, CONSOLE_AUTH: 'dev-bypass' }), env).toThrow(/dev-bypass/);
+      }
+    });
+
+    it('allows IAP locally, for trying the sign-in', () => {
+      expect(loadConfig({ ...base, CONSOLE_AUTH: 'iap', CONSOLE_IAP_AUDIENCE: AUDIENCE }).console).toEqual({ auth: 'iap', iapAudience: AUDIENCE });
+    });
+
+    it('refuses an audience that is not a backend service path, and an unknown mode', () => {
+      expect(() => loadConfig({ ...deployed, CONSOLE_IAP_AUDIENCE: 'postly-console' })).toThrow('CONSOLE_IAP_AUDIENCE');
+      expect(() => loadConfig({ ...base, CONSOLE_AUTH: 'none' })).toThrow('CONSOLE_AUTH');
+    });
+  });
 });

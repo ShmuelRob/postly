@@ -19,6 +19,8 @@ import { e2eTest, type AppFactory, type Providers } from './harness/index.js';
 
 const OWNER = '+972501234570';
 const BUSINESS_PHONE = '+972521111113';
+// The price records the signed-in team member, never a name from the request body (D4).
+const TEAM_MEMBER = 'shmuel@postly.test';
 
 const db = createDatabase(inject('databaseUrls'), { max: 2 });
 afterAll(() => db.close());
@@ -57,7 +59,8 @@ function setup(businessId: string, plan?: string) {
     const messaging = createMessaging({ db, provider, businessNumber: BUSINESS_PHONE, handler: { async handleInbound() {} } });
     const billing = createBilling({ db, messaging, provider: payment, ...(plan ? { plan } : {}) });
     const server = buildServer({ messaging, billing, publicBaseUrl: 'https://postly.example.test' });
-    registerConsoleRoutes(server, { console: createConsole(db, createWorkflow(db, { rejected: () => {} })) });
+    // Signed in as a team member (the local dev bypass; IAP's own flow is console-sign-in.e2e.test.ts).
+    registerConsoleRoutes(server, { console: createConsole(db, createWorkflow(db, { rejected: () => {} })), auth: { mode: 'dev-bypass', actor: TEAM_MEMBER }, log: () => {} });
     consoleApi = async (method, url, payload) => {
       const res = await server.inject({ method, url: `/console/api${url}`, ...(payload ? { payload } : {}) });
       return { status: res.statusCode, body: res.json() };
@@ -201,12 +204,12 @@ e2eTest('the team changes the monthly price in the console and the next payment 
   // A plan with no price of its own gets none: billing refuses to send a link without a price.
   await expect(ctx.sendLink()).rejects.toThrow(/no price/);
 
-  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 30000, by: 'shmuel' })).status).toBe(200);
-  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 35000, by: 'shmuel', reason: 'cost check' })).status).toBe(200);
-  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 0, by: 'shmuel' })).status).toBe(400);
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 30000 })).status).toBe(200);
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 35000, reason: 'cost check' })).status).toBe(200);
+  expect((await ctx.consoleApi('POST', '/price', { plan, amountAgorot: 0 })).status).toBe(400);
 
   const price = await ctx.consoleApi('GET', `/price?plan=${plan}`);
-  expect(price.body.current).toMatchObject({ plan, amountAgorot: 35000, currency: 'ILS', changedBy: 'shmuel', reason: 'cost check' });
+  expect(price.body.current).toMatchObject({ plan, amountAgorot: 35000, currency: 'ILS', changedBy: TEAM_MEMBER, reason: 'cost check' });
   expect(price.body.history.map((h: { amountAgorot: number }) => h.amountAgorot)).toEqual([35000, 30000]);
 
   await ctx.sendLink();

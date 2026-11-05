@@ -2,4 +2,5 @@
 // Public surface of the module: other code imports only from this file (see ../README.md).
 
 export { ConsoleActionError, createConsole, type BusinessSummary, type ConsoleService, type Draft } from './console.js';
-export { CONSOLE_PATH, registerConsoleRoutes, type ConsoleRouteOptions } from './routes.js';
+export { CONSOLE_PATH, consoleActor, DEV_ACTOR, registerConsoleRoutes, type ConsoleAuth, type ConsoleRouteOptions } from './routes.js';
+export { createIapVerifier, IAP_AUDIENCE_PATTERN, IAP_HEADER, IAP_ISSUER, IapAssertionError, type IapIdentity, type IapPublicKey, type IapVerifier } from './iap.js';

@@ -1,26 +1,35 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ConsoleActionError, type ConsoleService } from './console.js';
+import { IAP_HEADER, IapAssertionError, type IapVerifier } from './iap.js';
 import { renderConsolePage } from './page.js';
 
 export const CONSOLE_PATH = '/console';
 
+/**
+ * How the console knows who is acting (docs/security.md, "Console exposure"; D1, D4).
+ * `iap` (deployed): every request needs a valid IAP assertion, and its email is the actor; without
+ * a verifier (no audience configured) every console request is refused. `dev-bypass` (local runs
+ * and tests only; `src/config.ts` refuses it in stage and prod): loopback addresses only, with a
+ * fixed actor.
+ */
+export type ConsoleAuth = { mode: 'iap'; verifier?: IapVerifier } | { mode: 'dev-bypass'; actor?: string };
+
+export const DEV_ACTOR = 'local-dev';
+
 export interface ConsoleRouteOptions {
   console: ConsoleService;
   /** The cancellation (WP-43); the route exists only when it is wired. */
-  cancelBusiness?(businessId: string): Promise<unknown>;
+  cancelBusiness?(businessId: string, actor: string): Promise<unknown>;
+  /** Defaults to the dev bypass. */
+  auth?: ConsoleAuth;
   /**
-   * How requests are gated until team sign-in exists (docs/security.md, "Console exposure").
-   * `loopback` (default, local runs): only loopback addresses. `private-ingress` (deployed): the
-   * console runs as its own Cloud Run service with internal-only ingress and no public invoker, so the
-   * gate is the network and IAM, not the request's address. Neither is a sign-in.
-   */
-  access?: 'loopback' | 'private-ingress';
-  /**
-   * Host names (no port) the console answers, against DNS rebinding (D3). Locally the default is the
-   * loopback names; deployed, unset leaves the Host check to the internal-only ingress.
+   * Host names (no port) the console answers, against DNS rebinding (D3). With the dev bypass the
+   * default is the loopback names; deployed, it is the console's domain (`CONSOLE_HOST`).
    */
   allowedHosts?: readonly string[];
+  /** One line per console action (actor, method, path, status); defaults to a JSON line on stdout. */
+  log?(line: Record<string, unknown>): void;
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -36,29 +45,45 @@ function hostName(value: string): string | undefined {
   }
 }
 
+/** A `by` typed in the body is only a note now (D4): kept in the reason when it names someone else. */
+function withNote(reason: string | undefined, by: string | undefined, actor: string): string | undefined {
+  if (!by || by === actor) return reason;
+  return reason ? `${reason} (by: ${by})` : `(by: ${by})`;
+}
+
 const Id = z.object({ id: z.uuid() });
-const PauseBody = z.object({ by: z.string().min(1), reason: z.string().optional() });
+const PauseBody = z.object({ by: z.string().min(1).optional(), reason: z.string().optional() });
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
 const PriceQuery = z.object({ plan: z.string().min(1).optional() });
 const PriceBody = z.object({
   plan: z.string().min(1).optional(),
   amountAgorot: z.number().int().positive(),
-  by: z.string().min(1),
+  by: z.string().min(1).optional(),
   reason: z.string().optional(),
 });
+
+const actors = new WeakMap<FastifyRequest, string>();
+
+/** The signed-in team member of a console request (set by the sign-in hook before any handler). */
+export function consoleActor(request: FastifyRequest): string {
+  const actor = actors.get(request);
+  if (!actor) throw new Error('console request without an actor');
+  return actor;
+}
 
 /** GET /console (React page) and the JSON API under /console/api. */
 export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRouteOptions): void {
   const c = options.console;
+  const auth = options.auth ?? { mode: 'dev-bypass' };
+  const log = options.log ?? ((line) => console.log(JSON.stringify({ level: 'info', ...line })));
   app.register(
     async (scope) => {
-      const loopbackOnly = (options.access ?? 'loopback') === 'loopback';
       scope.addHook('onRequest', async (request, reply) => {
-        if (loopbackOnly && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
+        if (auth.mode === 'dev-bypass' && !LOOPBACK.has(request.ip)) return reply.code(403).send({ error: 'console is local only' });
         // CSRF and DNS rebinding (docs/security.md, D3): a known Host, and for any POST a JSON body
         // (which a cross-origin page cannot send without a CORS preflight) and no foreign Origin.
         const host = request.headers.host ?? '';
-        const allowed = options.allowedHosts ?? (loopbackOnly ? LOOPBACK_HOSTS : undefined);
+        const allowed = options.allowedHosts ?? (auth.mode === 'dev-bypass' ? LOOPBACK_HOSTS : undefined);
         if (allowed && !allowed.includes(hostName(host) ?? '')) return reply.code(403).send({ error: 'unknown host' });
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           const origin = request.headers.origin;
@@ -68,6 +93,26 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
           if (!(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
             return reply.code(415).send({ error: 'JSON body required' });
           }
+        }
+        // Sign-in (D1): the actor comes only from a verified IAP assertion, or the local bypass.
+        if (auth.mode === 'dev-bypass') {
+          actors.set(request, auth.actor ?? DEV_ACTOR);
+          return;
+        }
+        if (!auth.verifier) return reply.code(403).send({ error: 'console sign-in is not configured' });
+        const assertion = request.headers[IAP_HEADER];
+        if (typeof assertion !== 'string') return reply.code(401).send({ error: 'sign-in required' });
+        try {
+          actors.set(request, (await auth.verifier.verify(assertion)).email);
+        } catch (error) {
+          if (error instanceof IapAssertionError) return reply.code(401).send({ error: 'sign-in required', reason: error.reason });
+          throw error;
+        }
+      });
+      scope.addHook('onResponse', async (request, reply) => {
+        const actor = actors.get(request);
+        if (actor && request.method === 'POST') {
+          log({ msg: 'console action', actor, method: request.method, path: request.url.split('?')[0], status: reply.statusCode });
         }
       });
 
@@ -83,10 +128,10 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       };
       const id = (params: unknown) => Id.parse(params).id;
 
-      scope.get('/', async (_request, reply) => {
+      scope.get('/', async (request, reply) => {
         const [businesses, drafts, items, system, price] = await Promise.all([c.businesses(), c.drafts(), c.openItems(), c.system(), c.price()]);
         const conversations = await Promise.all(businesses.slice(0, 20).map(async (b) => [b.id, await c.messages(b.id)] as const));
-        const html = renderConsolePage({ businesses, drafts, items, system, price, conversations: Object.fromEntries(conversations) });
+        const html = renderConsolePage({ businesses, drafts, items, system, price, conversations: Object.fromEntries(conversations), actor: consoleActor(request) });
         return reply.type('text/html; charset=utf-8').send(html);
       });
 
@@ -102,25 +147,34 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       scope.post('/api/businesses/:id/handoff/clear', (q, reply) => run(reply, () => c.clearHandoff(id(q.params))));
       if (options.cancelBusiness) {
         const cancelBusiness = options.cancelBusiness;
-        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params))));
+        scope.post('/api/businesses/:id/cancel', (q, reply) => run(reply, () => cancelBusiness(id(q.params), consoleActor(q))));
       }
       scope.post('/api/businesses/:id/pause', (q, reply) => run(reply, () => c.pauseBusiness(id(q.params))));
       scope.post('/api/businesses/:id/resume', (q, reply) => run(reply, () => c.resumeBusiness(id(q.params))));
       scope.post('/api/publications/:id/retry', (q, reply) => run(reply, () => c.retryPublication(id(q.params))));
       scope.post('/api/system/pause', (q, reply) =>
         run(reply, () => {
+          const actor = consoleActor(q);
           const body = PauseBody.parse(q.body ?? {});
-          return c.setGlobalPause(true, body.by, body.reason);
+          const reason = withNote(body.reason, body.by, actor);
+          return reason === undefined ? c.setGlobalPause(true, actor) : c.setGlobalPause(true, actor, reason);
         }),
       );
       scope.get('/api/price', (q, reply) => run(reply, () => c.price(PriceQuery.parse(q.query).plan)));
       scope.post('/api/price', (q, reply) =>
         run(reply, () => {
+          const actor = consoleActor(q);
           const { plan, amountAgorot, by, reason } = PriceBody.parse(q.body ?? {});
-          return c.setPrice({ amountAgorot, by, ...(plan ? { plan } : {}), ...(reason ? { reason } : {}) });
+          const note = withNote(reason, by, actor);
+          return c.setPrice({ amountAgorot, by: actor, ...(plan ? { plan } : {}), ...(note ? { reason: note } : {}) });
         }),
       );
-      scope.post('/api/system/resume', (q, reply) => run(reply, () => c.setGlobalPause(false, PauseBody.parse(q.body ?? {}).by)));
+      scope.post('/api/system/resume', (q, reply) =>
+        run(reply, () => {
+          PauseBody.parse(q.body ?? {});
+          return c.setGlobalPause(false, consoleActor(q));
+        }),
+      );
     },
     { prefix: CONSOLE_PATH },
   );

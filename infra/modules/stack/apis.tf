@@ -6,6 +6,7 @@ locals {
     "run", "sqladmin", "compute", "servicenetworking", "secretmanager", "artifactregistry", "iam",
     "iamcredentials", "sts", "monitoring", "logging", "cloudresourcemanager", "storage",
     "aiplatform", # Gemini through Vertex AI, called as the service account (no API key)
+    "iap",        # console sign-in (docs/security.md, "Console exposure")
   ]
 }
 

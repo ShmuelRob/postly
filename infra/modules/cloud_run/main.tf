@@ -48,6 +48,11 @@ variable "public" {
   type        = bool
   default     = false
 }
+variable "ingress" {
+  description = "Overrides the ingress that `public` implies (the console: INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER)."
+  type        = string
+  default     = null
+}
 variable "cpu_always_allocated" {
   description = "Keep CPU between requests (the worker polls pg-boss; the web runs the inbound sweep)."
   type        = bool
@@ -59,7 +64,7 @@ resource "google_cloud_run_v2_service" "this" {
   project             = var.project_id
   name                = var.name
   location            = var.region
-  ingress             = var.public ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = coalesce(var.ingress, var.public ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY")
   deletion_protection = false
 
   template {
