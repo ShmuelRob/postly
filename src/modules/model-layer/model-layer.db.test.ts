@@ -167,6 +167,8 @@ describe('model layer run', () => {
     const asset = randomUUID();
     sim.scriptTranscription({ text: 'שלום', language: 'he' });
     await expect(media.run(businessId, 'transcription', { voiceAssetId: asset, languageHint: 'he' })).resolves.toEqual({ text: 'שלום', language: 'he' });
+    const transcribe = sim.calls.find((c) => c.method === 'transcribeAudio');
+    expect(transcribe?.request.prompt).toMatch(/^תמלל את ההודעה הקולית/);
     sim.script('image_review', { usable: true, score: 0.8, issues: [] });
     await media.run(businessId, 'image_review', { mediaAssetId: asset, purpose: 'logo' });
     expect(urls).toEqual([`${businessId}/${asset}`, `${businessId}/${asset}`]);

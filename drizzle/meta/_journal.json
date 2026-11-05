@@ -99,6 +99,13 @@
       "when": 1793750408002,
       "tag": "0013_console_columns_role_attributes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793750411000,
+      "tag": "0014_message_claim",
+      "breakpoints": true
     }
   ]
 }
