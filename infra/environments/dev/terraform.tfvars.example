@@ -1,6 +1,6 @@
 # Placeholders only. Copy to terraform.tfvars (git-ignored) and fill in.
 project_id      = "REPLACE_WITH_PROJECT_ID"
-business_number = "+0000000000"
+business_number = "+15550000001"
 alert_email     = "REPLACE_WITH_ALERT_EMAIL"
 # Who may open the sandbox (gcloud run services proxy); never allUsers.
 sandbox_invokers = ["user:REPLACE_WITH_YOUR_EMAIL"]

@@ -100,7 +100,7 @@ notepad infra/environments/dev/terraform.tfvars
 | Value | What to put | Where it comes from |
 | --- | --- | --- |
 | `project_id` | `postly-dev-xyz` | the project from step 2 |
-| `business_number` | a made-up number in `+` format, for example `+15550000001` | **You do not need a real WhatsApp number.** Dev runs only on the simulators, so this is just a label (any non-empty string passes `src/config.ts`). Replace it with a real test number only when WP-41 connects WhatsApp |
+| `business_number` | a made-up number in `+` format, for example `+15550000001` | **You do not need a real WhatsApp number.** Dev runs only on the simulators, so this is just a label (it must still be valid E.164, `+` then 7 to 15 digits not starting with 0, so `+0000000000` is refused). Replace it with a real test number only when WP-41 connects WhatsApp |
 | `alert_email` | your email | where the alerts in step 7 go |
 
 Leave the rest out: `region` defaults to `me-west1`, `public_base_url` to the web service's `run.app` URL, `github_repository` to `ShmuelRob/postly`. The file is git-ignored.
@@ -288,6 +288,7 @@ It worked when: the last Deploy run is green, `/health` returns `{"ok":true}`, `
 | `evaluation_missing_data must have a non-zero duration` | an older checkout of the monitoring module | update to `main` and apply again |
 | Deploy fails at `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | `github_repository` in `terraform.tfvars` differs from the repository's exact name, for example in letter case (`shmuelrob/postly`) | delete the line (the default is `ShmuelRob/postly`) or fix the case, apply again, then re-run Deploy |
 | Deploy fails at **Smoke check** with `curl: (22) ... 404` on `/healthz` | Cloud Run's front end reserves paths ending in `z` and answers them 404 before the app | update to `dev`: the smoke and uptime checks use `/health` (the probes inside Cloud Run keep `/healthz`) |
+| Every sandbox message returns 500 with `Invalid E.164 number` (path `to`), or Terraform refuses `business_number` | `business_number` is not E.164, for example `+0000000000` from an older example file | set a made-up valid number such as `+15550000001` in `terraform.tfvars`, apply again |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 
