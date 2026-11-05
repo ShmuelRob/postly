@@ -9,6 +9,8 @@ export {
   shekels,
   type Billing,
   type BillingOptions,
+  type HoldAction,
   type WebhookOutcome,
 } from './billing.js';
+export { GRACE_DAYS, holdCopy, holdOn, holdStep, REMINDER_DAYS } from './hold.js';
 export { PAYMENT_WEBHOOK_PATH, registerBillingRoutes, type BillingRouteOptions } from './routes.js';

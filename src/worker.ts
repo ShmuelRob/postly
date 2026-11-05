@@ -17,6 +17,9 @@ export const DATA_DELETION_CRON = '0 3 * * *';
 /** The monthly report (WP-43): 06:00 UTC on the first of each month. */
 export const MONTHLY_REPORT_JOB = 'monthly-report';
 export const MONTHLY_REPORT_CRON = '0 6 1 * *';
+/** The daily billing hold (T16): reminders in the grace period, then the business pause. */
+export const BILLING_HOLD_JOB = 'billing-hold';
+export const BILLING_HOLD_CRON = '0 5 * * *';
 
 export interface WorkerProcessOptions {
   queue: JobQueue;
@@ -25,6 +28,7 @@ export interface WorkerProcessOptions {
   channelHealth: { tick(now: Date): Promise<void> };
   dataDeletion?: { tick(now: Date): Promise<unknown> };
   monthlyReport?: { tick(now: Date): Promise<unknown> };
+  billingHold?: { tick(now: Date): Promise<unknown> };
   now?: () => Date;
 }
 
@@ -39,8 +43,9 @@ export async function startWorkerProcess(options: WorkerProcessOptions): Promise
   await options.queue.schedule(WEEKLY_TICK_JOB, WEEKLY_TICK_CRON, () => options.weekly.tick(now()));
   await options.queue.schedule(PUBLISHING_TICK_JOB, PUBLISHING_TICK_CRON, async () => void (await options.publishing.tick(now())));
   await options.queue.schedule(CHANNEL_HEALTH_JOB, CHANNEL_HEALTH_CRON, () => options.channelHealth.tick(now()));
-  const { dataDeletion, monthlyReport } = options;
+  const { dataDeletion, monthlyReport, billingHold } = options;
   if (dataDeletion) await options.queue.schedule(DATA_DELETION_JOB, DATA_DELETION_CRON, async () => void (await dataDeletion.tick(now())));
   if (monthlyReport) await options.queue.schedule(MONTHLY_REPORT_JOB, MONTHLY_REPORT_CRON, async () => void (await monthlyReport.tick(now())));
+  if (billingHold) await options.queue.schedule(BILLING_HOLD_JOB, BILLING_HOLD_CRON, async () => void (await billingHold.tick(now())));
   return options.queue;
 }
