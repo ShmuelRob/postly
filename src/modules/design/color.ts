@@ -76,3 +76,18 @@ export function resolvePalette<P extends Palette>(style: P, brandColors: readonl
     ...(secondary !== undefined && { secondary }),
   };
 }
+
+/**
+ * A fill that carries `text` at 4.5:1: `fill` itself when it already does, otherwise `fill` mixed in
+ * 5% steps toward black (under light text) or white (under dark text), so its hue survives as far as
+ * possible. Used for a badge, whose text color is fixed by the style.
+ */
+export function fillForText(fill: string, text: string): string {
+  if (contrastRatio(text, fill) >= MIN_CONTRAST) return fill;
+  const toward = luminance(text) > 0.18 ? '#000000' : '#FFFFFF';
+  for (let step = 1; step <= 20; step++) {
+    const mixed = mix(fill, toward, step / 20);
+    if (contrastRatio(text, mixed) >= MIN_CONTRAST) return mixed;
+  }
+  return toward;
+}

@@ -154,6 +154,7 @@ export function createDesignEngine(deps: DesignEngineDeps): DesignEngine {
           photo: { dataUri: pngDataUri(photo), ...box },
           logo,
           overlayText: kind === 'cover' ? overlayText : '',
+          ...(kind === 'cover' && request.badge !== undefined ? { badge: request.badge } : {}),
           safeArea: SAFE_AREA,
         };
 

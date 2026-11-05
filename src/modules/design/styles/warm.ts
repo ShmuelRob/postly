@@ -3,7 +3,8 @@
 // the overlay text sits on a paper card overlapping the bottom of the photo. The paper
 // grain is an SVG noise drawn in code, so no texture file enters the repository.
 
-import { ensureContrast, ensureGraphicContrast } from '../color.js';
+import { BADGE_EDGE, BADGE_SIZE, badgeFontSize, badgeHtml } from '../badge.js';
+import { ensureContrast, ensureGraphicContrast, fillForText } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { LOGO_BOX } from '../layout.js';
 import { logoHtml, overlayHtml, photoHtml } from './shared.js';
@@ -47,12 +48,15 @@ export const warm: StyleTemplate = {
     const logo = `<div class="logo-circle">${logoHtml(ctx, 'logo')}</div>`;
     if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logo}`;
     return `${photoHtml(ctx, 'photo')}${logo}
-      <div class="card"><div class="rule"><span data-graphic></span><span data-graphic></span></div>${overlayHtml(ctx, 'overlay')}</div>`;
+      <div class="card"><div class="rule"><span data-graphic></span><span data-graphic></span></div>${overlayHtml(ctx, 'overlay')}</div>${badgeHtml(ctx, 'badge')}`;
   },
 
   css(ctx) {
     const { palette, safeArea } = ctx;
     const secondary = palette.secondary ?? palette.accent;
+    // A round stamp in the accent color with the card's paper tone for text and for the ring that is its 3:1 edge.
+    const stamp = fillForText(palette.accent, CARD_COLOR);
+    const stampFont = badgeFontSize(ctx.badge?.text ?? '', BADGE_SIZE * 0.75);
     return `
       body { background: ${palette.background} ${paperGrain(0.22)}; }
       .photo { position: absolute; top: ${FRAME}px; left: ${FRAME}px; display: block; border-radius: ${CORNER_RADIUS}px; }
@@ -66,6 +70,11 @@ export const warm: StyleTemplate = {
         background: ${CARD_COLOR} ${paperGrain(0.14)}; border-radius: ${CARD_RADIUS}px;
         box-shadow: 0 10px 30px rgba(59, 42, 30, 0.18), inset 0 0 0 2px ${secondary}33;
         display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+      .badge { position: absolute; top: ${safeArea}px; inset-inline-end: ${safeArea}px; width: ${BADGE_SIZE}px; height: ${BADGE_SIZE}px;
+        border-radius: 50%; background: ${stamp}; color: ${CARD_COLOR}; ${fontCss(this.fonts.headline)}
+        box-shadow: 0 0 0 ${BADGE_EDGE}px ${CARD_COLOR}, 0 10px 24px rgba(59, 42, 30, 0.28);
+        outline: 2px dashed ${CARD_COLOR}; outline-offset: -10px; display: flex; align-items: center; justify-content: center; }
+      .badge span { font-size: ${stampFont}px; line-height: 1.1; white-space: nowrap; }
       .rule { display: flex; gap: 10px; }
       .rule span { height: 6px; border-radius: 3px; }
       .rule span:first-child { width: 72px; background: ${ensureGraphicContrast(palette.accent, CARD_COLOR)}; }
