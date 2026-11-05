@@ -49,12 +49,12 @@ variable "sql_max_connections" {
 }
 variable "deletion_protection" { type = bool }
 variable "web_max_instances" {
-  description = "Must stay 1 until bursts are durable (review queue item 14); see docs/deployment.md."
+  description = "Web instances; bursts are durable (T2), so several are safe. See docs/deployment.md."
   type        = number
   default     = 1
   validation {
-    condition     = var.web_max_instances == 1
-    error_message = "The web service runs one instance until the inbound burst claim is durable (review queue item 14)."
+    condition     = var.web_max_instances >= 1 && var.web_max_instances <= 10
+    error_message = "web_max_instances must be between 1 and 10."
   }
 }
 variable "worker_max_instances" {

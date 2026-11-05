@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerBillingRoutes, type Billing } from './modules/billing/index.js';
 import { registerMessagingRoutes, type Messaging } from './modules/messaging/index.js';
+import { traceFromHeaders, withLogContext } from './shared/logger.js';
 
 export interface ServerOptions {
   messaging: Messaging;
@@ -21,6 +22,10 @@ export interface ServerOptions {
  */
 export function buildServer(options: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
+  // One log context per request (docs/observability.md): the request id and the Cloud Trace name.
+  app.addHook('onRequest', (request, _reply, done) => {
+    withLogContext({ requestId: request.id, trace: traceFromHeaders(request.headers, process.env.GOOGLE_CLOUD_PROJECT) }, done);
+  });
   app.get('/healthz', async () => ({ ok: true }));
   registerMessagingRoutes(app, options);
   const sweepEveryMs = options.sweepEveryMs;

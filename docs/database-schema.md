@@ -186,6 +186,8 @@ Every inbound and outbound WhatsApp message, for deduplication, the 24-hour wind
 | `payload` | jsonb | Button payload or template variables |
 | `media_asset_ids` | uuid[] | |
 | `processed_at` | timestamptz | Null until the workflow consumed it |
+| `claimed_at` | timestamptz | Set when messaging claims the message to hand it to the workflow; a claim older than 5 minutes on an unprocessed message may be taken again (technical-design.md, Onboarding flow, durable bursts). Indexed with `business_id`, `from_phone` and `created_at` for unprocessed inbound rows. No grant change: `messaging` already has `UPDATE` on `message` |
+| `seq` | bigint, identity | Arrival order; breaks ties between equal provider timestamps when a burst is put together |
 
 ### `media_asset`
 
