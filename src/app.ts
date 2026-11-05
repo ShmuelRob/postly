@@ -7,7 +7,7 @@ import { createDataDeletion, type DataDeletion, type DeletionStorage } from './m
 import type { TemplateRenderer } from './contracts/providers/renderer.js';
 import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
-import { createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
+import { type BurstWake, createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
 import { createModelLayer } from './modules/model-layer/index.js';
 import { and, eq } from 'drizzle-orm';
 import { BusinessProfile } from './contracts/business-profile.js';
@@ -43,6 +43,7 @@ import {
   type Workflow,
   type WorkflowLogger,
 } from './modules/workflow/index.js';
+import { log } from './shared/logger.js';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
@@ -67,6 +68,8 @@ export interface AppOptions {
   samplePhotoUrl: string;
   burstQuietMs?: number;
   timers?: Timers;
+  /** The burst wake-up; deployed, the pg-boss `inbound-burst` job (`jobBurstWake`), else in-process timers. */
+  burstWake?: BurstWake;
   now?: () => Date;
   logger?: WorkflowLogger;
 }
@@ -101,8 +104,8 @@ export interface App {
   monthlyReport: { tick(now: Date, options?: { businessId?: string }): Promise<{ sent: string[] }> };
   /**
    * Starts background work of the process that receives webhooks: the sweep of inbound messages
-   * never processed (review queue item 14), at startup and then every quiet window. It runs in the
-   * web process, next to the bursts it must not hand over twice. Returns a stop function.
+   * never processed (review queue item 14), at startup and then every quiet window. Every handover
+   * goes through the message claim, so it may run on several web instances. Returns a stop function.
    */
   start(): () => void;
 }
@@ -137,6 +140,7 @@ export function createApp(options: AppOptions): App {
     },
     ...(options.burstQuietMs !== undefined ? { burstQuietMs: options.burstQuietMs } : {}),
     ...(options.timers ? { timers: options.timers } : {}),
+    ...(options.burstWake ? { wake: options.burstWake } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
   const model = createModelLayer({ db, providers: providers.models, resolveMediaUrl: (b, a) => messaging.mediaUrl(b, a) });
@@ -232,7 +236,7 @@ export function createApp(options: AppOptions): App {
             variables: { networks: scheduleCopy.networks(lost) },
           });
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'channel health check failed', businessId: id, error: errorText(error) }));
+          log.error('channel health check failed', { businessId: id, error: errorText(error) });
         }
       }
     },
@@ -305,7 +309,7 @@ export function createApp(options: AppOptions): App {
           });
           sent.push(id);
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'monthly report failed', businessId: id, error: errorText(error) }));
+          log.error('monthly report failed', { businessId: id, error: errorText(error) });
         }
       }
       return { sent };

@@ -47,24 +47,24 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries and manual scheduling (a publication still publishes only when the publishing job's hash check passes), pauses, model settings. The human-owned H5 tests use it to force states |
 | `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
 
-**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
+**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. `U(-col, ...)` is an update of every column except those. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
 
 | Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | deletion | phone_lookup | scheduler | console | example_set |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `business` | S | SIU | S | S | S | S |  | S | SU | SD | S | S | SU |  |
-| `channel_connection` |  | S |  |  |  | SIU |  |  | S |  |  | S | SU |  |
-| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  |  | SIU |  |
+| `business` | S | SIU | S | S | S | S |  | S | SU | SD | S | S | S U(-id) |  |
+| `channel_connection` |  | S |  |  |  | SIU |  |  | S |  |  | S | S U(-id, -business_id) |  |
+| `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  |  | SI U(-business_id) |  |
 | `message` | SIU | S | S |  | S |  |  |  |  |  | SI |  | S |  |
 | `media_asset` | SI |  | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
 | `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  |  | S |  |
 | `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  |  | S | S |  |
-| `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | SU |  |
+| `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | S U(-id, -business_id) |  |
 | `post_version` |  |  | SI | S | S | S |  |  | S |  |  |  | S |  |
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
-| `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SIU |  |
+| `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
 | `model_run` |  |  |  |  |  |  | SI |  |  |  |  |  | S | SI |
-| `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SIU |  |
+| `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
 | `prompt_template` |  |  |  |  |  |  | S |  |  |  |  |  | SI | S |
 | `system_control` |  |  |  |  |  | S |  |  |  |  |  | S | SIU |  |
@@ -72,6 +72,8 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
+- **Console updates by column:** the `console` login bypasses RLS, so on business-owned tables it gets `UPDATE` on every column except `id` and `business_id` (on `business`, except `id`). A console write, a bug or a crafted call cannot move a row to another business or re-key it; Postgres refuses the statement (T11, security.md D5). `model_task_config` and `system_control` hold no business data and keep a table-wide `UPDATE`. A new column on these tables needs its own console grant in the migration that adds it.
+- **Role attributes:** each migration that creates a login with `CREATE ROLE ... IF NOT EXISTS` is followed by an `ALTER ROLE` that sets its attributes again: `LOGIN NOINHERIT NOCREATEROLE NOCREATEDB`, plus `BYPASSRLS` for the system logins and `NOBYPASSRLS` for the rest. A login that already existed (made by hand or by an older migration) cannot keep stronger attributes (T11, security.md D6). `SUPERUSER` and `REPLICATION` are not named: only a real superuser may set them, which the Cloud SQL admin is not, and that admin cannot grant them either.
 - **Deletes:** `business_data` deletes only preference rules and media. The `deletion` role deletes only `business` rows, and its code deletes only a `cancelled` business past `data_delete_after` (the condition is in the `delete` itself). Every business-owned table references `business` with `on delete cascade`, and the cascade runs with the table owner's rights, so it also removes `post_version` and `approval` rows, which no role may delete directly (WP-43).
 - **Creating a business:** `workflow` inserts the `business` row inside `withBusiness('workflow', newId, ...)`, so RLS checks the new row against the new id. No system role inserts businesses.
 - A module that needs a table or verb its role lacks changes this matrix first (docs first), then a new migration.
@@ -124,7 +126,7 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `message_kind` | `text`, `voice`, `image`, `button_reply`, `buttons`, `template` |
 | `preference_scope` | `caption`, `design`, `schedule`, `general` |
 | `model_task` | Model task names from [contracts.md](contracts.md) |
-| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff` |
+| `console_item_kind` | `model_validation_failed`, `extraction_failed`, `draft_failed`, `publication_failed`, `channel_disconnected`, `unknown_number`, `handoff`, `payment_link_failed` |
 | `console_item_status` | `open`, `resolved` |
 
 ## Tables
@@ -184,6 +186,8 @@ Every inbound and outbound WhatsApp message, for deduplication, the 24-hour wind
 | `payload` | jsonb | Button payload or template variables |
 | `media_asset_ids` | uuid[] | |
 | `processed_at` | timestamptz | Null until the workflow consumed it |
+| `claimed_at` | timestamptz | Set when messaging claims the message to hand it to the workflow; a claim older than 5 minutes on an unprocessed message may be taken again (technical-design.md, Onboarding flow, durable bursts). Indexed with `business_id`, `from_phone` and `created_at` for unprocessed inbound rows. No grant change: `messaging` already has `UPDATE` on `message` |
+| `seq` | bigint, identity | Arrival order; breaks ties between equal provider timestamps when a burst is put together |
 
 ### `media_asset`
 

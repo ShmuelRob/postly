@@ -16,9 +16,9 @@ Variables are named in code (`{{businessName}}`). Meta uses positional placehold
 | `subscription_cancelled` | Utility | `deleteAfter` | The subscription is cancelled | `src/modules/workflow/cancellation-copy.ts` |
 | `monthly_report` | Utility | `month`, `posts`, `reach`, `engagement` | First days of the month, last month's figures | `src/modules/workflow/cancellation-copy.ts` |
 | `payment_link` (proposed, T1) | Utility | `businessName`, `link` (URL button) | Onboarding ends and the owner must pay, window closed | not in code yet |
-| `payment_reminder` | Utility | `businessName`, `holdOn`, `link` (URL button) | Billing hold: days 1, 3 and 6 of an unpaid `pending` subscription | `src/modules/billing/hold-copy.ts` |
-| `payment_failed` | Utility | `businessName`, `holdOn` | Billing hold: days 1, 3 and 6 of a `past_due` subscription | `src/modules/billing/hold-copy.ts` |
-| `publishing_on_hold` | Utility | `businessName` | Billing hold: day 7, publishing paused | `src/modules/billing/hold-copy.ts` |
+| `payment_reminder` | Utility | `businessName`, `holdOn`, `link` (URL button) | Billing hold: days 1, 3 and 6 of an unpaid `pending` subscription | `src/modules/billing/hold.ts` |
+| `payment_failed` | Utility | `businessName`, `holdOn` | Billing hold: days 1, 3 and 6 of a `past_due` subscription | `src/modules/billing/hold.ts` |
+| `publishing_on_hold` | Utility | `businessName` | Billing hold: day 7, publishing paused | `src/modules/billing/hold.ts` |
 
 ### Bodies
 
@@ -63,7 +63,7 @@ Button: URL, "לתשלום", dynamic suffix `{{link}}`.
 
 - Every template is **Utility**: it is about the owner's own account, posts or subscription and is never promotional. Meta re-categorises a utility template as Marketing if it contains offers or sales wording, which costs more and needs opt-in; keep that wording out.
 - A variable may not start or end the body, and two variables may not sit side by side. `publication_confirmation` ends with an emoji after the variable for that reason. If Meta rejects a body for variable placement, add fixed words around the variable rather than changing the variable.
-- Sample values are required at submission. Use realistic ones: `businessName` = "מאפיית שושנה", `topic` = "חלות לשבת", `networks` = "אינסטגרם ופייסבוק", `deleteAfter` = "4 בדצמבר 2026", `holdOn` = "12 בנובמבר", `month` = "אוקטובר", `posts` = "8", `reach` = "1,240", `engagement` = "96".
+- Sample values are required at submission. Use realistic ones: `businessName` = "מאפיית שושנה", `topic` = "חלות לשבת", `networks` = "אינסטגרם ופייסבוק", `deleteAfter` = "4 בדצמבר 2026", `holdOn` = "10.11.2026", `month` = "אוקטובר", `posts` = "8", `reach` = "1,240", `engagement` = "96".
 - Links go in a URL button with a dynamic suffix, not in the body, so the domain is fixed and reviewable.
 
 ## Getting a template approved

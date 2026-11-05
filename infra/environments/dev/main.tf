@@ -1,5 +1,5 @@
 # Dev: always-on and cheap, simulators or test accounts only; deployable without a reviewer, from
-# main only (docs/deployment.md, Environments). Not applied by any
+# the dev branch only (docs/deployment.md, Environments). Not applied by any
 # agent: the human runs the apply (docs/deployment.md, gate H8).
 
 terraform {

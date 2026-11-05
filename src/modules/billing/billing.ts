@@ -7,6 +7,7 @@ import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { canTransition, transition } from '../../shared/state-machine.js';
 import type { Messaging } from '../messaging/index.js';
+import { log } from '../../shared/logger.js';
 import { holdCopy, holdOn, holdStep } from './hold.js';
 
 type SubscriptionEvent = (typeof subscriptionMachine.events)[number];
@@ -229,7 +230,7 @@ export function createBilling(options: BillingOptions): Billing {
           const action = await holdOne(id, at);
           if (action) done.push({ businessId: id, action });
         } catch (error) {
-          console.error(JSON.stringify({ level: 'error', msg: 'billing hold failed', businessId: id, error: error instanceof Error ? error.message : String(error) }));
+          log.error('billing hold failed', { businessId: id, error: error instanceof Error ? error : String(error) });
         }
       }
       return done;
@@ -275,7 +276,7 @@ export function createBilling(options: BillingOptions): Billing {
       const event = await provider.verifyWebhook(request);
       const { wasHeld, ...outcome } = await apply(event);
       if (wasHeld && options.resumeBusiness && !(await options.resumeBusiness(event.businessId))) {
-        console.error(JSON.stringify({ level: 'error', msg: 'billing hold: resume refused', businessId: event.businessId }));
+        log.error('billing hold: resume refused', { businessId: event.businessId });
       }
       if (outcome.kind !== 'applied' || outcome.to === 'pending') return outcome;
       if (outcome.to === 'cancelled' && options.onCancelled) {

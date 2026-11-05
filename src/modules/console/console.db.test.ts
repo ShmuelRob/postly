@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 const api = async (method: 'GET' | 'POST', url: string, payload?: object) => {
-  const res = await app.inject({ method, url: `/console/api${url}`, ...(payload ? { payload } : {}) });
+  const res = await app.inject({ method, url: `/console/api${url}`, ...(method === 'POST' ? { payload: payload ?? {} } : {}) });
   return { status: res.statusCode, body: res.json() as any };
 };
 const read = <T>(fn: (tx: Tx) => Promise<T>) => db.withSystem('console', fn);
