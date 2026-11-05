@@ -31,6 +31,11 @@ variable "image_tag" {
   type        = string
   default     = "bootstrap"
 }
+variable "app_metric_alerts" {
+  description = "Create the alerts on postly.* metrics; turn on after the first deploy (see the monitoring module)."
+  type        = bool
+  default     = false
+}
 variable "public_base_url" {
   description = "The public HTTPS base URL of the web service (provider webhooks, media links). Null uses the web service's run.app URL."
   type        = string
@@ -460,6 +465,7 @@ module "monitoring" {
 
   worker_service      = module.worker.name
   sql_max_connections = var.sql_max_connections
+  app_metric_alerts   = var.app_metric_alerts
 }
 
 output "image_repository" { value = module.registry.repository_url }

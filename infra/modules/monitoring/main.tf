@@ -26,6 +26,11 @@ variable "runbook_url" {
   type        = string
   default     = "https://github.com/ShmuelRob/postly/blob/main/docs/runbook.md"
 }
+variable "app_metric_alerts" {
+  description = "Create the alerts on the app's own postly.* metrics. Cloud Monitoring refuses an alert on a metric that has never been written, so this stays false until the first deploy has run and the metrics exist (docs/deploy-dev-guide.md, step 6)."
+  type        = bool
+  default     = false
+}
 variable "alert_email" {
   description = "Where alerts go. Null creates no channel (alerts still show in the console)."
   type        = string

@@ -37,6 +37,7 @@ module "postly" {
   region            = var.region
   env_name          = "stage"
   public_base_url   = var.public_base_url
+  app_metric_alerts = var.app_metric_alerts
   business_number   = var.business_number
   github_repository = var.github_repository
   alert_email       = var.alert_email

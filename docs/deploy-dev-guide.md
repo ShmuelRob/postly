@@ -34,7 +34,7 @@ gh auth login
 Terraform's `github` provider reads `GITHUB_TOKEN` from the environment (never from tfvars). Create a **fine-grained personal access token** at GitHub → Settings → Developer settings → Fine-grained tokens:
 
 - Resource owner: `ShmuelRob`; repository access: only `ShmuelRob/postly`.
-- Repository permissions, **Read and write**: Administration (branch protection), Contents (creating the `dev` branch), Environments, Variables. Metadata: read (added automatically).
+- Repository permissions, **Read and write**: Administration (branch protection), Contents (creating the `dev` branch), Environments, Variables (the repository variable `POSTLY_DEPLOY_DEV` and the environment variables). Metadata: read (added automatically).
 - A short expiry (7 days) is enough.
 
 Then, in the same PowerShell window you will run Terraform from:
@@ -126,7 +126,11 @@ Then build and push the image tagged `bootstrap` (Docker Desktop running):
 gcloud auth configure-docker me-west1-docker.pkg.dev --quiet
 docker build -t "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly:bootstrap" .
 docker push "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly:bootstrap"
+docker build -f Dockerfile.sandbox -t "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly-sandbox:bootstrap" .
+docker push "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly-sandbox:bootstrap"
 ```
+
+Dev also runs the sandbox (WP-51), which has its own image, so both `postly:bootstrap` and `postly-sandbox:bootstrap` must exist before pass 3.
 
 The build takes 5 to 10 minutes the first time (Chromium).
 
@@ -192,6 +196,18 @@ gh run watch --repo ShmuelRob/postly
 ```
 
 What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/healthz`. About **10 to 15 minutes** for a push (most of it the image build), 3 to 5 for a manual redeploy.
+
+### 6a. Turn on the alerts on the app's own metrics
+
+Four alerts watch metrics the app itself writes (publishing failures, job queue backlog, model cost, model validation). Cloud Monitoring refuses an alert on a metric that has never been written, so `app_metric_alerts` defaults to `false`. After the first deploy has run for about 10 minutes, add this line to `terraform.tfvars` and apply again:
+
+```powershell
+Add-Content infra/environments/dev/terraform.tfvars 'app_metric_alerts = true'
+terraform -chdir=infra/environments/dev plan -out dev.tfplan
+terraform -chdir=infra/environments/dev apply dev.tfplan
+```
+
+If the apply still says `Cannot find metric(s)`, the app has not written that metric yet (for example no post was published yet): wait, or set it back to `false`.
 
 ## 7. What you'll see
 
@@ -266,6 +282,10 @@ It worked when: the last Deploy run is green, `/healthz` returns `{"ok":true}`, 
 | `uptime_url check has malformed host`, or `public_base_url must be https://<lowercase host>` | `terraform.tfvars` still has a placeholder such as `public_base_url = "https://REPLACE_WITH_WEB_HOST"` | delete the `public_base_url` line (dev uses its `run.app` URL), then apply again |
 | `backup retention should be >= transaction log retention` creating `postly-dev` | an older checkout kept 7 days of transaction logs with only 3 backups | update to `main`, where the log retention follows the backups kept, then apply again |
 | `must specify a restriction on "resource.type" in the filter` creating an alert | an older checkout of the monitoring module | update to `main`, then apply again |
+| `Image '…/postly:bootstrap' not found` or `…/postly-sandbox:bootstrap' not found` | pass 1 of step 4b was skipped, or only one of the two images was pushed | push both bootstrap images (step 4b, pass 1), then continue with pass 2 |
+| `POST …/actions/variables: 403 Resource not accessible by personal access token` | the token lacks **Variables: Read and write** | edit the token (or make a new one) with that permission, set `$env:GITHUB_TOKEN` again, apply again |
+| `Cannot find metric(s) that match type = "workload.googleapis.com/postly…"` | `app_metric_alerts = true` before the app wrote its metrics | leave it `false` until after the first deploy (step 6a) |
+| `evaluation_missing_data must have a non-zero duration` | an older checkout of the monitoring module | update to `main` and apply again |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 
