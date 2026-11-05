@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { trustHops } from './trust-proxy.js';
 import { registerBillingRoutes, type Billing } from './modules/billing/index.js';
 import { registerMessagingRoutes, type Messaging } from './modules/messaging/index.js';
 
@@ -13,6 +14,11 @@ export interface ServerOptions {
    * leave it off.
    */
   sweepEveryMs?: number;
+  /**
+   * Proxy hops in front of the process (docs/security.md, D8): 1 behind Cloud Run's front end, unset
+   * locally. Only that many X-Forwarded-For entries are trusted; the IP is never authentication.
+   */
+  trustProxyHops?: number;
 }
 
 /**
@@ -20,7 +26,7 @@ export interface ServerOptions {
  * that builds real providers from configuration comes with the adapters and deployment (WP-41, WP-44).
  */
 export function buildServer(options: ServerOptions): FastifyInstance {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, ...trustHops(options.trustProxyHops) });
   app.get('/healthz', async () => ({ ok: true }));
   registerMessagingRoutes(app, options);
   const sweepEveryMs = options.sweepEveryMs;
