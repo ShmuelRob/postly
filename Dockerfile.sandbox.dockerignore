@@ -1,0 +1,14 @@
+# The dev sandbox image (Dockerfile.sandbox) only; the product image uses .dockerignore.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!tsconfig.sandbox.json
+!src/**
+!assets/**
+!playground/**
+!test/e2e/harness/record.ts
+src/**/*.test.ts
+src/**/*.test.tsx
+playground/**/*.test.ts

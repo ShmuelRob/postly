@@ -12,6 +12,7 @@ import {
   WebhookRequest,
   WindowClosedError,
 } from '../contracts/providers/messaging.js';
+import { fromBase64, refill, toBase64 } from './persistent.js';
 
 export const SIMULATOR_SIGNATURE_HEADER = 'x-simulator-signature';
 
@@ -65,6 +66,28 @@ export class MessagingSimulator implements MessagingProvider {
     this.url = options.webhookUrl ?? 'https://postly.example.test/webhooks/messaging';
     this.now = options.now ?? (() => new Date());
     this.enforceWindow = options.enforceWindow ?? false;
+  }
+
+  /** Everything the simulator holds, as JSON (simulated mode, src/simulators/persistent.ts). */
+  exportState(): unknown {
+    return {
+      sent: this.sent,
+      media: [...this.media].map(([id, m]) => [id, { mimeType: m.mimeType, data: toBase64(m.data) }]),
+      sendFailures: this.sendFailures.map((e) => e.message),
+      lastInbound: [...this.lastInbound].map(([phone, at]) => [phone, at.toISOString()]),
+      nextId: this.nextId,
+    };
+  }
+
+  importState(state: unknown): void {
+    const s = state as { sent: SentMessage[]; media: [string, { mimeType: string; data: string }][]; sendFailures: string[]; lastInbound: [string, string][]; nextId: number };
+    refill(this.sent, s.sent);
+    this.media.clear();
+    for (const [id, m] of s.media) this.media.set(id, { mimeType: m.mimeType, data: fromBase64(m.data) });
+    refill(this.sendFailures, s.sendFailures.map((m) => new Error(m)));
+    this.lastInbound.clear();
+    for (const [phone, at] of s.lastInbound) this.lastInbound.set(phone, new Date(at));
+    this.nextId = s.nextId;
   }
 
   async sendText(request: SendTextRequest): Promise<SendResult> {
