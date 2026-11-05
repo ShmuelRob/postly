@@ -20,7 +20,7 @@ Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 ins
                              Cloud SQL Postgres 17 (private IP only, TLS, backups + PITR)
 Secret Manager: one secret per database login, the admin URL, vendor keys (values added by the human)
 Cloud Storage: customer media bucket (private, versioned, lifecycle)
-Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
+Cloud Monitoring: uptime check, alerts, log-based metrics, web SLO, three dashboards (observability.md)
 ```
 
 **Logs.** Every process writes one JSON line per event to stdout in Cloud Logging's structured format (`severity`, `message`, the trace field, and labels with the request, business, message and job ids); Cloud Run ships them to Cloud Logging with no agent. No customer content, phone numbers or secrets reach a line. Format and rules: [observability.md](observability.md).
