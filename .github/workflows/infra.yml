@@ -1,6 +1,7 @@
 name: Infra
 
-# Builds the production image and checks the Terraform on every PR and on main. It never pushes an
+# Builds the production image and checks the Terraform on pushes to dev, stage and main, and on PRs
+# that touch them (the image: anything but docs and infra/; the Terraform: infra/). It never pushes an
 # image, never authenticates to Google Cloud and never plans or applies (docs/deployment.md).
 
 on:
@@ -16,7 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+      terraform: ${{ steps.diff.outputs.terraform }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo image=true >> "$GITHUB_OUTPUT"; echo terraform=true >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)
+          echo "$files"
+          echo "image=$(echo "$files" | grep -qvE '^(infra/|docs/|[^/]+\.md$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "terraform=$(echo "$files" | grep -qE '^(infra/|\.github/workflows/infra\.yml$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -48,6 +70,8 @@ jobs:
         run: docker compose -p ci logs --no-color || true
 
   terraform:
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
