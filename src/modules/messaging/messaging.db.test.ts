@@ -6,7 +6,7 @@ import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { buildServer } from '../../server.js';
 import { MessagingSimulator } from '../../simulators/messaging.js';
-import { createMessaging, type InboundBurst, type Timers, WEBHOOK_PATH } from './index.js';
+import { createMessaging, type InboundBurst, type Messaging, type Timers, WEBHOOK_PATH } from './index.js';
 
 const db = createDatabase(inject('databaseUrls'), { max: 2 });
 afterAll(() => db.close());
@@ -24,7 +24,13 @@ function manualTimers() {
     },
     clear: (h) => void due.delete(h as number),
   };
-  return { timers, fire: () => [...due.values()].forEach((fn) => fn()), pending: () => due.size };
+  /** Runs every due timer once and forgets it, as a real timer would. */
+  const fire = () => {
+    const fns = [...due.values()];
+    due.clear();
+    fns.forEach((fn) => fn());
+  };
+  return { timers, fire, pending: () => due.size };
 }
 
 async function setup(options: { now?: () => Date } = {}) {
@@ -62,12 +68,15 @@ describe('messaging module', () => {
   });
 
   it('merges a burst until the quiet period passes, and hands button replies over at once', async () => {
-    const { owner, sim, bursts, clock, messaging } = await setup();
+    let t = Date.now();
+    const { owner, sim, bursts, clock, messaging } = await setup({ now: () => new Date(t) });
     await messaging.receive(sim.inboundText(owner, 'יש מבצע'));
     await messaging.receive(sim.inboundImage(owner, 'ME-1', 'חלות'));
     await messaging.receive(sim.inboundText(owner, '2 ב-20'));
     expect(bursts).toHaveLength(0);
+    // One wake-up per sender, however many messages (the job's singletonKey).
     expect(clock.pending()).toBe(1);
+    t += 20_000;
     clock.fire();
     await expect.poll(() => bursts.length).toBe(1);
     expect(bursts[0]?.text).toBe('יש מבצע\nחלות\n2 ב-20');
@@ -229,8 +238,8 @@ describe('sweep of unprocessed messages (review queue item 14)', () => {
     expect(mine.map((b) => b.text)).toEqual(['שלום']);
   });
 
-  it('leaves a burst still waiting in this process alone', async () => {
-    const { businessId, owner, sim } = await setup({ now: () => new Date(Date.now() - 60_000) });
+  it('leaves a burst still inside its quiet window alone', async () => {
+    const { businessId, owner, sim } = await setup();
     const bursts: InboundBurst[] = [];
     const handler = { handleInbound: async (b: InboundBurst) => void bursts.push(b) };
     const messaging = createMessaging({ db, provider: sim, businessNumber: BUSINESS_NUMBER, handler, timers: manualTimers().timers });
@@ -263,12 +272,119 @@ describe('sweep while a burst is being delivered', () => {
     });
     await messaging.receive({ ...sim.inboundText(owner, 'שלום'), providerMessageId: `SM-${randomUUID()}` });
     const flushing = messaging.flushBursts();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(handled).toHaveLength(1);
+    await expect.poll(() => handled.length).toBe(1);
     await messaging.sweepUnprocessed({ businessId });
     release();
     await flushing;
     await messaging.sweepUnprocessed({ businessId });
     expect(handled).toHaveLength(1);
+  });
+});
+
+describe('durable bursts across instances (T2, review queue items 13, 14, 24)', () => {
+  /** Two messaging instances on one database, as two web instances are, on one clock. */
+  async function twoInstances(handle: (b: InboundBurst) => Promise<void> = async () => {}) {
+    let t = Date.now();
+    const now = () => new Date(t);
+    const { businessId, owner, sim } = await setup({ now });
+    const handled: InboundBurst[] = [];
+    const errors: unknown[] = [];
+    const instance = () => {
+      const clock = manualTimers();
+      const messaging = createMessaging({
+        db,
+        provider: sim,
+        businessNumber: BUSINESS_NUMBER,
+        timers: clock.timers,
+        now,
+        onError: (e) => errors.push(e),
+        handler: {
+          handleInbound: async (b) => {
+            if (b.businessId !== businessId) return;
+            handled.push(b);
+            await handle(b);
+          },
+        },
+      });
+      return { clock, messaging };
+    };
+    const send = (m: Pick<Messaging, 'receive'>, text: string) => m.receive({ ...sim.inboundText(owner, text), providerMessageId: `SM-${randomUUID()}` });
+    return { businessId, owner, a: instance(), b: instance(), handled, errors, send, now, advance: (ms: number) => void (t += ms) };
+  }
+  const slow = () => new Promise<void>((r) => setTimeout(r, 20));
+
+  it('hands one burst received by two instances over exactly once, with every message', async () => {
+    const { a, b, handled, send, advance } = await twoInstances(slow);
+    await send(a.messaging, 'יש מבצע');
+    await send(b.messaging, 'על חלות');
+    await send(a.messaging, '2 ב-20');
+    advance(20_000);
+    a.clock.fire();
+    b.clock.fire();
+    await expect.poll(() => handled.length).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(handled).toHaveLength(1);
+    expect(handled[0]?.text).toBe('יש מבצע\nעל חלות\n2 ב-20');
+  });
+
+  it('two concurrent claims for the same sender hand the burst over once', async () => {
+    const { businessId, owner, a, b, handled, send, advance } = await twoInstances(slow);
+    await send(a.messaging, 'שלום');
+    await send(b.messaging, 'מה נשמע');
+    advance(20_000);
+    const counts = await Promise.all([a.messaging.processBurst(businessId, owner), b.messaging.processBurst(businessId, owner)]);
+    expect(handled).toHaveLength(1);
+    expect(counts.sort()).toEqual([0, 2]);
+    const rows = await db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.message));
+    expect(rows.every((r) => r.processedAt !== null && r.claimedAt !== null)).toBe(true);
+  });
+
+  it('waits until the newest message of the burst is quiet, on whichever instance wakes', async () => {
+    const { a, b, handled, send, advance } = await twoInstances();
+    await send(a.messaging, 'יש מבצע');
+    advance(15_000);
+    await send(b.messaging, 'על חלות');
+    advance(6_000);
+    a.clock.fire();
+    // The early wake-up asked for another one at the newest message plus the quiet window.
+    await expect.poll(() => a.clock.pending()).toBe(1);
+    expect(handled).toHaveLength(0);
+    advance(15_000);
+    a.clock.fire();
+    await expect.poll(() => handled.length).toBe(1);
+    expect(handled[0]?.messages).toHaveLength(2);
+  });
+
+  it('takes a claim again only once it is older than 5 minutes', async () => {
+    const { businessId, a, handled, send, advance, now } = await twoInstances();
+    await send(a.messaging, 'שלום');
+    advance(60_000);
+    // A process claimed the message and died before handing it over.
+    const claim = (at: Date) =>
+      db.withBusiness('messaging', businessId, (tx) => tx.update(schema.message).set({ claimedAt: at }).where(eq(schema.message.businessId, businessId)));
+    await claim(new Date(now().getTime() - 60_000));
+    await a.messaging.sweepUnprocessed({ businessId });
+    expect(handled).toHaveLength(0);
+    await claim(new Date(now().getTime() - 6 * 60_000));
+    await a.messaging.sweepUnprocessed({ businessId });
+    expect(handled).toHaveLength(1);
+  });
+
+  it('a handler that throws releases its claim, so the sweep hands the burst over again', async () => {
+    let fail = true;
+    const { businessId, a, handled, errors, send, advance } = await twoInstances(async () => {
+      if (!fail) return;
+      fail = false;
+      throw new Error('workflow down');
+    });
+    await send(a.messaging, 'שלום');
+    advance(20_000);
+    a.clock.fire();
+    await expect.poll(() => errors.length).toBe(1);
+    const [row] = await db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.message));
+    expect(row).toMatchObject({ processedAt: null, claimedAt: null });
+    advance(1_000);
+    await a.messaging.sweepUnprocessed({ businessId });
+    expect(handled).toHaveLength(2);
   });
 });

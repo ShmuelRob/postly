@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { createDatabase, createPgBossQueue, provisionDatabase } from './db/index.js';
 import { createDesignRenderer } from './modules/design/index.js';
 import type { DeletionStorage } from './modules/business-data/index.js';
-import type { MediaStorage } from './modules/messaging/index.js';
+import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake, type MediaStorage } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
 import { createConsole } from './modules/console/index.js';
 import { buildServer } from './server.js';
@@ -63,8 +63,11 @@ async function main(command: string | undefined) {
     },
     store: { put: (path, bytes, mimeType) => media.put(path, bytes, mimeType) },
   });
+  // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
+  const queue = await createPgBossQueue({ connectionString: config.jobsUrl });
   const app = createApp({
     db,
+    burstWake: jobBurstWake(queue),
     providers: { messaging: new MessagingSimulator({ webhookSecret: config.webhookSecret }), publishing: new PublishingSimulator(), models: { google: new ModelSimulator() }, payment: new PaymentSimulator() },
     design,
     media,
@@ -75,7 +78,8 @@ async function main(command: string | undefined) {
   const stops: Array<() => Promise<void> | void> = [];
   if (command === 'web') {
     const server = buildServer({ messaging: app.messaging, ...(app.billing ? { billing: app.billing } : {}), publicBaseUrl: config.publicBaseUrl });
-    stops.push(app.start(), () => server.close());
+    await queue.register<InboundBurstJob>(INBOUND_BURST_JOB, async (job) => void (await app.messaging.processBurst(job.businessId, job.from)), { policy: 'short' });
+    stops.push(app.start(), () => server.close(), () => queue.stop());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else if (command === 'console') {
     // Its own internal-only service (docs/security.md): deployed, the gate is the ingress and IAM.
@@ -84,7 +88,7 @@ async function main(command: string | undefined) {
     stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
-    const queue = await startWorkerProcess({ queue: await createPgBossQueue({ connectionString: config.jobsUrl }), weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });
+    await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport });
     // Cloud Run services need a port to probe; the worker serves only its health check.
     const health = Fastify({ logger: false });
     health.get('/healthz', async () => ({ ok: true }));

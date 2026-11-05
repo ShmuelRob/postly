@@ -185,7 +185,7 @@ describe('ModelSimulator scripting', () => {
 
   it('transcribes by audio url, then by queue, then by default', async () => {
     const sim = new ModelSimulator();
-    const req = (audioUrl: string) => ({ model: 'simulator-model', audioUrl, languageHint: 'he' as const });
+    const req = (audioUrl: string) => ({ model: 'simulator-model', prompt: 'Transcribe.', audioUrl, languageHint: 'he' as const });
     sim.setTranscript('https://storage.example.test/a.ogg', { text: 'יש לנו צבעונים', language: 'he' });
     sim.scriptTranscription({ text: 'queued', language: 'ar' });
     expect(await sim.transcribeAudio(req('https://storage.example.test/a.ogg'))).toMatchObject({ text: 'יש לנו צבעונים' });

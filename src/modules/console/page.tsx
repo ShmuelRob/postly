@@ -230,7 +230,7 @@ document.addEventListener('click', async (e) => {
   if (!b) return;
   b.disabled = true;
   const body = b.dataset.body;
-  const res = await fetch(b.dataset.action, { method: 'POST', headers: body ? { 'content-type': 'application/json' } : {}, body });
+  const res = await fetch(b.dataset.action, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body ?? '{}' });
   if (res.ok) return location.reload();
   const out = await res.json().catch(() => ({}));
   document.getElementById('status').textContent = 'Refused: ' + (out.reason || res.status) + (out.detail ? ' (' + out.detail + ')' : '');
