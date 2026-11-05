@@ -72,6 +72,7 @@ Roughly **280 to 330 USD a month**, almost all of it fixed, because dev is sized
 | Cloud Run web | 1 vCPU, 2 GiB, 1 instance always on, CPU always allocated | (1 × 0.000018 + 2 × 0.000002) USD/s × 2.63 M s | ~58 to 65 |
 | Cloud Run worker | 2 vCPU, 4 GiB, 1 instance always on, CPU always allocated | (2 × 0.000018 + 4 × 0.000002) USD/s × 2.63 M s | ~115 to 130 |
 | Cloud Run console | scales to zero, CPU only during requests | used rarely | ~0 |
+| Console load balancer (IAP sign-in) | one global forwarding rule, created only once `console_iap_client_id` is set | ~0.025 USD/h × 730 h | ~18 |
 | Secret Manager, Artifact Registry, logs (7 days), monitoring, VPC | small | | ~5 to 10 |
 
 The worker is the biggest line. Gemini calls (Vertex AI) are billed per use and are near zero on the simulators.
@@ -201,7 +202,7 @@ terraform -chdir=infra/environments/dev output -json postly
 gcloud run services list --region me-west1
 ```
 
-The public one is `postly-dev-web`, at `https://postly-dev-web-<hash>.me-west1.run.app` (output `web_url`). Worker and console have URLs too, but internal ingress refuses requests from the internet.
+The public one is `postly-dev-web`, at `https://postly-dev-web-<hash>.me-west1.run.app` (output `web_url`). Worker and console have run.app URLs too, but their ingress refuses requests from the internet; the console is reached only through its load balancer.
 
 **`/healthz`.**
 
@@ -211,7 +212,22 @@ curl.exe -s "$(gcloud run services describe postly-dev-web --region me-west1 --f
 
 returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no public page.
 
-**The internal console.** It is the `postly-dev-console` service, with internal-only ingress and no public invoker ([security.md](security.md#console-exposure)). You cannot open it from your laptop, not even with `gcloud run services proxy`. The path T3 chose is a small bastion VM inside the dev VPC, reached with `gcloud compute ssh --tunnel-through-iap`, that calls the console's internal URL with an identity token (or forwards a port for your browser). **The bastion is not in Terraform yet**, so today the deployed console is unreachable; that is the safe default, and the bastion is a follow-up. The console also has no sign-in (security.md, D1).
+**The internal console.** It is the `postly-dev-console` service, reached through an HTTPS load balancer where you sign in with your Google account (IAP; [security.md](security.md#console-exposure)). Its own run.app URL refuses requests from the internet. Terraform builds the load balancer only after a one-time manual OAuth setup, so until you do it the console is unreachable (the safe default) and costs nothing. When you want it:
+
+1. Do the OAuth consent screen (External), the OAuth client (Web application, with the IAP redirect URI), the client secret and the IAP service agent, as in [deployment.md](deployment.md#console-sign-in-one-time-steps).
+2. Add to `infra/environments/dev/terraform.tfvars`:
+
+   ```hcl
+   console_iap_client_id = "<CLIENT_ID>.apps.googleusercontent.com"
+   console_members       = ["user:<your-google-account>@gmail.com"]
+   # console_domain      = "console-dev.<your domain>"   # optional; unset uses <ip>.sslip.io
+   ```
+
+3. `terraform -chdir=infra/environments/dev plan -out=dev.tfplan`, review it, and `terraform -chdir=infra/environments/dev apply dev.tfplan`.
+4. With a domain, point an `A` record at the output `console_ip`. Without one, the output `console_url` is already an `sslip.io` name (fine for dev; use a real domain for stage and prod). The managed certificate needs up to about an hour before HTTPS works.
+5. Open `console_url` (it ends in `/console`) and sign in. An account not in `console_members` gets IAP's "You don't have access" page.
+
+This adds about 18 USD a month.
 
 **Logs.** Console → Logging → Logs Explorer, or:
 
