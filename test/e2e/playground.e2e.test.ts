@@ -63,7 +63,7 @@ e2eTest('the owner plays onboarding in the playground, from the first message to
   // 1. The first message: the intro and the first profile question.
   await write('היי, נרשמתי לפוסטלי');
   await expect.poll(lastReply, timeout).toContain(copy.questions.business);
-  expect((await replies())[0]).toContain(copy.intro);
+  expect((await replies())[0]).toContain(copy.intro('פוסטלי'));
 
   // 2. A voice note answers the business question (transcribed, then extracted).
   await page.getByTestId('upload-voice').setInputFiles({ name: 'answer.ogg', mimeType: 'audio/ogg', buffer: Buffer.from('OggS') });
