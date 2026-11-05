@@ -286,6 +286,7 @@ It worked when: the last Deploy run is green, `/healthz` returns `{"ok":true}`, 
 | `POST …/actions/variables: 403 Resource not accessible by personal access token` | the token lacks **Variables: Read and write** | edit the token (or make a new one) with that permission, set `$env:GITHUB_TOKEN` again, apply again |
 | `Cannot find metric(s) that match type = "workload.googleapis.com/postly…"` | `app_metric_alerts = true` before the app wrote its metrics | leave it `false` until after the first deploy (step 6a) |
 | `evaluation_missing_data must have a non-zero duration` | an older checkout of the monitoring module | update to `main` and apply again |
+| Deploy fails at `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | `github_repository` in `terraform.tfvars` differs from the repository's exact name, for example in letter case (`shmuelrob/postly`) | delete the line (the default is `ShmuelRob/postly`) or fix the case, apply again, then re-run Deploy |
 | `Error acquiring the state lock` | an earlier apply was interrupted | make sure nothing else runs, then `terraform force-unlock <id>` |
 | A process logs `MESSAGING_WEBHOOK_SECRET is required` | the generated secret has no version | apply again; Terraform writes it (`stack/secret_values.tf`) |
 
