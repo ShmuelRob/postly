@@ -133,7 +133,7 @@ In WhatsApp Business, a business-initiated message more than 24 hours after the 
 ## Payment, support, and disconnection
 
 - Payment: there is no trial; the owner pays at once. The price is ILS 300 a month (decided 2026-11-04), kept in one setting the team can change from the console, with a history of every change; a new price applies to payment links sent after the change. When onboarding finishes (the channels pass their test and the business becomes active), the agent sends a payment link in WhatsApp; payment happens on the payment provider's page, and only identifiers and status are stored. The payment provider is not yet selected (PayPlus and Grow are candidates), so the payment simulator stands in behind an internal layer.
-- Unpaid and failed payments (proposed, waiting for the human): a subscription whose renewal fails becomes `past_due`. It gets a 7-day grace period with WhatsApp reminders (on days 1, 3 and 6); publishing continues during the grace period and then pauses until payment succeeds. `past_due` never deletes data, never cancels the subscription by itself, and blocks nothing else: the owner can still send updates and approve drafts. Payment recovers the subscription to `active` and publishing resumes.
+- Unpaid and failed payments (billing hold, T16, 2026-11-05): an owner who has not paid gets a 7-day grace period. It starts when the first payment link is sent (`pending`), or when a renewal fails (`past_due`). WhatsApp reminders go out on days 1, 3 and 6; publishing continues during the grace period. On day 7 publishing pauses: the business is paused through the same per-business pause the team uses, the owner is told, and nothing is deleted or cancelled: drafts, approvals already given, scheduled posts and all data stay. While paused, as with a team pause, new approvals and publishing wait. Payment recovers the subscription to `active`, resumes the business, and the waiting posts publish. A pause the team set is never lifted by a payment.
 - Support: when the agent gets stuck, the founder responds during the pilot, in hours to be defined.
 - Cancellation and disconnection: channels are disconnected immediately, and data is deleted after a retention period, 30 days by default (provisional until the human sets it).
 - Global pause: a console button stops all publishing during security events and days of mourning.
@@ -246,7 +246,7 @@ flowchart TD
 ### Open questions
 
 - Payment provider: PayPlus and Grow are the candidates, with a placeholder implementation for now.
-- What ILS 300 includes, and the proposed `past_due` behavior (7-day grace with reminders, then publishing pauses).
+- What ILS 300 includes, and the billing hold copy (H6).
 - Pilot support hours, and the data deletion period after cancellation (30 days provisionally).
 - A written answer on WhatsApp policy, plus legal entity setup, Meta Business verification, a phone number, and templates.
 - Testing Zernio and Ayrshare: link-based connection, Hebrew, carousels, failure notifications, performance data, and terms of use.
