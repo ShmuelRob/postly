@@ -206,6 +206,50 @@ e2eTest('the mock checkout reports a failed payment and a cancelled one', async 
   }
 }, 120_000);
 
+e2eTest('a new sign-up from the number in the middle of onboarding starts an empty chat', async ({ task, e2e }) => {
+  void e2e;
+  const record = task.meta.e2e!;
+  const timeout = { timeout: 30_000 };
+  const messages = async () => (await sandbox.state()).messages;
+  const lastReply = async () => (await messages()).filter((m) => m.direction === 'to_owner').at(-1)?.text ?? '';
+  const write = (text: string) => sandbox.send({ kind: 'text', text });
+
+  // The human starts onboarding and is two answers in.
+  const before = await sandbox.signUp();
+  await write('היי, אני רוצה להירשם');
+  await expect.poll(lastReply, timeout).toContain(copy.questions.business);
+  await write('הפרחים של רינה, חנות פרחים');
+  await expect.poll(lastReply, timeout).toContain(copy.questions.location);
+  expect((await messages()).length).toBeGreaterThanOrEqual(4);
+
+  // They press "new sign-up from this number" in the sandbox UI.
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  await page.goto(ui.url);
+  await expect.poll(() => page.getByTestId('chat').getByTestId('bubble-to_owner').count(), timeout).toBeGreaterThan(0);
+  await page.getByTestId('sign-up').click();
+  await expect.poll(async () => (await sandbox.state()).business.id, timeout).not.toBe(before);
+  await expect.poll(() => page.getByTestId('chat').locator('.bubble').count(), timeout).toBe(0);
+  await shot(page, record, 'after-sign-up', 'The sandbox right after a new sign-up from the number: an empty chat');
+  const state = await sandbox.state();
+  expect(state.business.status).toBe('onboarding');
+  expect(state.messages).toEqual([]);
+  // The earlier businesses' posts are not this sign-up's: the feed is empty too.
+  expect(state.feed).toEqual({ instagram: [], facebook: [] });
+  await expect.poll(() => page.getByTestId('feed').getByTestId('feed-post').count(), timeout).toBe(0);
+
+  // The new onboarding starts from the first question; nothing of the earlier conversation comes back.
+  await write('שלום, הרשמה חדשה');
+  await expect.poll(lastReply, timeout).toContain(copy.questions.business);
+  const after = await messages();
+  expect(after[0]).toMatchObject({ direction: 'from_owner', text: 'שלום, הרשמה חדשה' });
+  expect(after.some((m) => m.text?.includes('הפרחים של רינה') || m.text?.includes(copy.questions.location))).toBe(false);
+  await expect.poll(() => page.getByTestId('chat').getByTestId('bubble-from_owner').count(), timeout).toBe(1);
+  await shot(page, record, 'new-onboarding', 'The new sign-up: only its own conversation in the chat');
+  await page.close();
+
+  record.transcript.push(...(await sandbox.transcript()));
+}, 120_000);
+
 async function shot(page: Page, record: E2eRecord, name: string, title: string) {
   const path = `${SHOTS}/simulated-dev-${name}.png`;
   const image = await page.screenshot({ path, fullPage: true });
