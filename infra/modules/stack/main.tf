@@ -303,6 +303,9 @@ module "monitoring" {
   web_service  = module.web.name
   sql_instance = module.sql.instance_name
   alert_email  = var.alert_email
+
+  worker_service      = module.worker.name
+  sql_max_connections = var.sql_max_connections
 }
 
 output "image_repository" { value = module.registry.repository_url }

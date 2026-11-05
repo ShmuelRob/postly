@@ -1,6 +1,7 @@
-# Monitoring and alerting: an uptime check on the web health endpoint, and alerts on web 5xx,
-# error log lines from any process, Cloud SQL CPU and disk, and a failed migration job. Alerts go to
-# the email channel the human names (no value is committed).
+# Monitoring and alerting (docs/observability.md, "Dashboards and alerts"): an uptime check on the web
+# health endpoint, alerts (main.tf, alerts.tf), log-based metrics (logs.tf), the web availability SLO
+# (slo.tf) and the dashboards (dashboards.tf). Alerts go to the email channel the human names (no value
+# is committed). Every alert links to its entry in docs/runbook.md. Never applied by an agent.
 
 variable "project_id" { type = string }
 variable "env_name" { type = string }
@@ -10,6 +11,21 @@ variable "web_host" {
 }
 variable "web_service" { type = string }
 variable "sql_instance" { type = string }
+variable "worker_service" { type = string }
+variable "sql_max_connections" {
+  description = "Cloud SQL max_connections, for the connections-near-max alert."
+  type        = number
+}
+variable "model_cost_hourly_usd" {
+  description = "Model spend in one hour above which the cost-spike alert fires."
+  type        = number
+  default     = 5
+}
+variable "runbook_url" {
+  description = "Base URL of docs/runbook.md; each alert links to <runbook_url>#<anchor>."
+  type        = string
+  default     = "https://github.com/ShmuelRob/postly/blob/main/docs/runbook.md"
+}
 variable "alert_email" {
   description = "Where alerts go. Null creates no channel (alerts still show in the console)."
   type        = string
@@ -26,6 +42,13 @@ resource "google_monitoring_notification_channel" "email" {
 
 locals {
   channels = google_monitoring_notification_channel.email[*].name
+  runbook  = { for anchor in local.runbook_anchors : anchor => "Runbook: ${var.runbook_url}#${anchor}" }
+
+  runbook_anchors = [
+    "web-health-check-failing", "web-5xx-responses", "error-log-lines", "cloud-sql-cpu-or-disk-high",
+    "publishing-failures", "webhook-errors", "pgboss-backlog", "worker-not-running", "channel-disconnected",
+    "cost-spike", "model-validation-failures", "cloud-sql-connections-near-max", "error-budget-burn",
+  ]
 }
 
 resource "google_monitoring_uptime_check_config" "web" {
@@ -50,6 +73,10 @@ resource "google_monitoring_alert_policy" "uptime" {
   display_name          = "Postly ${var.env_name}: web health check failing"
   combiner              = "OR"
   notification_channels = local.channels
+  documentation {
+    content   = local.runbook["web-health-check-failing"]
+    mime_type = "text/markdown"
+  }
   conditions {
     display_name = "healthz down"
     condition_threshold {
@@ -72,6 +99,10 @@ resource "google_monitoring_alert_policy" "web_5xx" {
   display_name          = "Postly ${var.env_name}: web 5xx responses"
   combiner              = "OR"
   notification_channels = local.channels
+  documentation {
+    content   = local.runbook["web-5xx-responses"]
+    mime_type = "text/markdown"
+  }
   conditions {
     display_name = "5xx rate"
     condition_threshold {
@@ -103,6 +134,10 @@ resource "google_monitoring_alert_policy" "errors" {
   display_name          = "Postly ${var.env_name}: error log lines"
   combiner              = "OR"
   notification_channels = local.channels
+  documentation {
+    content   = local.runbook["error-log-lines"]
+    mime_type = "text/markdown"
+  }
   conditions {
     display_name = "errors logged"
     condition_threshold {
@@ -123,6 +158,10 @@ resource "google_monitoring_alert_policy" "sql" {
   display_name          = "Postly ${var.env_name}: Cloud SQL CPU or disk high"
   combiner              = "OR"
   notification_channels = local.channels
+  documentation {
+    content   = local.runbook["cloud-sql-cpu-or-disk-high"]
+    mime_type = "text/markdown"
+  }
   conditions {
     display_name = "CPU above 80%"
     condition_threshold {

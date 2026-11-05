@@ -19,7 +19,7 @@ Artifact Registry ──image──> Cloud Run: web (Fastify)      public, 1 ins
                              Cloud SQL Postgres 17 (private IP only, TLS, backups + PITR)
 Secret Manager: one secret per database login, the admin URL, vendor keys (values added by the human)
 Cloud Storage: customer media bucket (private, versioned, lifecycle)
-Cloud Monitoring: uptime check, web 5xx, error log lines, Cloud SQL CPU and disk
+Cloud Monitoring: uptime check, alerts, log-based metrics, web SLO, three dashboards (observability.md)
 ```
 
 - **One image** (`Dockerfile`): Node 26 on Debian slim, Playwright Chromium with its system libraries, and sharp. `tsc -p tsconfig.build.json` compiles `src/` to `dist/` (tests, fixtures and the simulator contract suites are excluded; `playground/` and `test/` never enter the build context, see `.dockerignore`). It runs as the non-root `node` user. The command picks the process: `web`, `worker`, `console`, or `migrate` (`src/main.ts`).
