@@ -111,6 +111,8 @@ The agent sees only what its task needs, all from one business (`withBusiness`):
 
 It never sees phone numbers (the approver's number is replaced by "the owner"), other businesses, tokens, provider ids, or payment data.
 
+**Not yet in WP-90's context builder.** Three items above are still missing: `rules` is empty, posts carry their plan and state but not their current captions and `DesignSpec`, and photos are asset ids without their `image_review` notes. The `workflow` role the module runs as cannot read `preference_rule` or `post_version`, and no `image_review` v2 notes exist yet. The agent package that first needs each item adds it to `context.ts`, together with the grants (H4): the rules and the current version by WP-94 at the latest (`apply_change` works on the current captions), the photo notes with `image_review` v2 (WP-94).
+
 ### Photos the agent sees
 
 The agent's model call is text only. Every photo the owner sends is reviewed once, when it arrives, by `image_review` (a bounded vision task), whose output gains a short `description`, a suggested `crop`, a suggested `rotateDeg`, and suggested `brightness` and `contrast`. The agent reads those notes and chooses the edits; code clamps them to the allowed ranges. This keeps every agent step cheap and the vision call bounded.
