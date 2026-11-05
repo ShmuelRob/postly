@@ -29,6 +29,12 @@ export interface H5Db {
   }): Promise<string>;
   /** Simulates a crash after the provider accepted the post: the row holds its provider id and waits for a retry. */
   markRetryPending(publicationId: string, providerPostId: string): Promise<void>;
+  /**
+   * Writes a later version of the post that copies the current version's content and content hash,
+   * makes it current, invalidates earlier approvals and puts the post back to awaiting approval, the
+   * way a change that reproduced the same hash would. Returns the new version's id.
+   */
+  forgeSameHashVersion(postId: string): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -91,6 +97,24 @@ export function openH5Db(): H5Db {
       await rows(
         sql`update publication set status = 'retry_pending', provider_post_id = ${providerPostId}, attempts = 1 where id = ${publicationId}`,
       );
+    },
+    async forgeSameHashVersion(postId) {
+      // Each write runs as the role that owns it, since the console role cannot write versions.
+      const [post] = await rows(sql`select business_id from post where id = ${postId}`);
+      if (!post) throw new Error('forgeSameHashVersion: no such post');
+      const businessId = post.business_id as string;
+      const as = (role: 'content' | 'approval', query: ReturnType<typeof sql>) =>
+        db.withBusiness(role, businessId, async (tx) => (await tx.execute(query)) as unknown as Row[]);
+      const [inserted] = await as('content', sql`
+        insert into post_version (business_id, post_id, version_number, captions, rendered_media, fact_sources, fact_check_passed, content_hash)
+        select v.business_id, v.post_id, (select max(version_number) + 1 from post_version where post_id = ${postId}),
+               v.captions, v.rendered_media, v.fact_sources, v.fact_check_passed, v.content_hash
+        from post p join post_version v on v.id = p.current_version_id where p.id = ${postId}
+        returning id`);
+      if (!inserted) throw new Error('forgeSameHashVersion: the post has no current version');
+      await as('approval', sql`update approval set invalidated_at = now() where post_id = ${postId} and invalidated_at is null`);
+      await as('content', sql`update post set current_version_id = ${inserted.id as string}, status = 'awaiting_approval' where id = ${postId}`);
+      return inserted.id as string;
     },
     close: () => db.close(),
   };

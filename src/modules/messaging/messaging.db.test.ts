@@ -198,6 +198,37 @@ describe('sweep of unprocessed messages (review queue item 14)', () => {
     expect(mine).toHaveLength(1);
   });
 
+  it('skips an unreadable row and still hands the other bursts over', async () => {
+    const { businessId, owner, sim } = await setup({ now: () => new Date(Date.now() - 60_000) });
+    const other = await setup();
+    // An inbound row with no payload, as another writer could leave it.
+    await db.withBusiness('messaging', other.businessId, (tx) =>
+      tx.insert(schema.message).values({
+        id: randomUUID(),
+        businessId: other.businessId,
+        direction: 'inbound',
+        kind: 'text',
+        provider: 'sim',
+        providerMessageId: `SM-${randomUUID()}`,
+        fromPhone: other.owner,
+        toPhone: BUSINESS_NUMBER,
+        createdAt: new Date(Date.now() - 60_000),
+      }),
+    );
+    const lost = createMessaging({ db, provider: sim, businessNumber: BUSINESS_NUMBER, handler: { handleInbound: async () => {} }, timers: manualTimers().timers });
+    await lost.receive({ ...sim.inboundText(owner, 'שלום'), providerMessageId: `SM-${randomUUID()}` });
+    const mine: InboundBurst[] = [];
+    const restarted = createMessaging({
+      db,
+      provider: sim,
+      businessNumber: BUSINESS_NUMBER,
+      timers: manualTimers().timers,
+      handler: { handleInbound: async (b) => void (b.businessId === businessId && mine.push(b)) },
+    });
+    await restarted.sweepUnprocessed();
+    expect(mine.map((b) => b.text)).toEqual(['שלום']);
+  });
+
   it('leaves a burst still waiting in this process alone', async () => {
     const { businessId, owner, sim } = await setup({ now: () => new Date(Date.now() - 60_000) });
     const bursts: InboundBurst[] = [];
