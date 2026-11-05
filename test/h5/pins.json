@@ -1,10 +1,10 @@
 {
   "test/e2e/h5-approval-publishing.e2e.test.ts": "abcb23bb74258c39c7866dbb994df59633b8910f9c017668eaeacbe71be485a7",
   "test/h5/approval.h5.test.ts": "f398c52cb863175584f422cc9218af067405646cd10b4ccf4111ac939af1f696",
-  "test/h5/db.ts": "446908dd4cfc524ef1bded8be06c3233bf4d71df78754e21f3330b202802f64c",
+  "test/h5/db.ts": "2082f2faf8fe01772bd93d72e814004d73f7de8d62fba1ecfbaa0ccca7079848",
   "test/h5/fixtures.ts": "81cab0aa363666085b049898136bf00e3af487ed00725ab00061136562cad9de",
   "test/h5/meta.test.ts": "d51c941f14aee64abf297aa3b66aab3bd90b6cdd57233204c3743054e66fae9b",
-  "test/h5/publishing.h5.test.ts": "8b39414ba3c2abe916c58a40014cc99de992128d4658d1363e61b222a3519e1a",
+  "test/h5/publishing.h5.test.ts": "df5122d1f439f774091e2a4375d23729ebf3c1d1a886a5eea7cb1420986b035a",
   "test/h5/world.ts": "fb79534d3d89cb36131d34bde0d2937b9730a2059fab245fefcd3776714d9195",
   "src/contracts/approval.ts": "fdfaed72fcc6a05c0868ad03c621b1199223e73536db2a0e27863ae96bb348d6"
 }
