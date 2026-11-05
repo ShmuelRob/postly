@@ -25,7 +25,8 @@ const SHOTS = 'reports/simulated-dev';
 const OWNER = '+972501234588';
 const BUSINESS_PHONE = '+972521111188';
 const PUBLIC_BASE_URL = 'https://postly-dev-web.example.test';
-const SECRET = 'dev-webhook-secret-from-secret-manager';
+// A test-only value; in dev the secret comes from Secret Manager.
+const SECRET = 'test-only';
 // Each run gets its own outside world in the shared test database.
 const NAMESPACE = `e2e-${Date.now()}`;
 

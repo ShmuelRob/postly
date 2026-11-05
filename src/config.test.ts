@@ -18,7 +18,7 @@ const dev: Record<string, string> = {
   POSTLY_ENV: 'dev',
   MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager',
   SIMULATOR_STORE: 'postgres',
-  DB_PASSWORD_APP_SIMULATOR: 'pw-sim',
+  DB_PASSWORD_APP_SIMULATOR: 'test-only',
 };
 const without = (env: Record<string, string>, name: string) => Object.fromEntries(Object.entries(env).filter(([k]) => k !== name));
 
@@ -57,7 +57,7 @@ describe('process configuration', () => {
       expect(loadConfig({ ...base, POSTLY_ENV: 'test' }).simulators).toEqual({ store: 'memory' });
       expect(loadConfig(dev).simulators).toEqual({
         store: 'postgres',
-        storeUrl: `postgres://${SIMULATOR_LOGIN}:pw-sim@db.internal:5432/postly`,
+        storeUrl: `postgres://${SIMULATOR_LOGIN}:test-only@db.internal:5432/postly`,
       });
     });
 
