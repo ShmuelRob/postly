@@ -21,7 +21,7 @@ import * as copy from './drafts-copy.js';
 import * as weeklyCopy from './weekly-copy.js';
 import { MAX_QUESTION_ATTEMPTS, type OnboardingBurst } from './onboarding.js';
 import type { Workflow } from './workflow.js';
-import { log } from '../../shared/logger.js';
+import { asError, log } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 // Drafts (PRD, Weekly update and content preparation, Content safeguards; technical-design.md,
@@ -821,7 +821,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       } catch (error) {
         // The notes are help for the agent, not a requirement: without them it drafts from the photo ids.
         if (!isModelFailure(error)) throw error;
-        log.warn('image review failed', { businessId, mediaAssetId: row.id, error: String(error) });
+        log.warn('image review failed', { businessId, mediaAssetId: row.id, error: asError(error) });
       }
     }
   }
@@ -881,7 +881,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       } catch (error) {
         // Any other error after the plan: the team gets the week and a person takes over, so the
         // conversation does not wait in processing_update answering every message with stillWorking.
-        log.error('drafting failed', { businessId, weekId, error: String(error) });
+        log.error('drafting failed', { businessId, weekId, error: asError(error) });
         await db.withBusiness('workflow', businessId, (tx) =>
           tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: weekId, details: { error: String(error) } }),
         );

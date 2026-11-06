@@ -33,7 +33,7 @@
 
 - לקונסולה חשבון שירות משלה (`postly-<env>-console`) שקורא רק את סיסמאות ההתחברות של תהליך הקונסולה ואת סוד ה-webhook (WP-84).
 
-- תקציב החיבורים ל-Cloud SQL כולל גם את שירות הקונסולה (מופע אחד); `DB_POOL_MAX` נקבע ב-Terraform (WP-87).
+- תקציב החיבורים ל-Cloud SQL כולל גם את שירות הקונסולה (מופע אחד); `DB_POOL_MAX` נקבע ב-Terraform (WP-87). הקונסולה לא שולחת משימות בפועל, לכן ה-pg-boss שלה עולה רק בשליחה ראשונה (בלי תחזוקה ובלי cron) ובדרך כלל לא מחזיק חיבורים; התקציב עדיין סופר אותם.
 ## כניסה בדפדפן ב-dev
 - ב-dev הקונסולה וה-sandbox נפתחים בדפדפן ובטלפון עם כניסת Google דרך IAP המובנה של Cloud Run על כל שירות (`cloud_run_iap`, מופעל כברירת מחדל ב-dev ואסור ב-stage וב-prod): בלי load balancer, בלי דומיין, בלי עלות ובלי proxy.
 - Terraform יוצר הכול חוץ מה-OAuth client: ‏`iap_enabled` על שני השירותים (ה-ingress של הקונסולה נהיה "all"), ‏`iap.httpsResourceAccessor` על כל שירות בלבד ל-`console_members` ול-`sandbox_members` (שתיהן ברירת מחדל `sandbox_invokers`; אף פעם לא `allUsers`), ‏`run.invoker` לסוכן השירות של IAP, ‏`CONSOLE_IAP_AUDIENCE` = ‏`/projects/<מספר>/locations/me-west1/services/postly-dev-console`, ‏`CONSOLE_HOST` = כתובת ה-run.app, והפלטים `console_url` ו-`sandbox_url`.

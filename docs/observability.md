@@ -17,7 +17,11 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 | `logging.googleapis.com/labels` | The correlation ids of the current context: `requestId`, `businessId`, `messageId`, `jobId`, `jobName`, and `process` (`web`, `worker`, `console`, `migrate`) |
 | other keys | The fields the call passed (ids, counts, status, a reason, the error text) |
 
-**Correlation ids.** An `AsyncLocalStorage` context carries the ids, so a log line deep in a module gets them without passing them along. `withLogContext(fields, fn)` adds fields for everything `fn` runs, nested contexts add to their parent. The web server opens a context per request (`requestId` from Fastify, the trace from the header); each pg-boss and in-memory job runs in a context with `jobId` and `jobName`; the inbound burst handler adds `businessId` and the `messageId` of the burst's first message. Explicit fields on a call win over the context.
+**Correlation ids.** An `AsyncLocalStorage` context carries the ids, so a log line deep in a module gets them without passing them along. `withLogContext(fields, fn)` adds fields for everything `fn` runs, nested contexts add to their parent. The web and console servers open a context per request (`requestId` from Fastify, the trace from the header), and so does the dev sandbox for its API routes (a random `requestId`); each pg-boss and in-memory job runs in a context with `jobId` and `jobName`; the inbound burst handler adds `businessId` and the `messageId` of the burst's first message. Explicit fields on a call win over the context.
+
+**Errors.** An error is passed to the logger as the error itself (`{ error }`), never as `String(error)`, which loses the code and the stack and turns a plain object into `[object Object]`. A field holding an `Error`, or an error-like object (one with a string `message`, as pg-boss emits some failures), becomes scalar fields: `<key>` (the message), `<key>Name`, `<key>Code` (when the error has a string or number `code`), `<key>Cause` (`Name: message` of its cause) and `<key>CauseCode`, each scrubbed like any string. A `WARNING` or `ERROR` line with an error also carries `stack_trace` (see Error Reporting). `asError(value)` from the logger turns anything thrown into an `Error` for this: an object without a `message` becomes `non-error object thrown` with only its `code`, since its other fields may hold content.
+
+**Route errors.** Fastify's own logger is off, so its default error handler logs nothing. The web and console servers (`observeRequests` in `src/http-telemetry.ts`) log every route error that becomes a 5xx as `request failed` (severity `ERROR`) with `method`, `route` (the route pattern, never the URL), `statusCode`, the error fields and the request id, before the response; 4xx errors are not logged as errors. The dev sandbox does the same for its API routes (`sandbox request failed`, `playground/sandbox/errors.ts`), and its 500 body holds only the `requestId`, never the error text.
 
 **No customer content, phone numbers or secrets (H4, H8).** Logs carry ids, never what the owner wrote, a caption, a draft, a phone number, a token, a password or a connection string. The logger enforces this in code, not only by convention:
 
@@ -46,7 +50,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 | `postly.model.latency` | histogram (ms) | `task`, `outcome` | One model attempt ends |
 | `postly.jobs.duration` | histogram (ms) | `job` (the queue name), `outcome` (`ok`, `failed`) | A pg-boss or in-memory job handler returns or throws |
 | `postly.jobs.failures.count` | counter | `job` | A job handler throws |
-| `postly.queue.depth` | gauge | `queue`, `state` (`queued`, `active`) | Read from pg-boss every export, in the worker |
+| `postly.queue.depth` | gauge | `queue`, `state` (`queued`, `active`) | Read from pg-boss every export, in the worker; the callback is removed before pg-boss stops, so a shutting-down worker never reads a closed queue |
 
 **Database connections** use Cloud SQL's own metric, `cloudsql.googleapis.com/database/postgresql/num_backends` (with `database`), not an app metric: the driver does not expose pool counts, and the server's count covers every process.
 
@@ -64,7 +68,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 
 ## Error Reporting (WP-48)
 
-Every `ERROR` log line is also an error event: the logger adds `@type: type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent` and `serviceContext` (`service` is the process, `version` is `K_REVISION` or `local`), so Cloud Error Reporting groups it with no client library. When a field is an `Error`, the line carries `stack_trace`: the error name, the scrubbed message, and the stack frames (file paths and line numbers only). There is no separate reporting call, so redaction stays in one place.
+Every `ERROR` log line is also an error event: the logger adds `@type: type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent` and `serviceContext` (`service` is the process, `version` is `K_REVISION` or `local`), so Cloud Error Reporting groups it with no client library. When a field is an `Error` (or error-like), an `ERROR` or `WARNING` line carries `stack_trace`: the error name, the scrubbed message, and the stack frames (file paths and line numbers only), then up to two causes as `Caused by: Name: message` with their frames. There is no separate reporting call, so redaction stays in one place.
 
 ## Dashboards and alerts (WP-49)
 

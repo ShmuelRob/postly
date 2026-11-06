@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { log, setLogLabels, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { asError, log, setLogLabels, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
 
@@ -209,5 +209,68 @@ describe('logs join traces', () => {
       else process.env.GOOGLE_CLOUD_PROJECT = previous;
       telemetry.stop();
     }
+  });
+});
+
+// 2026-11-06, dev console: pg-boss emits some failures as plain objects (`{ ...error, message, stack,
+// queue }`), and `String(error)` logged them as "[object Object]". An error keeps its message, code,
+// cause and stack, scrubbed like any other string.
+describe('error serialization', () => {
+  it('logs an Error with its message, code, cause and stack', () => {
+    capture();
+    const cause = Object.assign(new Error('connect ETIMEDOUT 10.20.0.3:5432'), { code: 'ETIMEDOUT' });
+    const error = Object.assign(new Error('Connection terminated due to connection timeout', { cause }), { code: '57P01' });
+    log.error('pg-boss error', { error });
+    const [line] = parsed();
+    expect(line).toMatchObject({
+      error: 'Connection terminated due to connection timeout',
+      errorName: 'Error',
+      errorCode: '57P01',
+      errorCause: 'Error: connect ETIMEDOUT 10.20.0.3:5432',
+      errorCauseCode: 'ETIMEDOUT',
+    });
+    const stack = String(line!.stack_trace);
+    expect(stack).toMatch(/^Error: Connection terminated due to connection timeout\n\s+at /);
+    expect(stack).toContain('Caused by: Error: connect ETIMEDOUT 10.20.0.3:5432');
+  });
+
+  it('keeps the stack on a warning too', () => {
+    capture();
+    log.warn('queue depth not read', { error: new Error('Database not opened') });
+    const [line] = parsed();
+    expect(line).toMatchObject({ error: 'Database not opened', errorName: 'Error' });
+    expect(String(line!.stack_trace)).toMatch(/^Error: Database not opened\n\s+at /);
+  });
+
+  it('reads a plain error-like object as an error, never as [object Object]', () => {
+    capture();
+    const boss = { message: 'Connection terminated due to connection timeout', stack: 'Error: x\n    at fetch (manager.js:1:1)', code: 'ECONNRESET', queue: 'inbound-burst', worker: 'w1' };
+    log.error('pg-boss error', { error: asError(boss) });
+    log.error('pg-boss error', { error: boss as never });
+    expect(lines).toHaveLength(2);
+    for (const line of parsed()) {
+      expect(line).toMatchObject({ error: 'Connection terminated due to connection timeout', errorCode: 'ECONNRESET' });
+      expect(JSON.stringify(line)).not.toContain('[object Object]');
+      expect(String(line.stack_trace)).toContain('at fetch (manager.js:1:1)');
+    }
+  });
+
+  it('asError turns anything thrown into an Error', () => {
+    const real = new Error('boom');
+    expect(asError(real)).toBe(real);
+    expect(asError('plain text').message).toBe('plain text');
+    // An object's other fields are never logged (objects may hold content); only its code is kept.
+    expect(asError({ code: 'X', text: CUSTOMER_TEXT }).message).toBe('non-error object thrown');
+    expect((asError({ code: 'X' }) as Error & { code?: unknown }).code).toBe('X');
+    expect(asError(undefined).message).toBe('undefined');
+  });
+
+  it('scrubs the message, code and cause of an error', () => {
+    capture();
+    const cause = new Error(`reply to ${PHONES[0]} failed: ${SECRETS[0]}`);
+    log.error('send failed', { error: Object.assign(new Error(`for ${PHONES[1]}`, { cause }), { code: SECRETS[2] }) });
+    const text = lines.join('\n');
+    for (const secret of FORBIDDEN) expect(text).not.toContain(secret);
+    expect(text).not.toContain(PASSWORD);
   });
 });

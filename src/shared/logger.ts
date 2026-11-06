@@ -65,10 +65,63 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const REPORTED_ERROR = 'type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent';
 
-/** `Name: scrubbed message` and the stack frames (paths and line numbers only), for Error Reporting. */
+/**
+ * `Name: scrubbed message` and the stack frames (paths and line numbers only), for Error Reporting,
+ * then each cause as `Caused by: Name: scrubbed message` with its frames.
+ */
 function stackTrace(error: Error): string {
-  const frames = (error.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line)).slice(0, 30);
-  return [`${error.name}: ${scrub(error.message)}`, ...frames].join('\n');
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current !== undefined && current !== null; depth++) {
+    const e = asError(current);
+    const frames = (e.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line)).slice(0, depth === 0 ? 30 : 10);
+    parts.push(`${depth === 0 ? '' : 'Caused by: '}${e.name}: ${scrub(e.message)}`, ...frames);
+    current = e.cause;
+  }
+  return parts.join('\n');
+}
+
+type ErrorLike = { message: string; name?: unknown; stack?: unknown; code?: unknown; cause?: unknown };
+
+/** An object with a string `message`: pg-boss emits some failures as plain copies of an error. */
+function isErrorLike(value: unknown): value is ErrorLike {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && typeof (value as { message?: unknown }).message === 'string';
+}
+
+const scalarCode = (code: unknown): code is string | number => typeof code === 'string' || typeof code === 'number';
+
+/**
+ * Anything thrown, as an Error to log: an Error as it is; an error-like object (a string `message`)
+ * with its name, code, stack and cause; any other object as `non-error object thrown` with only its
+ * code, since its other fields may hold content; a primitive by its text.
+ */
+export function asError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  if (typeof value !== 'object' || value === null) return new Error(String(value));
+  const like = value as Partial<ErrorLike>;
+  const error: Error & { code?: string | number } = isErrorLike(value)
+    ? new Error(value.message, value.cause === undefined ? undefined : { cause: value.cause })
+    : new Error('non-error object thrown');
+  if (isErrorLike(value) && typeof like.name === 'string') error.name = like.name;
+  // Never this function's own frames: a copied stack, or none.
+  error.stack = typeof like.stack === 'string' ? like.stack : `${error.name}: ${error.message}`;
+  if (scalarCode(like.code)) error.code = like.code;
+  return error;
+}
+
+/** An error field `key` as scalar fields: `key` (the message), `keyName`, `keyCode`, `keyCause`, `keyCauseCode`. */
+function errorFields(key: string, value: Error | ErrorLike): Record<string, unknown> {
+  const error = asError(value);
+  const code = (error as { code?: unknown }).code;
+  const fields: Record<string, unknown> = { [key]: error.message, [`${key}Name`]: error.name };
+  if (scalarCode(code)) fields[`${key}Code`] = code;
+  if (error.cause !== undefined && error.cause !== null) {
+    const cause = asError(error.cause);
+    fields[`${key}Cause`] = `${cause.name}: ${cause.message}`;
+    const causeCode = (cause as { code?: unknown }).code;
+    if (scalarCode(causeCode)) fields[`${key}CauseCode`] = causeCode;
+  }
+  return fields;
 }
 
 /** The trace and span of the active OpenTelemetry span, when there is one. */
@@ -96,14 +149,19 @@ export function scrub(text: string): string {
 function clean(key: string, value: unknown): string | number | boolean | null | undefined {
   if (value === undefined || value === null) return value;
   if (sensitiveKey(key)) return REDACTED;
-  if (value instanceof Error) return scrub(value.message);
   if (typeof value === 'string') return scrub(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   return undefined; // objects and arrays are never logged
 }
 
-function write(severity: Severity, message: string, fields: LogFields = {}): void {
+function write(severity: Severity, message: string, given: LogFields = {}): void {
   const context = storage.getStore() ?? {};
+  // An Error (or error-like) field becomes its message, name, code and cause as scalar fields.
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(given)) {
+    if (value instanceof Error || isErrorLike(value)) Object.assign(fields, errorFields(key, value));
+    else fields[key] = value;
+  }
   const merged: Record<string, unknown> = { ...context, ...fields };
   const entry: Record<string, unknown> = { severity, message: scrub(message), time: new Date().toISOString() };
   const labels: Record<string, string> = { ...baseLabels };
@@ -126,8 +184,10 @@ function write(severity: Severity, message: string, fields: LogFields = {}): voi
   if (severity === 'ERROR') {
     entry['@type'] = REPORTED_ERROR;
     entry.serviceContext = { service: baseLabels.process ?? 'postly', version: process.env.K_REVISION ?? 'local' };
-    const error = Object.values(fields).find((value): value is Error => value instanceof Error);
-    if (error) entry.stack_trace = stackTrace(error);
+  }
+  if (severity === 'ERROR' || severity === 'WARNING') {
+    const error = Object.values(given).find((value) => value instanceof Error || isErrorLike(value));
+    if (error) entry.stack_trace = stackTrace(asError(error));
   }
   if (Object.keys(labels).length > 0) entry['logging.googleapis.com/labels'] = labels;
   try {

@@ -13,6 +13,7 @@ import type { SimulatorStore } from '../../src/simulators/index.js';
 import type { PublishingEntry, TranscriptEntry } from '../../test/e2e/harness/record.js';
 import type { CheckoutOutcome, CheckoutState, OwnerInput, PlaygroundState } from '../server/api-types.js';
 import { allowed, chatMessages, feedPosts, MEDIA_TYPES, NETWORKS } from '../server/views.js';
+import { runApiRoute } from './errors.js';
 import { crossSiteWrite } from './origin.js';
 
 // The dev sandbox (WP-51, docs/deployment.md "The sandbox"): the playground's chat, mock feed and a
@@ -231,7 +232,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
       const url = new URL(req.url ?? '/', 'http://sandbox.local');
       if (!url.pathname.startsWith('/api/')) return next();
       if (crossSiteWrite(req)) return json(res, 403, { error: 'cross-site request' });
-      route(req, res, url).catch((error: unknown) => json(res, 500, { error: error instanceof Error ? error.message : String(error) }));
+      runApiRoute(req, res, url, () => route(req, res, url));
     },
     signUp,
     send,
