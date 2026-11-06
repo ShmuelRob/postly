@@ -16,7 +16,7 @@ Postgres with row-level security, accessed through Drizzle. The code in `src/db/
 
 - A table is **business-owned** when it has a `business_id` column. Every business-owned table, and `business` itself, has RLS enabled and forced (`FORCE ROW LEVEL SECURITY`) with a `tenant_isolation` policy for `public`: a row is visible and writable only when its business matches `current_setting('app.business_id')`. Only the system roles below bypass it.
 - The application sets `app.business_id` with `set_config(..., true)` at the start of each transaction. A query without a business context sees no rows and cannot write any.
-- Rows with a null `business_id` (messages from unknown numbers, example-set model runs, console items about unknown numbers) are visible only to system roles.
+- Rows with a null `business_id` (messages from unknown numbers, example-set model runs, console items about unknown numbers, console actions on system settings) are visible only to system roles.
 - Tables without `business_id` are system tables (`model_task_config`, `prompt_template`, `system_control`, `plan_price`).
 
 ### Least privilege
@@ -72,6 +72,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `plan_price` |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
 | `agent_turn` |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
 | `agent_config` |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
+| `console_action` |  |  |  |  |  |  |  |  |  |  |  |  | SI |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
@@ -342,6 +343,23 @@ Work routed to a person: failed validation, failed publishing, unknown numbers, 
 | `reference_id` | uuid | Row the item is about |
 | `details` | jsonb | |
 | `resolved_at` | timestamptz | |
+
+### `console_action`
+
+The console's own log of the writes that change configuration or a profile (the console redesign): one row per write, inserted in the same transaction as the write, with the value before and after. Append-only: the `console` role may only insert and read it, and no role may update or delete it. A row about a business references it with `on delete cascade`, so a deleted business takes its profile history with it; rows about system settings have no business. FORCE RLS with the same `tenant_isolation` policy as every business table (the console bypasses it).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `business_id` | uuid | Null for a system setting; references `business` with `on delete cascade` |
+| `actor` | text | The signed-in team member (the IAP email, or the local dev actor) |
+| `action` | text | `profile`, `agent_cost_cap`, `agent_config`, or `model_task_config` |
+| `target` | text | What was changed: the business id, the agent, or the task |
+| `before` | jsonb | The changed fields before the write |
+| `after` | jsonb | The changed fields after the write |
+| `reason` | text | Optional note typed by the team member |
+| `created_at` | timestamptz | |
+
+Index on `created_at`, and on `business_id` with `created_at`.
 
 ### `workflow_event`
 

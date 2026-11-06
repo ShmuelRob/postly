@@ -162,6 +162,13 @@
       "when": 1794355208000,
       "tag": "0022_agent_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794441608000,
+      "tag": "0023_console_action",
+      "breakpoints": true
     }
   ]
 }

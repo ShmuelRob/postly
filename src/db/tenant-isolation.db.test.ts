@@ -21,7 +21,10 @@ const businessOwned = Object.values(schema as Record<string, unknown>)
   .filter((v): v is PgTable => v instanceof PgTable)
   .map((t) => getTableConfig(t))
   .filter((c) => c.name === 'business' || c.columns.some((col) => col.name === 'business_id'))
-  .map((c) => c.name);
+  .map((c) => c.name)
+  // console_action: no business role has any grant on it (only console, which bypasses RLS), so there is
+  // nothing to isolate per role here; least-privilege.db.test.ts proves every business role is refused.
+  .filter((name) => name !== 'console_action');
 
 /** The column that identifies a row: id, or business_id for conversation_state. */
 const keyOf = (name: string) => (name === 'conversation_state' ? 'business_id' : 'id');
