@@ -1,19 +1,10 @@
-# The model and the agent flows per environment (docs/agent.md, Running on dev; docs/deployment.md,
-# "Real Gemini and the agent flows on dev"). Kept apart from main.tf: main.tf only merges local.model_env
-# into the web and worker environment.
+# The model per environment (docs/agent.md, Running on dev; docs/deployment.md, "Real Gemini and the
+# agents on dev"). Every deployed environment runs on Gemini through Vertex AI and every agent flow,
+# with no switch: the app picks the model from POSTLY_ENV. Kept apart from main.tf: main.tf only merges
+# local.model_env into the web and worker environment.
 #
 # The Vertex AI API (apis.tf) and roles/aiplatform.user for the web and worker accounts only
 # (modules/service_accounts) are already in place; nothing here grants more.
-
-variable "models" {
-  description = "The model provider: \"simulator\" (the word-rule model) or \"vertex\" (Gemini through Vertex AI; the other providers stay simulated). Sets POSTLY_MODELS."
-  type        = string
-  default     = "simulator"
-  validation {
-    condition     = contains(["simulator", "vertex"], var.models)
-    error_message = "models must be \"simulator\" or \"vertex\"."
-  }
-}
 
 variable "vertex_location" {
   description = "The Vertex AI endpoint's location for Gemini (VERTEX_LOCATION). Vertex serves no Gemini from me-west1, and Gemini 3.5 Flash-Lite only on global and the eu/us multi-regions; eu keeps processing in the EU."
@@ -22,19 +13,6 @@ variable "vertex_location" {
   validation {
     condition     = can(regex("^(global|eu|us|[a-z]+-[a-z]+[0-9]+)$", var.vertex_location))
     error_message = "vertex_location must be global, eu, us or a region such as europe-west4."
-  }
-}
-
-variable "agent_flows" {
-  description = "The flows that run on the agent for every business (POSTLY_AGENT_FLOWS, written into system_control.agent_flows at web startup): any of onboarding, weekly, drafts, or [\"none\"]. Empty leaves the switch as it is (off by default)."
-  type        = list(string)
-  default     = []
-  validation {
-    condition = (
-      alltrue([for f in var.agent_flows : contains(["onboarding", "weekly", "drafts"], f)])
-      || var.agent_flows == ["none"]
-    )
-    error_message = "agent_flows lists onboarding, weekly and drafts, or is [\"none\"]."
   }
 }
 
@@ -61,12 +39,8 @@ variable "vertex_billing_service" {
 }
 
 locals {
-  model_env = merge(
-    { POSTLY_MODELS = var.models },
-    var.models == "vertex" ? { VERTEX_PROJECT = var.project_id, VERTEX_LOCATION = var.vertex_location } : {},
-    length(var.agent_flows) > 0 ? { POSTLY_AGENT_FLOWS = join(",", var.agent_flows) } : {},
-  )
-  model_budget = var.models == "vertex" && var.billing_account != null
+  model_env    = { VERTEX_PROJECT = var.project_id, VERTEX_LOCATION = var.vertex_location }
+  model_budget = var.billing_account != null
 }
 
 resource "google_project_service" "billing_budgets" {

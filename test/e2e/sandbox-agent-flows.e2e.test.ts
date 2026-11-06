@@ -1,13 +1,12 @@
 /**
  * The agents on dev, through the sandbox (agent.md, Running on dev; docs/deployment.md, "Real Gemini and
- * the agent flows on dev"). The web process starts with POSTLY_AGENT_FLOWS=onboarding,weekly,drafts, so
- * the composition writes the switch into system_control.agent_flows; then the human presses "new sign-up
- * from this number" in the sandbox and onboarding runs on the agent, with no per-business override.
+ * the agents on dev"). The web process is composed as main.ts composes it (`oneShotFlows: false`, which
+ * main.ts always passes), so the onboarding, weekly and drafts flows run on the agents with no switch: the human presses
+ * "new sign-up from this number" in the sandbox and onboarding runs on the agent.
  *
  * The model is the scripted agent, never Gemini: each turn below is what the model would answer, and every
- * tool call still goes through the real checks. Dev runs the same composition with POSTLY_MODELS=vertex.
- * The switch is global, so this file has a Postgres of its own: on the shared test database it would turn
- * the agent on for every other file's businesses.
+ * tool call still goes through the real checks. Dev runs the same composition on Vertex AI. The file keeps
+ * a Postgres of its own, so its sign-ups never mix with other files' businesses.
  */
 import { mkdirSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
@@ -15,8 +14,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, expect } from 'vitest';
 import { createSandbox, type Sandbox } from '../../playground/sandbox/sandbox.js';
 import { startSandboxUi, type SandboxUi } from '../../playground/sandbox/ui.js';
-import { loadConfig } from '../../src/config.js';
-import { ALL_LOGINS, createDatabase } from '../../src/db/index.js';
+import { createDatabase } from '../../src/db/index.js';
 import { createPostgresSimulatorStore } from '../../src/db/simulator-store.js';
 import * as schema from '../../src/db/schema.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
@@ -58,16 +56,6 @@ beforeAll(async () => {
   db = createDatabase(database.urls, { max: 2 });
   store = createPostgresSimulatorStore(database.simulatorStoreUrl);
   model = new ModelSimulator({ strictAgents: true });
-  // The flows as dev's Terraform sets them, parsed by the same config code the web process runs.
-  const { agentFlows } = loadConfig({
-    POSTLY_ENV: 'local',
-    POSTLY_PROVIDERS: 'simulators',
-    DATABASE_URL: 'postgres://db.internal:5432/postly',
-    PUBLIC_BASE_URL,
-    BUSINESS_NUMBER: BUSINESS_PHONE,
-    POSTLY_AGENT_FLOWS: 'onboarding,weekly,drafts',
-    ...Object.fromEntries(ALL_LOGINS.map((l) => [`DB_PASSWORD_${l.toUpperCase()}`, 'unused'])),
-  });
   web = await startSimulatedProcess({
     role: 'web',
     databaseUrls: database.urls,
@@ -78,7 +66,8 @@ beforeAll(async () => {
     sandboxUrl: 'http://sandbox.dev.test',
     burstQuietMs: 300,
     models: { google: model },
-    ...(agentFlows ? { agentFlows } : {}),
+    // As main.ts composes every deployed web process.
+    oneShotFlows: false,
   });
   sandbox = await createSandbox({
     databaseUrls: database.urls,
@@ -104,17 +93,13 @@ afterAll(async () => {
   await database?.stop();
 });
 
-e2eTest('dev with the agent flows on: a new sign-up in the sandbox onboards through the agent', async ({ task, e2e }) => {
+e2eTest('dev runs the agents with no switch: a new sign-up in the sandbox onboards through the agent', async ({ task, e2e }) => {
   void e2e;
   const record = task.meta.e2e!;
   const timeout = { timeout: 30_000 };
   const replies = async () => (await sandbox.state()).messages.filter((m) => m.direction === 'to_owner').map((m) => m.text ?? '');
   const lastReply = async () => (await replies()).at(-1) ?? '';
   const write = (text: string) => sandbox.send({ kind: 'text', text });
-
-  // Startup applied POSTLY_AGENT_FLOWS: every flow on for every business, globally.
-  const [control] = await db.withSystem('console', (tx) => tx.select().from(schema.systemControl));
-  expect(control?.agentFlows).toEqual({ onboarding: true, weekly: true, drafts: true });
 
   model.scriptAgent(
     'onboarding',
@@ -131,10 +116,11 @@ e2eTest('dev with the agent flows on: a new sign-up in the sandbox onboards thro
     ],
   );
 
-  // "New sign-up from this number" (הרשמה חדשה מהמספר הזה): a business in onboarding with no override of its own.
+  // "New sign-up from this number" (הרשמה חדשה מהמספר הזה): a business in onboarding, nothing switched on for it.
   const businessId = await sandbox.signUp();
   const [business] = await db.withSystem('console', (tx) => tx.select().from(schema.business).where(eq(schema.business.id, businessId)));
-  expect(business).toMatchObject({ status: 'onboarding', agentFlows: null });
+  expect(business).toMatchObject({ status: 'onboarding' });
+  expect(business).not.toHaveProperty('agentFlows');
 
   // 1. The persona introduces herself, and the agent, not the fixed question list, asks the first question.
   await write(SAY.hello);

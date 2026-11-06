@@ -1,6 +1,6 @@
 /**
  * The weekly-update agent (WP-93; agent.md: Agents, record_fact, plan_posts, How it fits the state
- * machines). With the weekly flow switched to the agent for one business, an owner's update runs
+ * machines). With the weekly flow on the agent (always, outside the one-shot test compositions), an owner's update runs
  * the weekly agent on the scripted agent (no real model): it records the facts one by one, asks
  * about the missing end date, records the answer, asks for a photo, and plans the week. A plan with
  * the wrong number of posts is refused; the corrected plan is stored (FACTS_EXTRACTED) and drafting
@@ -89,6 +89,7 @@ async function start(e2e: E2e, owner: string) {
   const app: AppFactory = ({ messaging, publishing, model: recorded }) => {
     ref.postly = createApp({
       db,
+      oneShotFlows: false,
       providers: { messaging, publishing, models: { google: recorded } },
       design: { forBusiness: () => fakeRenderer(storage) },
       media: storage,
@@ -106,7 +107,7 @@ async function start(e2e: E2e, owner: string) {
   const run = await e2e.start({ providers, app, ownerPhone: owner, businessPhone: BUSINESS_PHONE, readMedia: storage.read, now });
   const postly = ref.postly!;
 
-  // An active florist, with the weekly flow switched to the agent for this business only.
+  // An active florist; the weekly flow runs on the agent.
   await db.withSystem('console', (tx) => tx.update(schema.business).set({ approverPhone: `+9724${Date.now()}` }).where(eq(schema.business.approverPhone, owner)));
   const businessId = await postly.onboarding.createBusiness({ approverPhone: owner, name: 'פרחי דנה' });
   const profile = BusinessProfile.parse({
@@ -121,7 +122,7 @@ async function start(e2e: E2e, owner: string) {
     approverPhone: owner,
   });
   await db.withSystem('console', async (tx) => {
-    await tx.update(schema.business).set({ status: 'active', profile, style: 'warm', agentFlows: { weekly: true } }).where(eq(schema.business.id, businessId));
+    await tx.update(schema.business).set({ status: 'active', profile, style: 'warm' }).where(eq(schema.business.id, businessId));
     await tx.update(schema.conversationState).set({ step: 'idle' }).where(eq(schema.conversationState.businessId, businessId));
   });
   return { run, postly, model, messagingSim, businessId, clock };
@@ -161,6 +162,24 @@ e2eTest('the weekly agent asks for the missing end date and a photo, refuses a p
       })),
     ],
   );
+  // Drafting follows on the drafts agent, which always runs too (agent.md, Running on dev): one draft
+  // per planned post, on the week's photo, with no number in the caption for the fact check to match.
+  model.scriptAgent('drafts', [
+    stepFrom((ctx) => {
+      const photo = ctx.posts.flatMap((p) => p.plan.mediaAssetIds)[0]!;
+      return {
+        calls: ctx.posts.map((p) =>
+          call.createDraft({
+            postId: p.id,
+            captions: { instagram: { text: p.plan.topic, hashtags: ['#פרחים'] } },
+            usedFactIds: [],
+            design: { photos: [{ assetId: photo }], title: p.plan.topic },
+          }),
+        ),
+        confidence: 0.9,
+      };
+    }),
+  ]);
 
   // 1. The update: the agent's question reaches the owner; the conversation waits for the answer.
   await run.owner.sendsText(UPDATE);
@@ -211,6 +230,8 @@ e2eTest('the weekly agent asks for the missing end date and a photo, refuses a p
     [2, 2, 'request_photo', ''],
     [3, 1, 'plan_posts', 'plan_invalid'],
     [3, 2, 'plan_posts', ''],
+    // The drafts agent's own first turn (numbered per agent): one draft per post; the buttons above show they went out.
+    [1, 1, 'create_draft+create_draft+create_draft', ''],
   ]);
   expect(run.networkPosts()).toEqual([]);
 });

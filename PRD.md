@@ -38,7 +38,7 @@ Postly is a **hybrid agent**. A language-model agent runs the conversation's thi
 
 - **Persona.** The agent introduces herself as "Postly" ("פוסטלי" in Hebrew), your AI social agent, as in the demo (decided 2026-11-05). The name is global; the team can set another name for a single business. In Hebrew she always speaks in the feminine. Her name never appears in a post.
 - **Limits.** Each agent run has a step limit, a cost limit per run and per business per day, an overall daily cost limit, and a time limit; they are settings the team can change (the starting values are in [docs/agent.md](docs/agent.md#limits)). When a limit is hit, or the agent is unsure, a person from the Postly team takes over and the owner is told so.
-- **Gradual rollout.** Each flow (onboarding, weekly update, drafts) switches to the agent separately, globally or per business, so the earlier fixed flow stays as the fallback until the agent proves itself.
+- **The agents always run.** Onboarding, the weekly update and drafts run on the agent for every business, with no switch per flow or per business (decided 2026-11-06). The earlier fixed flows remain in the code only for tests until a cleanup removes them.
 
 ## WhatsApp onboarding
 
@@ -261,7 +261,7 @@ flowchart TD
 
 ### Open questions
 
-- Whether Gemini Flash Lite and 20 messages of history are enough for the agent; revisited if the manual eval or dev use shows it is too weak ([docs/agent.md](docs/agent.md#decisions)).
+- Whether Gemini 3.5 Flash-Lite and 20 messages of history are enough for the agent; revisited if the manual eval or dev use shows it is too weak ([docs/agent.md](docs/agent.md#decisions)).
 - Payment provider: PayPlus and Grow are the candidates, with a placeholder implementation for now.
 - What ILS 300 includes, and the billing hold copy (H6).
 - Pilot support hours, and the data deletion period after cancellation (30 days provisionally).

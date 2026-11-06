@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { VertexRequestBody, VertexResponseBody } from './modules/model-layer/index.js';
 import { simulatedModels } from './simulated.js';
 
-// The deployed composition's model choice (agent.md, Running on dev): POSTLY_MODELS=vertex puts the
-// model layer on the Vertex AI adapter, with WhatsApp, publishing and payments still simulated. Every
+// The deployed composition's model choice (agent.md, Running on dev): every deployed environment puts
+// the model layer on the Vertex AI adapter, with WhatsApp, publishing and payments still simulated. Every
 // test here injects a fake transport; no test builds the real one, and without one the adapter refuses
 // to start under NODE_ENV=test.
 

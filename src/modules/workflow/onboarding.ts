@@ -54,11 +54,12 @@ export interface OnboardingDeps {
   sendPaymentLink?(businessId: string): Promise<unknown>;
   logger?: { error(message: string, detail?: unknown): void };
   /**
-   * The onboarding agent (WP-92, agent.md). When its flow is on for the business (agent_flows), the
+   * The onboarding agent (WP-92, agent.md). When given (always, in every deployed composition), the
    * agent asks the profile questions, gathers the brand assets and applies profile corrections;
-   * code still decides when each step is done and runs every other step.
+   * code still decides when each step is done and runs every other step. Without it the one-shot
+   * steps run: only tests compose that (`oneShotFlows`), until A9's cleanup removes them.
    */
-  agent?: Pick<Agent, 'runTurn' | 'flowEnabled'>;
+  agent?: Pick<Agent, 'runTurn'>;
 }
 
 export interface Onboarding {
@@ -325,7 +326,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
 
   async function agentStep(burst: OnboardingBurst, step: string, draft: BusinessProfileDraft, question: OpenQuestion | null): Promise<boolean> {
     const agent = deps.agent;
-    if (!agent || !(await agent.flowEnabled(burst.businessId, 'onboarding'))) return false;
+    if (!agent) return false;
     const { businessId } = burst;
     switch (step) {
       case 'profile_questions':
@@ -362,7 +363,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         const sent = await event(businessId, 'INTRO_SENT');
         if (!sent.ok) return;
         await reply(burst, copy.intro(persona));
-        if (deps.agent && (await deps.agent.flowEnabled(businessId, 'onboarding'))) {
+        if (deps.agent) {
           return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent')));
         }
         return askNextProfileQuestion(burst, draft, null);
