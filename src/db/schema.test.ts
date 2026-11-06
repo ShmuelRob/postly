@@ -65,6 +65,7 @@ describe('tables', () => {
         'plan_price',
         'agent_turn',
         'agent_config',
+        'console_action',
       ].sort(),
     );
   });
@@ -204,7 +205,7 @@ describe('integrity rules', () => {
       .filter((t) => t.columns.some((c) => c.name === 'business_id' && !c.notNull))
       .map((t) => t.name)
       .sort();
-    expect(nullable).toEqual(['console_item', 'message', 'model_run']);
+    expect(nullable).toEqual(['console_action', 'console_item', 'message', 'model_run']);
   });
 
   it('stores no payment card fields', () => {

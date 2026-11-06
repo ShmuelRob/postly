@@ -27,6 +27,7 @@ const MATRIX = `
 | plan_price |  |  |  |  |  |  |  | S |  |  |  |  | SI |  |
 | agent_turn |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
 | agent_config |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
+| console_action |  |  |  |  |  |  |  |  |  |  |  |  | SI |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;
