@@ -184,6 +184,31 @@ describe('the drafts agent', () => {
   });
 });
 
+describe('the done rule on an owner message', () => {
+  const turnRow = async (steps: unknown[]) => {
+    const id = randomUUID();
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx.insert(schema.agentTurn).values({ id, businessId, agent: 'drafts', trigger: { kind: 'burst', messageIds: [] }, steps }),
+    );
+    return id;
+  };
+  const done = (turnId: string) => draftsAgent.isDone({ businessId, db, turnId });
+  const callOf = (tool: string, status: string) => ({ calls: [{ call: { tool }, result: { status } }] });
+
+  it('a fix leaves its post waiting for approval, so the turn is done only once a draft was written in it', async () => {
+    await addPost('awaiting_approval', { version: { captions: captions(), design: design() } });
+    expect(await done(await turnRow([]))).toBe(false);
+    expect(await done(await turnRow([callOf('apply_change', 'refused')]))).toBe(false);
+    expect(await done(await turnRow([callOf('apply_change', 'refused'), callOf('apply_change', 'ok')]))).toBe(true);
+    expect(await done(await turnRow([callOf('create_draft', 'ok')]))).toBe(true);
+  });
+
+  it('is not done while a post is still being drafted, whatever was written', async () => {
+    await addPost('drafting');
+    expect(await done(await turnRow([callOf('create_draft', 'ok')]))).toBe(false);
+  });
+});
+
 describe('create_draft', () => {
   it('passes a checked draft to the workflow and reports its result', async () => {
     const postId = await addPost('planned');
