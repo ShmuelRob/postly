@@ -24,6 +24,25 @@ interface RecordedStep {
   calls: { call: unknown; result: AgentToolResult | null }[];
 }
 
+/** Marks a model call cut off by the turn's timeout (agent.md, Limits). */
+const TIMED_OUT = Symbol('timed out');
+
+/**
+ * The call's answer, or TIMED_OUT once `ms` pass. A model call that hangs must not keep the turn,
+ * and with it the business's turn lock, past the timeout: the turn ends and a late answer is
+ * dropped (its tools never run; its cost is still recorded by the model layer).
+ */
+async function withinTime<T>(call: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<typeof TIMED_OUT>((resolve) => (timer = setTimeout(() => resolve(TIMED_OUT), Math.max(0, ms))));
+  call.catch(() => {}); // a late failure is nobody's to handle
+  try {
+    return await Promise.race([call, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Dollar amounts are floats; a millionth of a cent is below any real price. */
 const EPSILON_USD = 1e-9;
 
@@ -122,6 +141,7 @@ export function createAgent(input: AgentDeps): Agent {
       let stop: AgentTurnStopReason | null = null;
       let approverPhone = '';
       let personaName = '';
+      let language: Parameters<typeof handOff>[1]['language'] = 'he';
       let failed: unknown = null;
       try {
         const first = await deps.db.withBusiness('workflow', businessId, (tx) =>
@@ -129,6 +149,7 @@ export function createAgent(input: AgentDeps): Agent {
         );
         approverPhone = first.approverPhone;
         personaName = first.personaName;
+        language = first.context.languages[0] ?? 'he';
         const scope = agentName === 'onboarding' ? new Date(0) : localWeekStart(started, first.timezone);
         const history = await pastCalls(businessId, agentName, scope);
         const turn = { messagesSent: 0, questionsAsked: 0 };
@@ -154,8 +175,11 @@ export function createAgent(input: AgentDeps): Agent {
             stop = 'daily_budget';
             break;
           }
-          if ((await deps.models.spentByAllSince(utcMidnight(now))) + stepCap > limits.globalDailyCostUsd + EPSILON_USD) {
+          const spentByAll = await deps.models.spentByAllSince(utcMidnight(now));
+          if (spentByAll + stepCap > limits.globalDailyCostUsd + EPSILON_USD) {
             stop = 'global_budget';
+            // The team's alert (agent.md, Limits; docs/observability.md, Alerts): one line per stopped turn.
+            log.warn('agent global budget reached', { businessId, agent: agentName, agentTurnId: turnId, capUsd: limits.globalDailyCostUsd, spentUsd: spentByAll });
             break;
           }
 
@@ -172,7 +196,16 @@ export function createAgent(input: AgentDeps): Agent {
 
           let step: AgentStep;
           try {
-            step = await deps.models.run(businessId, definition.task, context, { maxCostUsd: stepCap, agentTurnId: turnId, referenceId: turnId });
+            const left = limits.timeoutMs - (deps.now().getTime() - started.getTime());
+            const answer = await withinTime(
+              deps.models.run(businessId, definition.task, context, { maxCostUsd: stepCap, agentTurnId: turnId, referenceId: turnId }),
+              left,
+            );
+            if (answer === TIMED_OUT) {
+              stop = 'timeout';
+              break;
+            }
+            step = answer;
           } catch (error) {
             if (!(error instanceof ModelTaskFailedError)) throw error;
             steps.push({ confidence: null, costUsd: (await deps.models.spentOnTurn(businessId, turnId)) - turnSpent, calls: [] });
@@ -210,6 +243,11 @@ export function createAgent(input: AgentDeps): Agent {
               // A refused call stops the step: its later calls are skipped (agent.md, Runtime).
               break;
             }
+            // The turn stops after the current tool call once its time is up (agent.md, Limits).
+            if (deps.now().getTime() - started.getTime() >= limits.timeoutMs) {
+              stop = 'timeout';
+              break;
+            }
           }
           if (stop === null && (await definition.isDone({ businessId, db: deps.db, turnId }))) stop = 'done';
         }
@@ -220,10 +258,10 @@ export function createAgent(input: AgentDeps): Agent {
 
       const ended = deps.now();
       if (failed === null && stop !== null && LIMIT_STOPS.has(stop)) {
-        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: stop, agent: agentName }, approverPhone, personaName, now: ended });
+        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: stop, agent: agentName }, approverPhone, personaName, language, now: ended });
       } else if (failed !== null) {
         // An unexpected error still leaves the conversation with a person, never silent.
-        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: String(failed) }, approverPhone, personaName, now: ended }).catch(
+        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: String(failed) }, approverPhone, personaName, language, now: ended }).catch(
           (error: unknown) => log.error('agent hand-off failed', { businessId, agentTurnId: turnId, error: String(error) }),
         );
       }

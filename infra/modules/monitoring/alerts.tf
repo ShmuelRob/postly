@@ -172,6 +172,31 @@ resource "google_monitoring_alert_policy" "channel_disconnected" {
   }
 }
 
+resource "google_monitoring_alert_policy" "agent_global_budget" {
+  project               = var.project_id
+  display_name          = "Postly ${var.env_name}: agent global daily budget reached"
+  combiner              = "OR"
+  notification_channels = local.channels
+  documentation {
+    content   = local.runbook["agent-global-budget"]
+    mime_type = "text/markdown"
+  }
+  conditions {
+    display_name = "an agent turn stopped at the global daily budget"
+    condition_threshold {
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.agent_global_budget.name}\" AND resource.type=one_of(\"cloud_run_revision\", \"cloud_run_job\")"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "0s"
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+    }
+  }
+}
+
 resource "google_monitoring_alert_policy" "model_cost" {
   # Alert policies on postly.* need the metric to exist; see var.app_metric_alerts.
   count = var.app_metric_alerts ? 1 : 0

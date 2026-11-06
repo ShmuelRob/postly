@@ -19,6 +19,8 @@ export async function handOff(
     details: Record<string, unknown>;
     approverPhone: string;
     personaName: string;
+    /** The business's first language: the line goes out in it. */
+    language: Parameters<typeof handOffLine>[1];
     now: Date;
   },
 ): Promise<void> {
@@ -32,7 +34,7 @@ export async function handOff(
     await tx.insert(schema.consoleItem).values({ businessId, kind: input.kind, referenceId: input.turnId, details: { ...input.details, agentTurnId: input.turnId } });
   });
   try {
-    await deps.messaging.sendText(businessId, { to: input.approverPhone, text: handOffLine(input.personaName) });
+    await deps.messaging.sendText(businessId, { to: input.approverPhone, text: handOffLine(input.personaName, input.language) });
   } catch (error) {
     if (!(error instanceof WindowClosedError)) log.error('agent hand-off line not sent', { businessId, error: String(error) });
   }

@@ -202,7 +202,7 @@ function renderAgentSteps(steps: AgentStepEntry[], turns: AgentTurnEntry[]): str
       )
       .join('<br>');
   const turnRows = turns
-    .map((t) => `<tr><td>${esc(t.at)}</td><td>${esc(t.agent)}<br><span class="meta">${esc(t.turnId)}</span></td><td>${esc(t.stopReason)}</td><td>${turnSteps(t)}</td></tr>`)
+    .map((t) => `<tr><td>${esc(t.at)}</td><td>${esc(t.agent)}<br><span class="meta">${esc(t.turnId)}</span></td><td>${esc(t.stopReason ?? 'none (error)')}</td><td>${turnSteps(t)}</td></tr>`)
     .join('');
   return `<section><h3>Agent steps</h3>${
     stepRows

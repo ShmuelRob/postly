@@ -74,7 +74,8 @@ export interface AgentTurnReport {
   agent: AgentName;
   businessId: string;
   turnId: string;
-  stopReason: AgentTurnStopReason;
+  /** Null when the turn ended without a stop reason (an unexpected error), as in WP-90's `TurnEnd`. */
+  stopReason: AgentTurnStopReason | null;
   steps: { calls: AgentToolCall[]; results: (AgentToolResult | null)[] }[];
 }
 
@@ -170,6 +171,9 @@ export class ScriptedAgent {
   readonly violations: string[] = [];
   private readonly agents = new Map<AgentName, AgentState>();
 
+  /** Strict: every agent call needs a script, even before (or without) any `script(...)`. */
+  constructor(private readonly strict = false) {}
+
   /** Appends turns to an agent's script. */
   script(agent: AgentName, turns: ScriptTurn[]): void {
     const state = this.agents.get(agent);
@@ -179,7 +183,7 @@ export class ScriptedAgent {
 
   /** True once the test scripted any agent: from then on, a call to an unscripted agent is a violation. */
   get active(): boolean {
-    return this.agents.size > 0;
+    return this.strict || this.agents.size > 0;
   }
 
   has(agent: AgentName): boolean {
