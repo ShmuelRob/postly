@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { RenderRequest, RenderResult } from '../contracts/providers/renderer.js';
+import { BADGE_KINDS } from '../contracts/design-spec.js';
 import { loadExampleSet } from './loader.js';
 import { buildGallery } from './runner.js';
 
@@ -51,13 +52,18 @@ describe('example-set gallery', () => {
     const { cells, indexPath } = await buildGallery({ createRenderer: fake.createRenderer, outDir: await outDir() });
 
     const overlays = entries.reduce((n, e) => n + e.expected.overlayTexts.length, 0);
-    expect(cells).toHaveLength(overlays * 3);
+    // Each entry and style also gets one cover per badge kind (WP-94: the human sees the badges).
+    expect(cells).toHaveLength(overlays * 3 + entries.length * 3 * BADGE_KINDS.length);
     for (const entry of entries) {
       for (const style of ['clean', 'warm', 'dynamic']) {
-        const texts = cells.filter((c) => c.entryId === entry.id && c.style === style).map((c) => c.overlayText);
-        expect(texts).toEqual(entry.expected.overlayTexts);
+        const mine = cells.filter((c) => c.entryId === entry.id && c.style === style);
+        expect(mine.filter((c) => !c.badge).map((c) => c.overlayText)).toEqual(entry.expected.overlayTexts);
+        expect(mine.flatMap((c) => (c.badge ? [c.badge] : []))).toEqual([...BADGE_KINDS]);
       }
     }
+    const withBadge = fake.requests.filter((r) => r.badge);
+    expect(withBadge.map((r) => r.format)).toEqual(withBadge.map(() => 'single'));
+    expect(withBadge.every((r) => r.badge!.text.length > 0 && r.badge!.text.length <= 8)).toBe(true);
     expect(fake.requests.every((r) => r.networks.includes('instagram') && r.networks.includes('facebook'))).toBe(true);
     expect(cells.every((c) => c.failures.length === 0)).toBe(true);
 

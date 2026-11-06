@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { DesignSpec } from '../../contracts/design-spec.js';
 import type { Fact, ModelTaskOutput } from '../../contracts/model-tasks.js';
 import type { FactSource } from '../../contracts/post-version.js';
 import { normalizeHebrewDetails, weekdays } from './hebrew-details.js';
@@ -168,3 +169,74 @@ export function contentHash(version: { format: string; captions: unknown; render
   const { format, captions, renderedMedia } = version;
   return createHash('sha256').update(canonical({ format, captions, renderedMedia })).digest('hex');
 }
+
+export interface DesignCheckContext extends CaptionCheckContext {
+  /** The facts the post uses (its caption's `usedFactIds`): only these vouch for its title and badge. */
+  usedFactIds: readonly string[];
+  /** Whether the post's week (Sunday to Saturday, the business's time zone) holds a known holiday. */
+  holidayInWeek: boolean;
+}
+
+export type DesignProblem = { reason: 'fact_mismatch' | 'badge_invalid'; detail: string };
+
+const DISCOUNT_BADGE = /^-(\d+(?:\.\d+)?)%$/u;
+const PRICE_BADGE = /^₪(\d+(?:\.\d{1,2})?)$/u;
+
+/**
+ * The code fact check of a DesignSpec's title and badge (agent.md, Badge element): the title's
+ * details come from the used facts and the profile, as a caption's do; a `discount` badge equals a
+ * recorded discount fact the post used and a `price` badge a recorded price; `sale` needs a promotion
+ * or discount fact in the post; `holiday` needs a holiday in the post's week. `new` needs nothing.
+ */
+export function checkDesign(design: { title: string; badge?: DesignSpec['badge'] }, context: DesignCheckContext): DesignProblem | null {
+  const source = sourceDetails(context.usedFactIds, context.facts, context.profile);
+  const found = details(design.title);
+  for (const kind of Object.keys(found) as Kind[]) {
+    const missing = found[kind].find((d) => !matches(kind, d, source[kind]));
+    if (missing) return { reason: 'fact_mismatch', detail: `title: ${kind} "${kind === 'weekday' ? `יום ${missing}` : missing.replace(/^~/u, '')}" has no source` };
+  }
+
+  const { badge } = design;
+  if (!badge) return null;
+  const used = context.facts.filter((f) => context.usedFactIds.includes(f.id));
+  if (badge.kind === 'discount' || badge.kind === 'price') {
+    const shape = badge.kind === 'discount' ? DISCOUNT_BADGE.exec(badge.text) : PRICE_BADGE.exec(badge.text);
+    if (!shape) {
+      return { reason: 'badge_invalid', detail: badge.kind === 'discount' ? 'a discount badge reads like -15%' : 'a price badge reads like ₪29.90' };
+    }
+    const fact = used.find((f) => f.id === badge.factId);
+    const type = badge.kind === 'discount' ? 'discount_percent' : 'price';
+    if (!fact || fact.type !== type) return { reason: 'fact_mismatch', detail: `the ${badge.kind} badge needs a recorded ${type} fact that the post uses (${badge.factId})` };
+    // The fact's value is a bare number ("20") or text ("29.90 ₪", "15%"): its first number is the amount.
+    const shown = /\d+(?:[.,]\d+)?/u.exec(fact.value)?.[0]?.replace(',', '.');
+    if (shown === undefined || Number(shown) !== Number(shape[1])) {
+      return { reason: 'fact_mismatch', detail: `the ${badge.kind} badge shows ${shape[1]}, the fact says ${shown ?? fact.value}` };
+    }
+    return null;
+  }
+  if (badge.kind === 'sale' && !used.some((f) => f.type === 'promotion' || f.type === 'discount_percent')) {
+    return { reason: 'fact_mismatch', detail: 'a sale badge needs a promotion or discount fact in the post' };
+  }
+  if (badge.kind === 'holiday' && !context.holidayInWeek) return { reason: 'fact_mismatch', detail: 'a holiday badge needs a holiday in the post week' };
+  return null;
+}
+
+/**
+ * The facts a version rests on: the badge's fact, and each fact whose numbers (or, with none, whose
+ * words) appear in the captions, the title or the badge. Used to record a fix's own `fact_sources`
+ * and to check it against them, instead of the old version's.
+ */
+export function factsUsedBy(content: { captions: ChannelCaptionsLike; title: string; badge?: DesignSpec['badge'] }, facts: readonly Fact[]): string[] {
+  const text = [...Object.values(content.captions).flatMap((c) => (c ? [c.text, ...c.hashtags] : [])), content.title, content.badge && 'text' in content.badge ? content.badge.text : ''].join(' ');
+  const numbers = new Set(text.match(NUMBER) ?? []);
+  const badgeFact = content.badge && 'factId' in content.badge ? content.badge.factId : undefined;
+  return facts
+    .filter((f) => {
+      if (f.id === badgeFact) return true;
+      const own = [...f.value.matchAll(NUMBER)].map((m) => m[0]);
+      return own.length > 0 ? own.some((n) => numbers.has(n)) : text.includes(f.value);
+    })
+    .map((f) => f.id);
+}
+
+type ChannelCaptionsLike = Partial<Record<string, { text: string; hashtags: string[] } | undefined>>;

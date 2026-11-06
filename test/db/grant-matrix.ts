@@ -10,11 +10,11 @@ const MATRIX = `
 | channel_connection |  | S |  |  |  | SIU |  |  | S |  |  | S | S U(-id, -business_id) |  |
 | conversation_state | SU | SIU |  |  |  |  |  |  |  |  |  |  | SI U(-business_id) |  |
 | message | SIU | S | S |  | S |  |  |  |  |  | SI |  | S |  |
-| media_asset | SI |  | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
-| preference_rule |  |  | S |  |  |  |  |  | SIUD |  |  |  | S |  |
+| media_asset | SI | S U(review) | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
+| preference_rule |  | S | S |  |  |  |  |  | SIUD |  |  |  | S |  |
 | weekly_update |  | SIU | SU |  |  |  |  |  |  |  |  | S | S |  |
 | post |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | S U(-id, -business_id) |  |
-| post_version |  |  | SI | S | S | S |  |  | S |  |  |  | S |  |
+| post_version |  | S | SI | S | S | S |  |  | S |  |  |  | S |  |
 | approval |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
 | publication |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | subscription |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |

@@ -113,7 +113,7 @@ The agent sees only what its task needs, all from one business (`withBusiness`):
 
 It never sees phone numbers (the approver's number is replaced by "the owner"), other businesses, tokens, provider ids, or payment data.
 
-**Not yet in WP-90's context builder.** Three items above are still missing: `rules` is empty, posts carry their plan and state but not their current captions and `DesignSpec`, and photos are asset ids without their `image_review` notes. The `workflow` role the module runs as cannot read `preference_rule` or `post_version`, and no `image_review` v2 notes exist yet. The agent package that first needs each item adds it to `context.ts`, together with the grants (H4): the rules and the current version by WP-94 at the latest (`apply_change` works on the current captions), the photo notes with `image_review` v2 (WP-94).
+**Added by WP-94 (2026-11-06).** The context builder now carries the active preference rules, each post's current captions and `DesignSpec` (from its current version) and, for every photo in the messages and in the week's posts, the `image_review` notes (`description`, `usable`, and a suggested `crop`, `rotateDeg`, `brightness`, `contrast`). The notes live in `media_asset.review`, written once by the workflow when drafting starts (code calls `image_review` for each planned photo that has none; a failed review only means the agent drafts without notes). The `workflow` role gained `SELECT` on `preference_rule`, `post_version` and `media_asset`, and `UPDATE (review)` on `media_asset` (H4, migration 0022). `ContextPost.photos` (the post's planned photos with their notes) is the one contract addition (H1).
 
 ### Photos the agent sees
 
@@ -269,6 +269,14 @@ The machines do not get new states. What changes is who produces the events' inp
 - **Approval and after.** Unchanged and agent-free: `APPROVED` comes only from a button tap; `ALL_DRAFTS_RESOLVED`, the time proposal, `SCHEDULE_CONFIRMED` and publishing are code.
 
 Free text in `reviewing_drafts` that is not a change (such as "looks good") is still not an event: the drafts agent is not called for it; code resends the open drafts with their buttons, as today. Routing between "a change" and "not a change" stays with `intent_detection`.
+
+### How the drafts agent runs (WP-94)
+
+- **Where it starts.** With `agent_flows.drafts` on, `draftWeek` (after the plan is stored) writes the photo notes and runs one turn (trigger `plan_stored`); an owner text in `reviewing_drafts` that `intent_detection` reads as a change applies the conversation's `CHANGE_REQUESTED` and runs a turn on the burst. An answer to a question the agent asked comes back to it: its open question's key is stored as `agent:drafts:<topic>`, so the drafts flow takes the answer (`ANSWER_RECEIVED`) before the weekly flow can.
+- **Who does what.** The tools run the checks that need only data (ids and states, the plan's facts and photos, the 720-pixel crop rule, the fact check of captions, title and badge, the forbidden topics) and call the workflow through the events `draftCreated`, `changeApplied` and `holidayInWeek`; the workflow renders, writes the version (with its `design_spec`), sends it with the buttons and applies the post's events. The agent never sees the buttons.
+- **A fix renders first.** `apply_change` renders the new content before it invalidates anything, so a render that fails (`render_failed`) changes nothing and the agent can correct it; only then are the approvals invalidated, `CHANGE_REQUESTED` applied, the rule saved and the new version sent.
+- **Done.** On the plan's event the turn is done when no post is planned or drafting. On an owner message it also needs a draft written in this turn (`create_draft` or `apply_change` succeeded), because a fix leaves its post waiting for approval the whole time. After the turn, a post still drafting goes to `needs_review` (`DRAFT_FAILED`), and code applies `DRAFTS_SENT` (or hands off when no draft could be sent).
+- **Sticker words and holidays.** The fixed words (`STICKER_WORDS`, he, ar, en, ru) live in the contracts so the workflow resolves a badge's text without the design module; `holidayInWeek` is the jewish-calendar check for the post's Sunday-to-Saturday week.
 
 ## Photo edits
 

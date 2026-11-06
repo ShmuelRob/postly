@@ -172,3 +172,51 @@ describe('the closed-window mark (review of PR #52, item c)', { timeout: 30_000 
     expect(templates).toEqual([]);
   });
 });
+
+describe('a version is checked against its own facts (WP-94)', { timeout: 30_000 }, () => {
+  it('blocks a fix that changes a price: nothing is written or sent; a fix with a sourced detail records its own facts', async () => {
+    const { id, phone, weekId } = await plannedWeek();
+    const price = { id: 'f1', type: 'price', value: '25 ₪', sourceQuote: '25 ₪' };
+    const date = { id: 'f2', type: 'date', value: 'עד יום שישי', sourceQuote: 'עד יום שישי' };
+    await db.withBusiness('workflow', id, async (tx) => {
+      await tx.update(schema.weeklyUpdate).set({ extractedFacts: { facts: [price, date], missingDetails: [] } }).where(eq(schema.weeklyUpdate.id, weekId));
+      await tx.update(schema.post).set({ plan: { topic: 'הבצק', contentType: 'products', format: 'single', factIds: ['f1', 'f2'], mediaAssetIds: [], brief: 'b' } }).where(eq(schema.post.weeklyUpdateId, weekId));
+    });
+    const sent: string[] = [];
+    const drafts = createDrafts({
+      db,
+      workflow,
+      messaging: { sendText: async (_b, r) => void sent.push(r.text), sendButtons: async (_b, r) => void sent.push(r.text) },
+      model: { run: async () => ({}) as never },
+      render: async () => ({ instagram: [{ storagePath: `r/${randomUUID()}.png`, width: 1080, height: 1080, mimeType: 'image/png' }] }),
+      mediaUrl: async (_b, a) => `https://media.test/${a}`,
+      urlFor: (p) => `https://media.test/${p}`,
+      readFile: async () => new Uint8Array([1, 2, 3]),
+      invalidate: async () => {},
+      samplePhotoUrl: 'https://media.test/sample.png',
+    });
+    const [post] = await db.withBusiness('workflow', id, (tx) => tx.select().from(schema.post).where(eq(schema.post.weeklyUpdateId, weekId)));
+    const design = { photos: [{ assetId: randomUUID() }], title: 'חלות' };
+    const caption = (text: string) => ({ instagram: { text, hashtags: [] } });
+    const made = await drafts.agentDraft(id, { postId: post!.id, captions: caption('חלה ב-25 ₪'), usedFactIds: ['f1'], design });
+    expect(made.status).toBe('ok');
+    const versions = () => db.withBusiness('content', id, (tx) => tx.select().from(schema.postVersion).where(eq(schema.postVersion.postId, post!.id)).orderBy(schema.postVersion.versionNumber));
+    const sentBefore = sent.length;
+
+    // A price that no fact has: the version is neither written nor sent, and the post is untouched.
+    const blocked = await drafts.agentChange(id, { postId: post!.id, ownerQuote: 'x', captions: caption('חלה ב-30 ₪') });
+    expect(blocked).toMatchObject({ status: 'refused', reason: 'fact_mismatch' });
+    expect(await versions()).toHaveLength(1);
+    expect(sent).toHaveLength(sentBefore);
+    const [after] = await db.withBusiness('workflow', id, (tx) => tx.select().from(schema.post).where(eq(schema.post.id, post!.id)));
+    expect(after!.status).toBe('awaiting_approval');
+
+    // A fix that uses the date fact: the new version's fact_sources are the facts it uses now.
+    const fixed = await drafts.agentChange(id, { postId: post!.id, ownerQuote: 'x', captions: caption('חלה ב-25 ₪ עד יום שישי') });
+    expect(fixed.status).toBe('ok');
+    const [first, second] = await versions();
+    expect((first!.factSources as { factId: string }[]).map((f) => f.factId)).toEqual(['f1']);
+    expect((second!.factSources as { factId: string }[]).map((f) => f.factId).sort()).toEqual(['f1', 'f2']);
+    void phone;
+  });
+});

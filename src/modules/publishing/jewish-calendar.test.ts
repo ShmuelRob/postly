@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { candleLighting, havdalah, JERUSALEM, lookupCity, restPeriods, roshHashana, yomTovDays } from './jewish-calendar.js';
+import { candleLighting, havdalah, holidayInWeek, JERUSALEM, lookupCity, restPeriods, roshHashana, yomTovDays } from './jewish-calendar.js';
 
 // Cross-checks against published Israeli calendars (the values were taken from hebcal.com for
 // these cities; a one-minute difference is allowed for rounding of the solar equations).
@@ -70,5 +70,22 @@ describe('lookupCity', () => {
     expect(lookupCity(undefined)).toBe(JERUSALEM);
     expect(lookupCity('Springfield')).toBe(JERUSALEM);
     expect(JERUSALEM.candleLightingMinutes).toBe(40);
+  });
+});
+
+describe('holidayInWeek (the holiday badge, agent.md Badge element)', () => {
+  it('is true for the Sunday-to-Saturday week that holds a yom tov day, whichever day it falls on', () => {
+    for (const { date } of [...yomTovDays(5787), ...yomTovDays(5788)]) {
+      const sunday = new Date(date.getTime() - date.getUTCDay() * 86_400_000);
+      expect(holidayInWeek(sunday), iso(date)).toBe(true);
+    }
+  });
+
+  it('is false for the weeks next to it and for an ordinary week', () => {
+    const rh = yomTovDays(5787)[7]!.date; // Shavuot: no other yom tov within a week
+    const sunday = new Date(rh.getTime() - rh.getUTCDay() * 86_400_000);
+    expect(holidayInWeek(new Date(sunday.getTime() - 7 * 86_400_000))).toBe(false);
+    expect(holidayInWeek(new Date(sunday.getTime() + 7 * 86_400_000))).toBe(false);
+    expect(holidayInWeek(day('2026-11-01'))).toBe(false);
   });
 });

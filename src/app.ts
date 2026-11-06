@@ -23,6 +23,7 @@ import {
   type Publishing,
   type PublishingNotice,
   type Scheduling,
+  holidayInWeek,
 } from './modules/publishing/index.js';
 import {
   createApprovals,
@@ -156,7 +157,11 @@ export function createApp(options: AppOptions): App {
     events: {
       async questionAsked(businessId, question) {
         if (question.agent === 'onboarding') await onboarding!.agentAsked(businessId, question);
+        if (question.agent === 'drafts') await drafts!.agentAsked(businessId, question);
       },
+      draftCreated: (businessId, input) => drafts!.agentDraft(businessId, input),
+      changeApplied: (businessId, input) => drafts!.agentChange(businessId, input),
+      holidayInWeek: (businessId, postId) => drafts!.holidayInWeek(businessId, postId),
     },
     ...(options.onAgentTurnEnd ? { onTurnEnd: options.onAgentTurnEnd } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -353,6 +358,8 @@ export function createApp(options: AppOptions): App {
   drafts = createDrafts({
     db,
     workflow,
+    agent,
+    holidayInWeek,
     messaging,
     model,
     render: ({ businessId, businessName, languages }, request) =>

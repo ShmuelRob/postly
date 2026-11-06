@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Fact } from '../../contracts/model-tasks.js';
-import { captionSources, checkCaptions, contentHash, factSources } from './fact-check.js';
+import type { DesignSpec } from '../../contracts/design-spec.js';
+import { captionSources, checkCaptions, checkDesign, contentHash, factSources, factsUsedBy } from './fact-check.js';
 
 const facts: Fact[] = [
   { id: 'f1', type: 'promotion', value: 'מבצע על חלות', sourceQuote: 'מבצע על חלות' },
@@ -156,5 +157,84 @@ describe('contentHash', () => {
     expect(contentHash({ ...version, format: 'carousel' })).not.toBe(hash);
     expect(contentHash({ ...version, captions: { instagram: { text: 'א!', hashtags: ['#ב'] } } })).not.toBe(hash);
     expect(contentHash({ ...version, renderedMedia: { facebook: version.renderedMedia.instagram } })).not.toBe(hash);
+  });
+});
+
+describe('checkDesign (title and badge fact check)', () => {
+  const design = (title: string, badge?: DesignSpec['badge']) => ({ title, ...(badge ? { badge } : {}) });
+  const ctx = { ...context, usedFactIds: ['f1', 'f2', 'f3', 'f4'], holidayInWeek: false };
+
+  it('accepts a title whose details have sources, and a post with no badge', () => {
+    expect(checkDesign(design('מבצע על חלות\nעד יום שישי'), ctx)).toBeNull();
+    expect(checkDesign(design('15% הנחה על חלות'), ctx)).toBeNull();
+  });
+
+  it('refuses a title with a price, discount, time or date that has no source', () => {
+    expect(checkDesign(design('חלות ב-20 ₪'), ctx)).toMatchObject({ reason: 'fact_mismatch', detail: expect.stringMatching(/title.*20/) });
+    expect(checkDesign(design('30% הנחה'), ctx)).toMatchObject({ reason: 'fact_mismatch' });
+    expect(checkDesign(design('נפתחים ב-9:00'), ctx)).toMatchObject({ reason: 'fact_mismatch' });
+  });
+
+  it('only the facts the post used vouch for its title', () => {
+    expect(checkDesign(design('15% הנחה'), { ...ctx, usedFactIds: ['f1'] })).toMatchObject({ reason: 'fact_mismatch' });
+  });
+
+  describe('discount badge', () => {
+    const badge = { kind: 'discount' as const, text: '-15%', factId: 'f4' };
+    it('equals a recorded discount fact the post used', () => {
+      expect(checkDesign(design('חלות', badge), ctx)).toBeNull();
+    });
+    it('is refused with another number, an unknown or unused fact, or a fact of another type', () => {
+      expect(checkDesign(design('חלות', { ...badge, text: '-20%' }), ctx)).toMatchObject({ reason: 'fact_mismatch' });
+      expect(checkDesign(design('חלות', { ...badge, factId: 'nope' }), ctx)).toMatchObject({ reason: 'fact_mismatch' });
+      expect(checkDesign(design('חלות', badge), { ...ctx, usedFactIds: ['f1'] })).toMatchObject({ reason: 'fact_mismatch' });
+      expect(checkDesign(design('חלות', { ...badge, factId: 'f2' }), ctx)).toMatchObject({ reason: 'fact_mismatch' });
+    });
+    it('is refused when its text is not a number with the sign in front and the % after it', () => {
+      for (const text of ['15%', '-15', '15% off', '-%15']) {
+        expect(checkDesign(design('חלות', { ...badge, text }), ctx), text).toMatchObject({ reason: 'badge_invalid' });
+      }
+    });
+  });
+
+  describe('price badge', () => {
+    const facts2: Fact[] = [...facts, { id: 'f5', type: 'price', value: '29.90 ₪', sourceQuote: '29.90 ₪' }];
+    const c = { ...ctx, facts: facts2, planFactIds: [...ctx.planFactIds, 'f5'], usedFactIds: [...ctx.usedFactIds, 'f5'] };
+    it('equals a recorded price fact the post used', () => {
+      expect(checkDesign(design('חלות', { kind: 'price', text: '₪29.90', factId: 'f5' }), c)).toBeNull();
+    });
+    it('is refused with another amount, or without the sign of the currency', () => {
+      expect(checkDesign(design('חלות', { kind: 'price', text: '₪25.90', factId: 'f5' }), c)).toMatchObject({ reason: 'fact_mismatch' });
+      expect(checkDesign(design('חלות', { kind: 'price', text: '29.90', factId: 'f5' }), c)).toMatchObject({ reason: 'badge_invalid' });
+    });
+  });
+
+  describe('stickers', () => {
+    it('new needs no fact', () => {
+      expect(checkDesign(design('חלות', { kind: 'new' }), ctx)).toBeNull();
+    });
+    it('sale needs a recorded promotion or discount fact in the post', () => {
+      expect(checkDesign(design('חלות', { kind: 'sale' }), ctx)).toBeNull();
+      expect(checkDesign(design('חלות', { kind: 'sale' }), { ...ctx, usedFactIds: ['f3'] })).toMatchObject({ reason: 'fact_mismatch', detail: expect.stringMatching(/sale/) });
+    });
+    it('holiday only when the post week holds a holiday', () => {
+      expect(checkDesign(design('חלות', { kind: 'holiday' }), ctx)).toMatchObject({ reason: 'fact_mismatch', detail: expect.stringMatching(/holiday/) });
+      expect(checkDesign(design('חלות', { kind: 'holiday' }), { ...ctx, holidayInWeek: true })).toBeNull();
+    });
+  });
+});
+
+describe('factsUsedBy (the facts a version rests on)', () => {
+  const all: Fact[] = [
+    ...facts,
+    { id: 'f6', type: 'product', value: 'חלות מתוקות', sourceQuote: 'חלות מתוקות' },
+  ];
+  it('names the facts whose numbers or words the captions, title and badge use, and the badge fact', () => {
+    const used = factsUsedBy({ captions: { instagram: { text: 'חלות מתוקות: 15% הנחה', hashtags: [] } }, title: 'עד יום שישי' }, all);
+    expect(used.sort()).toEqual(['f3', 'f4', 'f6']);
+    expect(factsUsedBy({ captions: { instagram: { text: 'שלום', hashtags: [] } }, title: 'חלות', badge: { kind: 'discount', text: '-15%', factId: 'f4' } }, all)).toEqual(['f4']);
+  });
+  it('names none for a text with no sourced detail', () => {
+    expect(factsUsedBy({ captions: { instagram: { text: 'שלום', hashtags: [] } }, title: 'חלות' }, all)).toEqual([]);
   });
 });
