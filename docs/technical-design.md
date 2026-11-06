@@ -132,7 +132,7 @@ These are defaults stored in configuration, so they can change without a code ch
 | Monthly report | 06:00 UTC on the first of each month, for the previous calendar month in `business.timezone` (WP-43) |
 | Publishing tick | Every minute: publications due by `scheduled_for`, retries by the retry spacing |
 | Agent limits (A4, `agent_config`, decided 2026-11-05) | 12 steps and 24 tool calls a turn, USD 0.06 a turn, USD 1.00 a business a day, USD 50 for all businesses a day, 90 seconds a turn; a limit hands the conversation off ([agent.md](agent.md#limits)) |
-| Agent flows | Always on for every business in every deployed environment, with no switch (2026-11-06). The one-shot flows are a test-only composition option (`oneShotFlows`; agent.md, [Running on dev](agent.md#running-on-dev)) |
+| Agent flows | Always on for every business in every deployed environment, with no switch (2026-11-06). The one-shot flows are a test-only composition option, off by default (`oneShotFlows`; agent.md, [Running on dev](agent.md#running-on-dev)) |
 | No publishing on Shabbat and holidays | From 30 minutes before candle lighting to 30 minutes after havdalah, candle lighting at sunset minus 40 minutes in Jerusalem, 30 in Haifa and Zikhron Ya'akov, 20 elsewhere; havdalah at nightfall (sun 8.5° below the horizon); by the business's city when the city table knows its English or Hebrew name, otherwise Jerusalem |
 
 ## The agent
