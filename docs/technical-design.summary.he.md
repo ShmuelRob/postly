@@ -4,7 +4,7 @@
 
 - **סטאק:** Fastify, Postgres עם RLS, Drizzle, pg-boss, Zod, Playwright, sharp ו-React לקונסולה.
 - **אירוח:** Cloud Run, Cloud SQL ו-Cloud Storage, עם מופע פעיל אחד לפחות ל-worker.
-- **מודלים:** Gemini של Google דרך Vertex AI, מאחורי שכבה שמאפשרת להחליף ספק. השירותים פונים ל-Vertex AI עם חשבון השירות שלהם, בלי מפתח API. כרגע כל המשימות רצות על מודל Gemini Flash.
+- **מודלים:** Gemini של Google דרך Vertex AI, מאחורי שכבה שמאפשרת להחליף ספק. השירותים פונים ל-Vertex AI עם חשבון השירות שלהם, בלי מפתח API. המודל לכל משימה נקבע בטבלת `model_task_config`: המשימות החד-פעמיות על Gemini Flash ושלושת הסוכנים על Gemini Flash Lite. ב-dev רץ Gemini אמיתי (`POSTLY_MODELS=vertex`) עם שאר הספקים מדומים; בדיקות ו-CI לעולם לא. הזרימות של הסוכנת נקבעות לכל סביבה ב-`POSTLY_AGENT_FLOWS`, שתהליך ה-web כותב ל-`system_control.agent_flows` בעלייה: שלושתן ב-dev, אף אחת ב-stage וב-prod.
 - **ספקים:** Twilio ממתין לתשובה על המדיניות, ו-Zernio ממתין לבדיקה. לסליקה יש מימוש זמני, וניטור מסומן כנדרש בלי בחירה.
 - **שליטה:** גרסאות לפרומפטים, הגדרת מודל לכל משימה, מצבים ומעברים בקוד, ותיעוד מלא של כל ריצה.
 - **אישור:** פרסום מתקבל רק אם הוא קשור ל-hash של גרסה מאושרת.

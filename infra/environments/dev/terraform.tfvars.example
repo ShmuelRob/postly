@@ -11,3 +11,9 @@ sandbox_invokers = ["user:REPLACE_WITH_YOUR_EMAIL"]
 # console_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
 # console_members       = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # console_domain        = "console.REPLACE_WITH_YOUR_DOMAIN"
+# Real Gemini on dev, with WhatsApp, publishing and payments still simulated, and every agent flow on
+# (docs/deployment.md, "Real Gemini and the agent flows on dev"). models = "simulator" switches back.
+models      = "vertex"
+agent_flows = ["onboarding", "weekly", "drafts"]
+# The monthly Vertex AI budget alert (USD 50 on dev, model_budget_usd): Billing > Account management.
+# billing_account = "REPLACE_WITH_BILLING_ACCOUNT_ID"

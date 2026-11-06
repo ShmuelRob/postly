@@ -59,6 +59,12 @@ module "postly" {
   sandbox_enabled       = true
   sandbox_invokers      = var.sandbox_invokers
   sandbox_iap_client_id = var.sandbox_iap_client_id
+  # Real Gemini and the agent flows (docs/deployment.md, "Real Gemini and the agent flows on dev").
+  models           = var.models
+  vertex_location  = var.vertex_location
+  agent_flows      = var.agent_flows
+  billing_account  = var.billing_account
+  model_budget_usd = var.model_budget_usd
 }
 
 module "github" {
