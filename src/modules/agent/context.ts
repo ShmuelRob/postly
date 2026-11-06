@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   AGENT_PERSONA_GENDER,
@@ -10,7 +10,8 @@ import {
   personaName,
 } from '../../contracts/agent.js';
 import { BusinessProfileDraft, missingRequiredProfileFields } from '../../contracts/business-profile.js';
-import { Fact, PlannedPost } from '../../contracts/content.js';
+import { ChannelCaptions, Fact, PlannedPost } from '../../contracts/content.js';
+import { DesignSpec, PhotoEdit } from '../../contracts/design-spec.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -20,6 +21,16 @@ import type { AgentDefinition, PastCall } from './types.js';
 export const CONTEXT_MESSAGES = 20;
 export const CONTEXT_DAYS = 14;
 const HISTORY_TOPICS = 8;
+
+/** The `image_review` notes of a photo as the agent reads them (media_asset.review, agent.md, Photos the agent sees). */
+const PhotoReview = z.object({
+  usable: z.boolean().optional(),
+  description: z.string().optional(),
+  crop: PhotoEdit.shape.crop,
+  rotateDeg: PhotoEdit.shape.rotateDeg,
+  brightness: PhotoEdit.shape.brightness,
+  contrast: PhotoEdit.shape.contrast,
+});
 
 const AgentNames = z.partialRecord(z.enum(['he', 'en', 'ar', 'ru']), z.string().min(1));
 
@@ -65,11 +76,21 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
     .where(and(eq(schema.message.businessId, businessId), gte(schema.message.createdAt, since)))
     .orderBy(desc(schema.message.createdAt))
     .limit(CONTEXT_MESSAGES);
+  // The photo notes of every photo the agent can see: in these messages, or in this week's posts (below).
+  const reviews = new Map<string, ReturnType<typeof notesOf>>();
+  const loadNotes = async (ids: string[]) => {
+    const missing = [...new Set(ids)].filter((id) => !reviews.has(id));
+    if (missing.length === 0) return;
+    const found = await tx.select({ id: schema.mediaAsset.id, review: schema.mediaAsset.review }).from(schema.mediaAsset).where(inArray(schema.mediaAsset.id, missing));
+    for (const id of missing) reviews.set(id, notesOf(found.find((f) => f.id === id)?.review));
+  };
+  const photo = (assetId: string) => ({ assetId, ...reviews.get(assetId) });
+  await loadNotes(rows.flatMap((m) => m.mediaAssetIds));
   const messages = rows.reverse().map((m) => ({
     role: m.direction === 'inbound' ? ('owner' as const) : ('postly' as const),
     text: m.body ?? '',
     at: m.createdAt.toISOString(),
-    photos: m.mediaAssetIds.map((assetId) => ({ assetId })),
+    photos: m.mediaAssetIds.map(photo),
   }));
 
   // The current week: the newest weekly_update row (weekly and drafts agents).
@@ -95,9 +116,27 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
         .from(schema.post)
         .where(and(eq(schema.post.businessId, businessId), eq(schema.post.weeklyUpdateId, row.id)))
         .orderBy(schema.post.position);
+      // The current version of each post: its captions and design (agent.md, Context).
+      const versionIds = postRows.flatMap((p) => (p.currentVersionId ? [p.currentVersionId] : []));
+      const versions = versionIds.length ? await tx.select().from(schema.postVersion).where(inArray(schema.postVersion.id, versionIds)) : [];
+      for (const p of postRows) await loadNotes(PlannedPost.safeParse(p.plan).data?.mediaAssetIds ?? []);
       posts = postRows.flatMap((p) => {
         const plan = PlannedPost.safeParse(p.plan);
-        return plan.success ? [{ id: p.id, state: p.status, format: p.format, plan: plan.data }] : [];
+        if (!plan.success) return [];
+        const version = versions.find((v) => v.id === p.currentVersionId);
+        const captions = ChannelCaptions.safeParse(version?.captions);
+        const design = DesignSpec.safeParse(version?.designSpec);
+        return [
+          {
+            id: p.id,
+            state: p.status,
+            format: p.format,
+            plan: plan.data,
+            ...(captions.success ? { captions: captions.data } : {}),
+            ...(design.success ? { design: design.data } : {}),
+            photos: plan.data.mediaAssetIds.map(photo),
+          },
+        ];
       });
     }
   }
@@ -109,6 +148,11 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
     .orderBy(desc(schema.post.createdAt))
     .limit(HISTORY_TOPICS);
   const openQuestion = OpenQuestion.safeParse(conversation.openQuestion);
+  const rules = await tx
+    .select({ rule: schema.preferenceRule.rule })
+    .from(schema.preferenceRule)
+    .where(and(eq(schema.preferenceRule.businessId, businessId), eq(schema.preferenceRule.active, true)))
+    .orderBy(schema.preferenceRule.createdAt);
 
   const context = AgentContext.parse({
     agent: agent.name,
@@ -122,7 +166,7 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
     openQuestion: openQuestion.success ? openQuestion.data : null,
     week,
     posts,
-    rules: [],
+    rules: rules.map((r) => r.rule),
     history: topics.flatMap((t) => {
       const plan = PlannedPost.safeParse(t.plan);
       return plan.success ? [plan.data.topic] : [];
@@ -133,6 +177,19 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
     toolResults: input.toolResults,
   });
   return { context, approverPhone: business.approverPhone, timezone: business.timezone, personaName: name };
+}
+
+/** The notes of a photo as the context carries them; nothing when it was not reviewed. */
+function notesOf(review: unknown): { description?: string; usable?: boolean; suggested?: PhotoEdit } {
+  const parsed = PhotoReview.safeParse(review);
+  if (!parsed.success) return {};
+  const { usable, description, ...edit } = parsed.data;
+  const suggested = PhotoEdit.parse(Object.fromEntries(Object.entries(edit).filter(([, v]) => v !== undefined)));
+  return {
+    ...(description ? { description } : {}),
+    ...(usable === undefined ? {} : { usable }),
+    ...(Object.keys(suggested).length ? { suggested } : {}),
+  };
 }
 
 /** What the owner declined, from earlier successful `record_decline` calls in scope. */

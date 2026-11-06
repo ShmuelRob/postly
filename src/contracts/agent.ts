@@ -337,6 +337,8 @@ const ContextPost = z.object({
   plan: PlannedPost,
   captions: ChannelCaptions.optional(),
   design: DesignSpec.optional(),
+  /** The post's planned photos with their image_review notes, so the agent can choose edits. */
+  photos: z.array(ContextPhoto).optional(),
 });
 
 export const AgentContext = z.object({

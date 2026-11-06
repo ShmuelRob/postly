@@ -207,8 +207,11 @@ export function checkDesign(design: { title: string; badge?: DesignSpec['badge']
     const fact = used.find((f) => f.id === badge.factId);
     const type = badge.kind === 'discount' ? 'discount_percent' : 'price';
     if (!fact || fact.type !== type) return { reason: 'fact_mismatch', detail: `the ${badge.kind} badge needs a recorded ${type} fact that the post uses (${badge.factId})` };
-    const shown = (badge.kind === 'discount' ? details(fact.value).discount : details(fact.value).price)[0];
-    if (shown !== shape[1]) return { reason: 'fact_mismatch', detail: `the ${badge.kind} badge shows ${shape[1]}, the fact says ${shown ?? fact.value}` };
+    // The fact's value is a bare number ("20") or text ("29.90 ₪", "15%"): its first number is the amount.
+    const shown = /\d+(?:[.,]\d+)?/u.exec(fact.value)?.[0]?.replace(',', '.');
+    if (shown === undefined || Number(shown) !== Number(shape[1])) {
+      return { reason: 'fact_mismatch', detail: `the ${badge.kind} badge shows ${shape[1]}, the fact says ${shown ?? fact.value}` };
+    }
     return null;
   }
   if (badge.kind === 'sale' && !used.some((f) => f.type === 'promotion' || f.type === 'discount_percent')) {
