@@ -55,6 +55,10 @@ export interface BusinessRow {
   lastInboundAt: Date | null;
   /** Open console items of the business. */
   openItems: number;
+  /** Publications of the business that are published (status published), all time. */
+  published: number;
+  /** The business's model spend, all time, in US dollars. */
+  spendUsd: number;
   /** The newest message, for the conversation list. */
   lastMessage: { body: string | null; kind: string; direction: string; createdAt: Date } | null;
   createdAt: Date;
@@ -185,4 +189,54 @@ export type AgentConfigPatch = Partial<Omit<AgentConfigRow, 'agent' | 'updatedAt
 export interface WriteMeta {
   actor: string;
   reason?: string;
+}
+
+/** A range of UTC days, both included (YYYY-MM-DD). */
+export interface InsightsRange {
+  from: string;
+  to: string;
+}
+
+/**
+ * The Insights tab (technical-design.md, "Console (Phase 1)"): product and funnel numbers across every
+ * business. "In the range" means between the start of `from` and the end of `to` (UTC); "now" fields
+ * are the current state whatever the range.
+ */
+export interface Insights {
+  range: InsightsRange & { days: number };
+  /** Businesses created in the range: per UTC day (zero-filled, oldest first) and per week (weeks start on Sunday). */
+  newBusinesses: { total: number; perDay: Array<{ day: string; n: number }>; perWeek: Array<{ weekStart: string; n: number }> };
+  /** Businesses per business_status now (every status, zeros included). */
+  statuses: Record<string, number>;
+  /**
+   * The funnel now: onboarding businesses per onboarding step, and active businesses per conversation
+   * state, every step in contract order (zeros included); a business without a conversation_state row
+   * counts under its first step.
+   */
+  funnel: { onboarding: Array<{ step: string; n: number }>; conversation: Array<{ step: string; n: number }> };
+  /** Messages with a business in the range; `businessesWriting` = businesses with at least one inbound message; `top` = the 20 businesses with the most messages. */
+  messages: { inbound: number; outbound: number; businessesWriting: number; top: Array<{ businessId: string; name: string; inbound: number; outbound: number }> };
+  /**
+   * drafted = first versions (version_number 1) written in the range; approved = posts with an approval
+   * in the range that was not invalidated; published = publications with published_at in the range.
+   * byNetwork: per network in the network enum's order, publications scheduled for the range, published in it, and failed (status
+   * failed, last updated in it).
+   */
+  posts: { drafted: number; approved: number; published: number; byNetwork: Array<{ network: string; scheduled: number; published: number; failed: number }> };
+  /**
+   * This week's weekly update for businesses active now. The week starts on the Sunday on or before
+   * `now` (UTC date). done = received, needs_review or planned; reminded = reminded with no reply yet;
+   * awaiting; skipped; noRow = active businesses without a row for the week.
+   */
+  weekly: { weekStart: string; active: number; done: number; reminded: number; awaiting: number; skipped: number; noRow: number };
+  /**
+   * versioned = posts whose first version was written in the range; approved = those of them with any
+   * approval (now); rate = approved / versioned (null when none). Minutes from a version's creation to
+   * its approval, for approvals in the range (null when none).
+   */
+  approval: { versioned: number; approved: number; rate: number | null; medianMinutes: number | null; p90Minutes: number | null };
+  /** Agent turns started in the range, those handed off, and the share handed off (null when none). */
+  agent: { turns: number; handedOff: number; handOffRate: number | null };
+  /** Model spend in the range: total, per UTC day (zero-filled), and per business that spent anything (null when none). */
+  cost: { totalUsd: number; perDay: Array<{ day: string; usd: number }>; perBusinessUsd: number | null };
 }

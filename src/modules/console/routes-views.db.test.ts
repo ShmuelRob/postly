@@ -81,6 +81,8 @@ describe('JSON reads', () => {
     const run = s.keys.get('model_run')!;
     for (const url of [
       '/console/api/overview',
+      '/console/api/insights',
+      '/console/api/insights?from=2026-10-01&to=2026-10-31',
       '/console/api/business-rows',
       `/console/api/businesses/${s.id}`,
       `/console/api/businesses/${s.id}/posts`,
@@ -201,6 +203,33 @@ describe('page', () => {
       for (const id of ['tab-overview', 'tab-manage', 'tab-conversations', 'overview']) expect(html).toMatch(testid(id));
       noApproveOrPublish(html);
     }
+  });
+
+  it('refuses an invalid insights range with 400', async () => {
+    for (const q of ['from=2026-10-31&to=2026-10-01', 'from=2024-01-01&to=2026-10-01', 'from=yesterday&to=2026-10-01']) {
+      expect((await get(`/console/api/insights?${q}`)).status, q).toBe(400);
+    }
+  });
+
+  it('renders the insights tab, with the default range and a chosen one', async () => {
+    for (const q of ['?tab=insights', '?tab=insights&range=7d', '?tab=insights&from=2026-10-01&to=2026-10-31']) {
+      const html = await page(q);
+      for (const id of ['tab-insights', 'insights', 'insights-range', 'insights-funnel', 'insights-weekly', 'insights-new-businesses']) expect(html, `${q} ${id}`).toMatch(testid(id));
+      noApproveOrPublish(html);
+    }
+    // A chosen range shows in the form.
+    expect(await page('?tab=insights&from=2026-10-01&to=2026-10-31')).toContain('value="2026-10-01"');
+  });
+
+  it('renders the businesses tab before conversations, with the table and its actions', async () => {
+    const html = await page(`?tab=businesses&q=${encodeURIComponent('מאפיית השכונה')}`);
+    expect(html).toMatch(testid('businesses'));
+    expect(html).toContain('מאפיית השכונה');
+    expect(html.indexOf('data-testid="tab-businesses"')).toBeLessThan(html.indexOf('data-testid="tab-conversations"'));
+    expect(html.indexOf('data-testid="tab-insights"')).toBeLessThan(html.indexOf('data-testid="tab-manage"'));
+    noApproveOrPublish(html);
+    // The business table left the Manage tab.
+    expect(await page('?tab=manage')).not.toMatch(testid('businesses'));
   });
 
   it('renders the manage tab with the review queue', async () => {

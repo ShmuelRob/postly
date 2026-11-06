@@ -6,7 +6,7 @@
  * update, and approves one draft, so real posts, versions, renders and model runs exist. The console
  * runs as its own server (`buildConsoleServer`, dev bypass, on 127.0.0.1) with the app's media
  * store, and Playwright looks at Overview, Manage, Conversations and a model run on a desktop and a
- * phone, edits the profile and an agent limit through the forms, and reads the action log.
+ * phone (Overview, Insights with a chosen date range, Manage, Businesses, Conversations), edits the profile and an agent limit through the forms, and reads the action log.
  *
  * Seeded rather than driven: one open `model_validation_failed` console item (pointing at a real
  * model run of the business), and one agent turn only when the flow ran none.
@@ -203,6 +203,43 @@ e2eTest('the team sees a real Hebrew conversation, its posts and model runs in t
     await expect.poll(() => page!.getByTestId('tab-overview').isVisible()).toBe(true);
     await shot(page, record, 'desktop-overview', 'Console overview (desktop)');
 
+    // Insights: the numbers across every business for the last 30 days (the default range).
+    await open('?tab=insights');
+    const insights = page.getByTestId('insights');
+    await expect.poll(() => insights.isVisible()).toBe(true);
+    const tileValue = async (label: string) => Number((await insights.locator('.tile', { hasText: label }).locator('.tile-v').innerText()).replace(/[^0-9.]/g, ''));
+    // This run's business joined today, wrote to the agent, and approved one of its drafts.
+    expect(await tileValue('New businesses')).toBeGreaterThanOrEqual(1);
+    expect(await tileValue('Messages')).toBeGreaterThan(10);
+    // The approval rate is the approved share of the drafts it names (this run approved one of its drafts).
+    const rateTile = insights.locator('.tile', { hasText: 'Approval rate' });
+    const rate = Number((await rateTile.locator('.tile-v').innerText()).replace('%', ''));
+    const [, approvedDrafts, drafts] = (await rateTile.locator('.tile-s').innerText()).match(/^(\d+) of (\d+) drafts/)!.map(Number);
+    expect(drafts).toBeGreaterThan(approvedDrafts!);
+    expect(rate).toBe(Math.round((approvedDrafts! / drafts!) * 100));
+    for (const id of ['insights-range', 'insights-new-businesses', 'insights-funnel', 'insights-weekly', 'insights-cost']) expect(await page.getByTestId(id).isVisible(), id).toBe(true);
+    // The busiest conversations link to the business's chat.
+    expect(await page.getByTestId('insights-top').locator(`a[href*="business=${businessId}"]`).count()).toBe(1);
+    await shot(page, record, 'desktop-insights', 'Console insights, last 30 days (desktop)');
+    // A chosen range through the form: today only.
+    const today = new Date().toISOString().slice(0, 10);
+    const rangeForm = page.getByTestId('insights-range');
+    await rangeForm.locator('input[name=from]').fill(today);
+    await rangeForm.locator('input[name=to]').fill(today);
+    await Promise.all([page.waitForEvent('load'), rangeForm.locator('button[type=submit]').click()]);
+    expect(page.url()).toContain(`from=${today}`);
+    await expect.poll(() => page!.getByTestId('insights').locator('.tile', { hasText: 'New businesses' }).locator('.tile-s').innerText()).toBe('in 1 day');
+
+    // Businesses: its own tab before Conversations, searchable, each row linking to the chat.
+    await open(`?tab=businesses&q=${encodeURIComponent('מאפיית השכונה')}`);
+    const table = page.getByTestId('businesses');
+    await expect.poll(() => table.isVisible()).toBe(true);
+    const row = table.locator('tbody tr', { has: page.locator(`a[href*="business=${businessId}"]`) });
+    expect(await row.count()).toBe(1);
+    expect(await row.innerText()).toMatch(/active/);
+    expect(await page.getByTestId('manage').count()).toBe(0);
+    await shot(page, record, 'desktop-businesses', 'Console businesses tab (desktop)');
+
     // Manage: the review queue holds the seeded item, linked to its business's conversation.
     await open('?tab=manage');
     const queue = page.getByTestId('review-queue');
@@ -302,6 +339,14 @@ e2eTest('the team sees a real Hebrew conversation, its posts and model runs in t
     await expect.poll(() => page!.getByTestId('overview').isVisible()).toBe(true);
     await noSideScroll();
     await shot(page, record, 'phone-overview', 'Console overview (phone)');
+    await open('?tab=insights');
+    await expect.poll(() => page!.getByTestId('insights').isVisible()).toBe(true);
+    await noSideScroll();
+    await shot(page, record, 'phone-insights', 'Console insights (phone)');
+    await open('?tab=businesses');
+    await expect.poll(() => page!.getByTestId('businesses').isVisible()).toBe(true);
+    await noSideScroll();
+    await shot(page, record, 'phone-businesses', 'Console businesses tab (phone)');
     await open('?tab=manage');
     await expect.poll(() => page!.getByTestId('review-queue').isVisible()).toBe(true);
     await noSideScroll();
