@@ -4,6 +4,6 @@
 
 export { createAgent, type Agent } from './runtime.js';
 export { CONTEXT_DAYS, CONTEXT_MESSAGES } from './context.js';
-export { handOffLine } from './copy.js';
+export { handOffLine, onboardingBatches } from './copy.js';
 export type { DraftOutcome } from './tools/drafts.js';
 export type { AgentDefinition, AgentDeps, AgentEvents, AgentLimits, AgentTask, RunTurnOptions, ToolHandler, TurnEnd, TurnResult, TurnTrigger } from './types.js';

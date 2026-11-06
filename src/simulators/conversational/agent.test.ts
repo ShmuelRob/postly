@@ -65,72 +65,50 @@ function playTurn(
 }
 
 describe('playgroundAgent: onboarding', () => {
-  it('asks for the first missing group when nothing was asked yet', () => {
-    const played = playTurn(ctx({ step: 'profile_questions', missingFields: ['name', 'field', 'mainProducts', 'location', 'differentiator', 'channels', 'style'] }));
-    expect(played).toEqual([
-      expect.objectContaining({ tool: 'ask_owner', topic: 'profile:name', expects: 'answer', fields: ['name', 'field', 'mainProducts'] }),
-    ]);
-  });
-
-  it("fills the asked fields from the owner's answer, quoting it verbatim, and asks for the next group", () => {
-    const answer = 'הפרחים של רינה, חנות פרחים, זרי כלה ועציצים';
-    const played = playTurn(
-      ctx({
-        step: 'profile_questions',
-        missingFields: ['name', 'field', 'mainProducts', 'location', 'differentiator', 'channels', 'style'],
-        messages: [owner(answer)],
-        openQuestion: { key: 'profile:name', askedFields: ['name', 'field', 'mainProducts'], attempts: 1, photoAssetIds: [] },
-      }),
-    );
-    expect(played.filter((c) => c.tool === 'set_profile_field')).toEqual([
-      { tool: 'set_profile_field', field: 'name', value: 'הפרחים של רינה', sourceQuote: answer },
-      { tool: 'set_profile_field', field: 'field', value: 'חנות פרחים', sourceQuote: answer },
-      { tool: 'set_profile_field', field: 'mainProducts', value: ['זרי כלה', 'עציצים'], sourceQuote: answer },
-    ]);
-    expect(played.at(-1)).toMatchObject({ tool: 'ask_owner', topic: 'profile:location', fields: ['location'] });
-  });
-
-  it('splits more than four calls over steps of at most four', () => {
-    const answer = 'רחוב הרצל 5 בחיפה, פתוח 9:00-19:00, יש משלוחים';
-    const context = ctx({
+  // agent.md, A11: code sent batch A; one step saves the answer and asks the follow-ups (code appends batch B).
+  const A_FIELDS = ['name', 'field', 'mainProducts', 'location'];
+  const ALL_MISSING = ['name', 'field', 'mainProducts', 'location', 'differentiator', 'channels', 'style'];
+  const batchA = (answer: string, o: Partial<AgentContext> = {}) =>
+    ctx({
       step: 'profile_questions',
-      missingFields: ['location', 'differentiator', 'channels', 'style'],
+      missingFields: ALL_MISSING,
       messages: [owner(answer)],
-      openQuestion: { key: 'profile:location', askedFields: ['location'], attempts: 1, photoAssetIds: [] },
+      openQuestion: { key: 'batch:a', askedFields: A_FIELDS, attempts: 1, photoAssetIds: [] },
+      ...o,
     });
-    const first = AgentStep.parse(playgroundAgent(context));
-    expect(tools(first)).toEqual(['set_profile_field', 'set_profile_field', 'set_profile_field', 'set_profile_field']);
-    const played = playTurn(context);
-    expect(played.map((c) => c.tool)).toEqual([...tools(first), 'ask_owner']);
-    expect(played.at(-1)).toMatchObject({ topic: 'profile:differentiator' });
+
+  it("answers batch A in one step: every field from the owner's words, quoted verbatim, then one question", () => {
+    const answer = 'הפרחים של רינה, חנות פרחים, זרי כלה, עציצים. רחוב הרצל 5 בחיפה, פתוח 9:00-19:00, יש משלוחים';
+    const first = AgentStep.parse(playgroundAgent(batchA(answer)));
+    const sets = first.calls.filter((c) => c.tool === 'set_profile_field');
+    expect(sets.map((c) => c.field)).toEqual(['name', 'field', 'mainProducts', 'location.city', 'location.address', 'location.hours', 'location.fulfillment']);
+    expect(sets.every((c) => c.sourceQuote === answer)).toBe(true);
+    expect(first.calls.at(-1)).toMatchObject({ tool: 'ask_owner', expects: 'answer' });
+    expect(playTurn(batchA(answer))).toEqual(first.calls);
   });
 
-  it('works the same when the runtime rebuilds the context between steps', () => {
-    const answer = 'רחוב הרצל 5 בחיפה, פתוח 9:00-19:00, יש משלוחים';
-    const context = ctx({
+  it('reads an answer typed over several messages as one', () => {
+    const played = playTurn(batchA('', { messages: [owner('הפרחים של רינה, חנות פרחים, זרי כלה'), owner('רחוב הרצל 5 בחיפה, פתוח 9:00-19:00')] }));
+    const name = played.find((c) => c.tool === 'set_profile_field' && c.field === 'name');
+    expect(name).toMatchObject({ value: 'הפרחים של רינה', sourceQuote: 'הפרחים של רינה, חנות פרחים, זרי כלה\nרחוב הרצל 5 בחיפה, פתוח 9:00-19:00' });
+  });
+
+  it('after batch B (any other open question) asks the next missing group, or ends the turn when nothing is missing', () => {
+    const answer = 'אינסטגרם ופייסבוק, בשבת לא';
+    const missingChannels = ctx({
       step: 'profile_questions',
-      missingFields: ['location', 'differentiator', 'channels', 'style'],
+      missingFields: ['differentiator', 'channels', 'style'],
       messages: [owner(answer)],
-      openQuestion: { key: 'profile:location', askedFields: ['location'], attempts: 1, photoAssetIds: [] },
+      openQuestion: { key: 'batch:b', askedFields: ['channels', 'schedule'], attempts: 1, photoAssetIds: [] },
     });
     const rebuilt = (c: AgentContext, done: AgentToolCall[]) =>
-      done.some((d) => d.tool === 'set_profile_field') ? { ...c, missingFields: c.missingFields.filter((f) => f !== 'location') } : c;
-    const played = playTurn(context, defaultData, rebuilt);
-    expect(played.map((c) => c.tool)).toEqual(['set_profile_field', 'set_profile_field', 'set_profile_field', 'set_profile_field', 'ask_owner']);
-    expect(played.at(-1)).toMatchObject({ topic: 'profile:differentiator' });
-  });
+      done.some((d) => d.tool === 'set_profile_field') ? { ...c, missingFields: c.missingFields.filter((f) => f !== 'channels') } : c;
+    const played = playTurn(missingChannels, defaultData, rebuilt);
+    expect(played.filter((c) => c.tool === 'set_profile_field').map((c) => c.field)).toEqual(['channels', 'schedule.publishOnShabbatAndHolidays', 'schedule.days', 'schedule.hours']);
+    expect(played.at(-1)).toMatchObject({ tool: 'ask_owner', topic: 'profile:differentiator', fields: ['targetAudience', 'differentiator'] });
 
-  it('asks "anything else?" once when nothing is missing, and ends the turn after its answer', () => {
-    expect(playTurn(ctx({ step: 'profile_questions', missingFields: ['style'] }))).toEqual([
-      expect.objectContaining({ tool: 'ask_owner', topic: 'anything_else' }),
-    ]);
-    const answered = ctx({
-      step: 'profile_questions',
-      missingFields: ['style'],
-      messages: [owner('לא, זהו')],
-      openQuestion: { key: 'anything_else', askedFields: [], attempts: 1, photoAssetIds: [] },
-    });
-    expect(playTurn(answered)).toEqual([{ tool: 'end_turn' }]);
+    const done = ctx({ step: 'profile_questions', missingFields: ['style'], messages: [owner('לא, זהו')], openQuestion: { key: 'batch:b', askedFields: [], attempts: 1, photoAssetIds: [] } });
+    expect(playTurn(done)).toEqual([{ tool: 'end_turn' }]);
   });
 
   it('brand assets: asks for the logo, records a decline when text comes instead, then asks for business photos', () => {

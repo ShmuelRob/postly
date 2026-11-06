@@ -17,6 +17,7 @@ import { startSandboxUi, type SandboxUi } from '../../playground/sandbox/ui.js';
 import { createDatabase } from '../../src/db/index.js';
 import { createPostgresSimulatorStore } from '../../src/db/simulator-store.js';
 import * as schema from '../../src/db/schema.js';
+import { onboardingBatches } from '../../src/modules/agent/index.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
 import { startSimulatedProcess, type SimulatedProcess } from '../../src/simulated.js';
 import { call, step } from '../../src/simulators/scripted-agent.js';
@@ -38,8 +39,8 @@ const SAY = {
   business: 'קוראים לנו הפרחים של רינה, חנות פרחים. זרים, עציצים ומשלוחים לאירועים',
 };
 const ASK = {
-  business: 'נעים מאוד! איך קוראים לעסק, ומה אתם מוכרים?',
-  where: 'איפה החנות נמצאת? כתובת ושעות פתיחה, ואם יש איסוף עצמי או משלוחים',
+  // The agent's follow-up on batch A (agent.md, A11); code appends batch B to it.
+  where: 'תודה! איפה החנות נמצאת, ומה שעות הפתיחה?',
 };
 
 let database: TestDatabase;
@@ -103,16 +104,15 @@ e2eTest('dev runs the agents with no switch: a new sign-up in the sandbox onboar
 
   model.scriptAgent(
     'onboarding',
-    // After the intro: the first question.
-    [step(call.askOwner(ASK.business, { topic: 'profile:name' }))],
-    // The answer is saved from the owner's own words, and the next question follows.
+    // Batch A went out by code after the intro (agent.md, A11). Its answer: one step saves the owner's
+    // own words and asks the follow-up, and code appends batch B.
     [
       step(
         call.setProfileField('name', 'הפרחים של רינה', 'הפרחים של רינה'),
         call.setProfileField('field', 'חנות פרחים', 'חנות פרחים'),
         call.setProfileField('mainProducts', ['זרים', 'עציצים', 'משלוחים לאירועים'], 'זרים, עציצים ומשלוחים לאירועים'),
+        call.askOwner(ASK.where, { topic: 'profile:location', fields: ['location'] }),
       ),
-      step(call.askOwner(ASK.where, { topic: 'profile:location' })),
     ],
   );
 
@@ -122,15 +122,15 @@ e2eTest('dev runs the agents with no switch: a new sign-up in the sandbox onboar
   expect(business).toMatchObject({ status: 'onboarding' });
   expect(business).not.toHaveProperty('agentFlows');
 
-  // 1. The persona introduces herself, and the agent, not the fixed question list, asks the first question.
+  // 1. The persona introduces herself, and code sends batch A of the profile questions (A11), no model call.
   await write(SAY.hello);
-  await expect.poll(lastReply, timeout).toBe(ASK.business);
-  expect(await replies()).toEqual([copy.intro('פוסטלי'), ASK.business]);
+  await expect.poll(lastReply, timeout).toBe(onboardingBatches.a);
+  expect(await replies()).toEqual([copy.intro('פוסטלי'), onboardingBatches.a]);
   expect((await replies())[0]).toContain('אני פוסטלי, סוכנת הסושיאל');
 
-  // 2. The answer is saved from the owner's words, and the agent asks the next question.
+  // 2. The answer is saved from the owner's words; the agent's follow-up carries batch B.
   await write(SAY.business);
-  await expect.poll(lastReply, timeout).toBe(ASK.where);
+  await expect.poll(lastReply, timeout).toBe(`${ASK.where}\n\n${onboardingBatches.b}`);
   expect(await replies()).not.toContain(copy.questions.location);
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
@@ -139,13 +139,13 @@ e2eTest('dev runs the agents with no switch: a new sign-up in the sandbox onboar
   await shot(page, record, 'onboarding-agent', 'The sandbox on dev with the agent flows on: onboarding through the agent');
   await page.close();
 
-  // Both turns ran on the onboarding agent and finished; the profile holds what the owner said.
+  // The one turn ran on the onboarding agent and finished; the profile holds what the owner said.
   const stored = await db.withBusiness('workflow', businessId, async (tx) => ({
     business: (await tx.select().from(schema.business))[0]!,
     turns: await tx.select().from(schema.agentTurn),
   }));
   expect(stored.business.profile).toMatchObject({ name: 'הפרחים של רינה', field: 'חנות פרחים', mainProducts: ['זרים', 'עציצים', 'משלוחים לאירועים'] });
-  expect(stored.turns).toHaveLength(2);
+  expect(stored.turns).toHaveLength(1);
   expect(stored.turns.every((t) => t.agent === 'onboarding' && t.status !== 'failed' && t.status !== 'handed_off')).toBe(true);
   expect(model.agentScriptProblems()).toEqual([]);
 

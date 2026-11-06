@@ -75,7 +75,7 @@ describe('the script builder', () => {
 
   it('refuses a step that the AgentStep schema refuses, when the script is written', () => {
     expect(() => step()).toThrow();
-    expect(() => step(call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn())).toThrow();
+    expect(() => step(...Array.from({ length: 13 }, () => call.endTurn()))).toThrow();
     expect(() => stepWith(1.5, call.endTurn())).toThrow();
     expect(() => step({ tool: 'approve', postId: POST } as unknown as AgentToolCall)).toThrow();
   });

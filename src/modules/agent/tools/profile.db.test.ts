@@ -8,7 +8,7 @@ import { ModelSimulator } from '../../../simulators/model.js';
 import { call, step } from '../../../simulators/scripted-agent.js';
 import { createModelLayer } from '../../model-layer/index.js';
 import { onboardingDone } from '../agents/onboarding.js';
-import { createAgent } from '../index.js';
+import { createAgent, onboardingBatches } from '../index.js';
 
 // The onboarding agent's tool and done rules (WP-92, agent.md: set_profile_field, Agents), on the
 // scripted agent. No real model.
@@ -133,6 +133,83 @@ describe('set_profile_field', () => {
     for (const field of ['approverPhone', 'style', 'brand.logoAssetId', 'persona.agentName', 'persona']) {
       expect(AgentToolCall.safeParse({ tool: 'set_profile_field', field, value: 'x', sourceQuote: 'x' }).success, field).toBe(false);
     }
+  });
+});
+
+// agent.md, A11: code sent batch A; the agent's question after its answer carries batch B, appended by code.
+describe('batched onboarding (A11)', () => {
+  const asked: { key: string; askedFields: string[] }[] = [];
+  const recording = () =>
+    createAgent({
+      db,
+      models: createModelLayer({ db, providers: { google: sim } }),
+      messaging: { sendText: async (_b, r) => (sent.push(r.text), { providerMessageId: randomUUID() }) },
+      events: { questionAsked: async (_b, q) => void asked.push({ key: q.key, askedFields: q.askedFields }) },
+    });
+  const openBatchA = () =>
+    db.withBusiness('workflow', businessId, (tx) =>
+      tx
+        .update(schema.conversationState)
+        .set({ openQuestion: { key: onboardingBatches.aKey, askedFields: [...onboardingBatches.aFields], attempts: 1, photoAssetIds: [] } })
+        .where(eq(schema.conversationState.businessId, businessId)),
+    );
+  beforeEach(() => void (asked.length = 0));
+
+  it("saves batch A's answer and appends batch B to the agent's follow-up, in one step and one message", async () => {
+    const answer = 'פרחי דנה, חנות פרחים, זרים ועציצים. רחוב ויצמן 10 בכפר סבא';
+    await newBusiness('onboarding', answer);
+    await openBatchA();
+    sim.scriptAgent('onboarding', [
+      step(
+        call.setProfileField('name', 'פרחי דנה', answer),
+        call.setProfileField('field', 'חנות פרחים', answer),
+        call.setProfileField('mainProducts', ['זרים', 'עציצים'], answer),
+        call.setProfileField('location.city', 'כפר סבא', answer),
+        call.setProfileField('location.address', 'רחוב ויצמן 10', answer),
+        call.askOwner('תודה! מה שעות הפתיחה, ויש איסוף עצמי או משלוחים?', { topic: 'profile:location', fields: ['location'] }),
+      ),
+    ]);
+    const result = await recording().runTurn(businessId, 'onboarding', trigger);
+    expect(result).toMatchObject({ stopReason: 'waiting_for_owner', messagesSent: 1 });
+    expect(sim.callsFor('agent_onboarding')).toHaveLength(1);
+    expect(sent).toEqual([`תודה! מה שעות הפתיחה, ויש איסוף עצמי או משלוחים?\n\n${onboardingBatches.b}`]);
+    expect(asked).toEqual([{ key: onboardingBatches.bKey, askedFields: ['location', ...onboardingBatches.bFields] }]);
+    const results = await turnResults(result.turnId!);
+    expect(results.at(-1)).toMatchObject({ status: 'ok', data: { sent: true, batchB: true } });
+    expect(await profile()).toMatchObject({ name: 'פרחי דנה', profile: { field: 'חנות פרחים', mainProducts: ['זרים', 'עציצים'] } });
+  });
+
+  it('appends batch B only to the answer of batch A, never to a later question', async () => {
+    await newBusiness('onboarding', 'פתוחים 9-19');
+    sim.scriptAgent('onboarding', [step(call.askOwner('ויש משלוחים?', { topic: 'profile:location' }))]);
+    await recording().runTurn(businessId, 'onboarding', trigger);
+    expect(sent).toEqual(['ויש משלוחים?']);
+    expect(asked).toEqual([{ key: 'profile:location', askedFields: [] }]);
+  });
+
+  it('profile_questions: done once every field is set and batch B was asked in an earlier turn', async () => {
+    await newBusiness('onboarding', 'פרחי דנה');
+    await openBatchA();
+    sim.scriptAgent('onboarding', [step(call.askOwner('תודה רבה!', { topic: 'info' }))], [step(call.endTurn())]);
+    const first = await recording().runTurn(businessId, 'onboarding', trigger);
+    await db.withBusiness('workflow', businessId, (tx) =>
+      tx
+        .update(schema.business)
+        .set({
+          profile: {
+            name: 'פרחי דנה',
+            field: 'חנות פרחים',
+            mainProducts: ['זרים'],
+            location: { city: 'כפר סבא', address: 'ויצמן 10', hours: 'א-ה 9-19', fulfillment: ['pickup'] },
+            differentiator: 'פרחים טריים כל בוקר',
+            channels: ['instagram'],
+          },
+        })
+        .where(eq(schema.business.id, businessId)),
+    );
+    expect(await onboardingDone(db, businessId, first.turnId!)).toBe(false);
+    await say('אינסטגרם, ופרחים טריים כל בוקר');
+    expect(await recording().runTurn(businessId, 'onboarding', trigger)).toMatchObject({ status: 'done', stopReason: 'done' });
   });
 });
 
