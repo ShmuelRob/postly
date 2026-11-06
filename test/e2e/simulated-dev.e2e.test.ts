@@ -18,11 +18,15 @@ import * as schema from '../../src/db/schema.js';
 import { BILLING_COPY } from '../../src/modules/billing/index.js';
 import { draftsCopy, onboardingCopy as copy, scheduleCopy } from '../../src/modules/workflow/index.js';
 import { startSimulatedProcess, type SimulatedProcess } from '../../src/simulated.js';
+import { holdSharedDatabaseLock } from '../db/shared-lock.js';
 import { e2eTest } from './harness/index.js';
 import type { E2eRecord } from './harness/record.js';
 
 const SHOTS = 'reports/simulated-dev';
 const OWNER = '+972501234588';
+// The sign-up test's own owner: web answers the checkout test's text in steps for some seconds (it is read as
+// a weekly update), and those answers must not land in the sign-up test's chat, so the two never share a number.
+const SIGNUP_OWNER = '+972501234577';
 const BUSINESS_PHONE = '+972521111188';
 const PUBLIC_BASE_URL = 'https://postly-dev-web.example.test';
 // A test-only value; in dev the secret comes from Secret Manager.
@@ -31,7 +35,7 @@ const SECRET = 'test-only';
 const NAMESPACE = `e2e-${Date.now()}`;
 
 const store = createPostgresSimulatorStore(inject('simulatorStoreUrl'));
-const db = createDatabase(inject('databaseUrls'), { max: 2 });
+const db = createDatabase(inject('databaseUrls'), { max: 3 });
 /** The dev clock: real time, moved forward to the scheduled time so the posts can go live in the test. */
 let skewMs = 0;
 const clock = () => new Date(Date.now() + skewMs);
@@ -156,8 +160,17 @@ e2eTest('dev on the simulators: onboarding, payment, drafts, approval and publis
   const scheduled = await db.withSystem('console', (tx) => tx.select().from(schema.publication).where(eq(schema.publication.businessId, businessId)));
   const last = Math.max(...scheduled.map((p) => new Date(p.scheduledFor).getTime()));
   skewMs = last + 60_000 - Date.now();
-  await worker.app.publishing.tick(clock(), { businessId });
-  const feed = (await sandbox.state()).feed;
+  // The publishing pause is global to the shared database: another e2e file that holds it (the
+  // console's pause test) would defer these publications and the feed would be short. Hold the shared
+  // lock, as every H5 world does, for the tick and the read of the feed.
+  const releaseLock = await holdSharedDatabaseLock(db);
+  let feed: Awaited<ReturnType<Sandbox['state']>>['feed'];
+  try {
+    await worker.app.publishing.tick(clock(), { businessId });
+    feed = (await sandbox.state()).feed;
+  } finally {
+    await releaseLock();
+  }
   expect({ instagram: feed.instagram.length, facebook: feed.facebook.length }).toEqual({ instagram: approveButtons.length, facebook: approveButtons.length });
   expect([...feed.instagram, ...feed.facebook].every((p) => p.status === 'published')).toBe(true);
   await expect.poll(async () => (await replies()).some((r) => r.text?.includes(scheduleCopy.PUBLISHED_TEMPLATE)), timeout).toBe(true);
@@ -210,12 +223,25 @@ e2eTest('a new sign-up from the number in the middle of onboarding starts an emp
   void e2e;
   const record = task.meta.e2e!;
   const timeout = { timeout: 30_000 };
-  const messages = async () => (await sandbox.state()).messages;
+  const mine = await createSandbox({
+    databaseUrls: inject('databaseUrls'),
+    store,
+    namespace: NAMESPACE,
+    webhookSecret: SECRET,
+    publicBaseUrl: PUBLIC_BASE_URL,
+    webUrl: sandbox.webUrl,
+    businessNumber: BUSINESS_PHONE,
+    ownerPhone: SIGNUP_OWNER,
+    now: clock,
+  });
+  const mineUi = await startSandboxUi(mine, { port: 0 });
+  try {
+  const messages = async () => (await mine.state()).messages;
   const lastReply = async () => (await messages()).filter((m) => m.direction === 'to_owner').at(-1)?.text ?? '';
-  const write = (text: string) => sandbox.send({ kind: 'text', text });
+  const write = (text: string) => mine.send({ kind: 'text', text });
 
   // The human starts onboarding and is two answers in.
-  const before = await sandbox.signUp();
+  const before = await mine.signUp();
   await write('היי, אני רוצה להירשם');
   await expect.poll(lastReply, timeout).toContain(copy.questions.business);
   await write('הפרחים של רינה, חנות פרחים');
@@ -224,13 +250,13 @@ e2eTest('a new sign-up from the number in the middle of onboarding starts an emp
 
   // They press "new sign-up from this number" in the sandbox UI.
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
-  await page.goto(ui.url);
+  await page.goto(mineUi.url);
   await expect.poll(() => page.getByTestId('chat').getByTestId('bubble-to_owner').count(), timeout).toBeGreaterThan(0);
   await page.getByTestId('sign-up').click();
-  await expect.poll(async () => (await sandbox.state()).business.id, timeout).not.toBe(before);
+  await expect.poll(async () => (await mine.state()).business.id, timeout).not.toBe(before);
   await expect.poll(() => page.getByTestId('chat').locator('.bubble').count(), timeout).toBe(0);
   await shot(page, record, 'after-sign-up', 'The sandbox right after a new sign-up from the number: an empty chat');
-  const state = await sandbox.state();
+  const state = await mine.state();
   expect(state.business.status).toBe('onboarding');
   expect(state.messages).toEqual([]);
   // The earlier businesses' posts are not this sign-up's: the feed is empty too.
@@ -247,7 +273,11 @@ e2eTest('a new sign-up from the number in the middle of onboarding starts an emp
   await shot(page, record, 'new-onboarding', 'The new sign-up: only its own conversation in the chat');
   await page.close();
 
-  record.transcript.push(...(await sandbox.transcript()));
+  record.transcript.push(...(await mine.transcript()));
+  } finally {
+    await mineUi.close();
+    await mine.close();
+  }
 }, 120_000);
 
 async function shot(page: Page, record: E2eRecord, name: string, title: string) {

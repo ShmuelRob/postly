@@ -48,9 +48,12 @@ export default defineConfig({
           exclude: browserE2eTests,
           // The same migrated Postgres as the db project, for flows that store what the app did.
           globalSetup: ['./test/db/global-setup.ts'],
-          hookTimeout: 120_000,
           // Several e2e files use the H5 world, which runs one at a time (a database lock,
-          // test/h5/subject.ts), so a case may wait for another file's case under a full run.
+          // test/db/shared-lock.ts). Each of their tests takes the lock in a beforeEach hook (the setup file),
+          // so the wait behind the other files' worlds counts against the hook, not the test: the hook may wait
+          // for the queue, and a test keeps its own timeout.
+          setupFiles: ['./test/e2e/harness/shared-lock-hook.ts'],
+          hookTimeout: 600_000,
           testTimeout: 30_000,
         },
       },
