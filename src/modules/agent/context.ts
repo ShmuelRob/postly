@@ -74,7 +74,8 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
     .select()
     .from(schema.message)
     .where(and(eq(schema.message.businessId, businessId), gte(schema.message.createdAt, since)))
-    .orderBy(desc(schema.message.createdAt))
+    // Equal timestamps (a fixed clock, or one second of messages) keep their arrival order.
+    .orderBy(desc(schema.message.createdAt), desc(schema.message.seq))
     .limit(CONTEXT_MESSAGES);
   // The photo notes of every photo the agent can see: in these messages, or in this week's posts (below).
   const reviews = new Map<string, ReturnType<typeof notesOf>>();

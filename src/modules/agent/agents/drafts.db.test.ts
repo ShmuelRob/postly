@@ -380,6 +380,13 @@ describe('the context (agent.md, Context)', () => {
     return context;
   }
 
+  it('keeps messages with the same timestamp in arrival order (the owner burst is the last one)', async () => {
+    const at = new Date(Date.now() - 1000);
+    for (const [direction, body] of [['outbound', 'הטיוטה'], ['inbound', 'תיקון א'], ['outbound', 'הטיוטה החדשה'], ['inbound', 'תיקון ב']] as const) await message(body, direction, at);
+    const texts = (await built()).messages.map((m) => m.text);
+    expect(texts.slice(-4)).toEqual(['הטיוטה', 'תיקון א', 'הטיוטה החדשה', 'תיקון ב']);
+  });
+
   it('carries the active preference rules, oldest first, and not an inactive one', async () => {
     await db.withBusiness('business_data', businessId, async (tx) => {
       await tx.insert(schema.preferenceRule).values([
