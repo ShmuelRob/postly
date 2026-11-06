@@ -31,11 +31,11 @@ describe('the deployed composition chooses the model provider', () => {
 
   it('uses Vertex AI as the google provider, at the configured project and location', async () => {
     const { calls, transport } = fakeTransport({ ok: true });
-    const models = simulatedModels({ vertex: { project: 'postly-dev-test', location: 'europe-west4', transport } }, media);
+    const models = simulatedModels({ vertex: { project: 'postly-dev-test', location: 'eu', transport } }, media);
     expect(models.google!.constructor.name).toBe('VertexModelProvider');
     const result = await models.google!.generateStructured({
       task: 'agent_onboarding',
-      model: 'gemini-2.5-flash-lite',
+      model: 'gemini-3.5-flash-lite',
       prompt: 'the versioned prompt',
       input: { hello: 'שלום' },
       outputJsonSchema: { type: 'object' },
@@ -43,31 +43,31 @@ describe('the deployed composition chooses the model provider', () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(
-      'https://europe-west4-aiplatform.googleapis.com/v1/projects/postly-dev-test/locations/europe-west4/publishers/google/models/gemini-2.5-flash-lite:generateContent',
+      'https://aiplatform.eu.rep.googleapis.com/v1/projects/postly-dev-test/locations/eu/publishers/google/models/gemini-3.5-flash-lite:generateContent',
     );
     expect(result.output).toEqual({ ok: true });
-    // Flash Lite's price: 1000 input and 100 output tokens.
-    expect(result.costUsd).toBeCloseTo((1000 * 0.1 + 100 * 0.4) / 1_000_000, 12);
+    // 3.5 Flash-Lite's non-global price (eu): 1000 input and 100 output tokens.
+    expect(result.costUsd).toBeCloseTo((1000 * 0.33 + 100 * 2.75) / 1_000_000, 12);
   });
 
   it('reads the photos the model sees from the simulator store, not over HTTP', async () => {
     const { calls, transport } = fakeTransport({ description: 'logo' });
-    const models = simulatedModels({ vertex: { project: 'postly-dev-test', location: 'europe-west4', transport } }, media);
+    const models = simulatedModels({ vertex: { project: 'postly-dev-test', location: 'eu', transport } }, media);
     await models.google!.analyzeImage({
       task: 'image_review',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash-lite',
       prompt: 'review the photo',
       imageUrl: 'https://web.dev.test/media/inbound/logo.png',
       outputJsonSchema: { type: 'object' },
     });
     expect(calls[0]!.body.contents[0]!.parts).toEqual([{ inlineData: { mimeType: 'image/png', data: Buffer.from([1, 2, 3]).toString('base64') } }]);
     await expect(
-      models.google!.analyzeImage({ task: 'image_review', model: 'gemini-2.5-flash', prompt: 'p', imageUrl: 'https://web.dev.test/media/missing.png', outputJsonSchema: {} }),
+      models.google!.analyzeImage({ task: 'image_review', model: 'gemini-3.5-flash-lite', prompt: 'p', imageUrl: 'https://web.dev.test/media/missing.png', outputJsonSchema: {} }),
     ).rejects.toThrow('no stored file');
   });
 
   it('never builds the real transport in a test: without an injected one it refuses to start', () => {
     expect(process.env.NODE_ENV).toBe('test');
-    expect(() => simulatedModels({ vertex: { project: 'postly-dev-test', location: 'europe-west4' } }, media)).toThrow('refused in tests and CI');
+    expect(() => simulatedModels({ vertex: { project: 'postly-dev-test', location: 'eu' } }, media)).toThrow('refused in tests and CI');
   });
 });

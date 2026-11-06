@@ -68,9 +68,9 @@ variable "models" {
   default     = "simulator"
 }
 variable "vertex_location" {
-  description = "The Vertex AI region for Gemini (Vertex serves no Gemini from me-west1)."
+  description = "The Vertex AI location for Gemini: the EU multi-region (Gemini 3.5 Flash-Lite is served neither from me-west1 nor from single regions)."
   type        = string
-  default     = "europe-west4"
+  default     = "eu"
 }
 variable "agent_flows" {
   description = "The flows that run on the agent for every business: any of onboarding, weekly, drafts, or [\"none\"]. Empty leaves the switch as it is."

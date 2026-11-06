@@ -23,7 +23,7 @@ Postly is one TypeScript monolith on Google Cloud. Code owns the workflow, and m
 | Design engine | HTML templates, Playwright with Chromium, and sharp | Decided |
 | Internal console | React | Decided |
 | Hosting | Google Cloud: Cloud Run, Cloud SQL, and Cloud Storage | Decided |
-| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. `model_task_config` chooses the model per task: the one-shot tasks run on Gemini Flash (`drizzle/0010_all_tasks_flash.sql`) and the three agent tasks on Gemini Flash Lite (agent.md, A8; `drizzle/0017_agent_tasks.sql`). Dev runs on real Gemini (`POSTLY_MODELS=vertex`) with the other providers simulated; tests and CI never do (agent.md, [Running on dev](agent.md#running-on-dev)) | Decided for Phase 1; may change |
+| Models | Google Gemini through Vertex AI, behind a replaceable model layer. The services call Vertex AI as their own service account (Application Default Credentials, `roles/aiplatform.user`); there is no model API key. `model_task_config` chooses the model per task: every task, one-shot and agent, runs on Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`; agent.md, A8; `drizzle/0023_gemini_3_5_flash_lite.sql`), after Vertex retired Gemini 2.5 Flash and Flash-Lite on 2026-10-20. The endpoint is Vertex's EU multi-region (`eu`), since 3.5 Flash-Lite is not served from single regions (agent.md, [Running on dev](agent.md#running-on-dev)). Dev runs on real Gemini (`POSTLY_MODELS=vertex`) with the other providers simulated; tests and CI never do (agent.md, [Running on dev](agent.md#running-on-dev)) | Decided for Phase 1; may change |
 | WhatsApp | Twilio, with 360dialog as an alternative | Pending policy answer |
 | Publishing | Zernio, with Ayrshare as an alternative | Pending test |
 | Payments | Placeholder behind an internal interface; PayPlus and Grow are candidates | Open |
@@ -67,7 +67,7 @@ The worker must run continuously, so Cloud Run needs at least one active instanc
 | Image selection and quality check | Vision model | Mid tier |
 | Factual comparison against the source | Code, with an optional model check | Low cost |
 | Rendering, approval, scheduling, and publishing | Code only | None |
-| Agent steps: onboarding, weekly update, drafts and fixes (`agent_onboarding`, `agent_weekly`, `agent_drafts`; [agent.md](agent.md)) | Model, every tool call checked by code | Gemini Flash Lite (`gemini-2.5-flash-lite`; A8, decided 2026-11-05) |
+| Agent steps: onboarding, weekly update, drafts and fixes (`agent_onboarding`, `agent_weekly`, `agent_drafts`; [agent.md](agent.md)) | Model, every tool call checked by code | Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`, thinking `MEDIUM`; A8, decided 2026-11-05, moved off the retired 2.5 on 2026-11-06) |
 
 With the agent flows on, the agents replace profile field extraction, fact extraction, weekly planning, caption writing and change interpretation in those flows; those tasks stay as the fallback path behind the `agent_flows` switch until the human retires them (agent.md, A9). Intent detection, transcription and image review stay as they are; image review gains suggested edits for the drafts agent.
 

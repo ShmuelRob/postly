@@ -107,16 +107,25 @@ describe('process configuration', () => {
 
   // agent.md, Running on dev: real Gemini on dev, with the other providers simulated.
   describe('Vertex AI on dev (POSTLY_MODELS=vertex)', () => {
-    const vertex = { ...dev, POSTLY_MODELS: 'vertex', VERTEX_PROJECT: 'postly-dev-test', VERTEX_LOCATION: 'europe-west4' };
+    const vertex = { ...dev, POSTLY_MODELS: 'vertex', VERTEX_PROJECT: 'postly-dev-test', VERTEX_LOCATION: 'eu' };
 
     it('runs dev on Vertex with the project and location from the environment', () => {
       const config = loadConfig(vertex);
       expect(config.models).toBe('vertex');
-      expect(config.vertex).toEqual({ project: 'postly-dev-test', location: 'europe-west4' });
+      expect(config.vertex).toEqual({ project: 'postly-dev-test', location: 'eu' });
     });
 
-    it('defaults the location to europe-west4 (Vertex serves no Gemini from me-west1)', () => {
-      expect(loadConfig(without(vertex, 'VERTEX_LOCATION')).vertex).toEqual({ project: 'postly-dev-test', location: 'europe-west4' });
+    it('defaults the location to the EU multi-region (Gemini 3.5 Flash-Lite is not served from single regions)', () => {
+      expect(loadConfig(without(vertex, 'VERTEX_LOCATION')).vertex).toEqual({ project: 'postly-dev-test', location: 'eu' });
+    });
+
+    it('accepts global, the eu and us multi-regions and single regions, and nothing else', () => {
+      for (const location of ['global', 'eu', 'us', 'europe-west4']) {
+        expect(loadConfig({ ...vertex, VERTEX_LOCATION: location }).vertex?.location).toBe(location);
+      }
+      for (const location of ['EU', 'asia', 'eu.rep', '']) {
+        expect(() => loadConfig({ ...vertex, VERTEX_LOCATION: location })).toThrow('VERTEX_LOCATION');
+      }
     });
 
     it('needs the project', () => {
