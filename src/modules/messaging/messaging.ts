@@ -134,7 +134,7 @@ export interface Messaging {
    * limits it to one business (tests that share a database).
    */
   sweepUnprocessed(options?: { businessId?: string }): Promise<number>;
-  /** Runs the sweep now and then every `everyMs` (default: the quiet window); returns a stop function. */
+  /** Runs the sweep now and then every `everyMs` (default: the quiet window, at least 20 s); returns a stop function. */
   startSweep(everyMs?: number): () => void;
   /**
    * The `inbound-burst` job: claims this sender's unprocessed messages and hands them over, burst
@@ -521,7 +521,9 @@ export function createMessaging(options: MessagingOptions): Messaging {
       }
       return delivered;
     },
-    startSweep(everyMs = quietMs) {
+    // The sweep is a backstop for a lost wake-up, so it never runs more often than every 20 seconds,
+    // even with a short quiet window (dev's 2 s; technical-design.md, Onboarding flow).
+    startSweep(everyMs = Math.max(quietMs, DEFAULT_BURST_QUIET_MS)) {
       const sweep = () => {
         this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: errorMessage(error) }));
       };
