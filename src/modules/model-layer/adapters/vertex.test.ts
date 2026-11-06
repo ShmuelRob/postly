@@ -4,7 +4,7 @@ import { modelTasks } from '../../../contracts/model-tasks.js';
 import { describeModelProviderContract } from '../../../simulators/contract-suites/model.js';
 import { adcTransport, realModelsRefused, type VertexRequestBody, type VertexTransport, VertexModelProvider } from './vertex.js';
 
-const MODEL = 'gemini-2.5-flash';
+const MODEL = 'gemini-3.5-flash-lite';
 
 /** A fake Vertex AI endpoint: answers by what the request asks for, records every call. */
 function fakeTransport() {
@@ -94,6 +94,23 @@ describe('VertexModelProvider', () => {
     expect(fake.calls[0]!.url.startsWith('https://europe-west4-aiplatform.googleapis.com/v1/projects/p/locations/europe-west4/')).toBe(true);
   });
 
+  it('uses the multi-region host for eu and us (Gemini 3.5 Flash-Lite is not served from single regions)', async () => {
+    for (const location of ['eu', 'us']) {
+      const fake = fakeTransport();
+      await new VertexModelProvider({ project: 'p', location, transport: fake.transport, fetchMedia }).generateStructured({
+        task: 'intent_detection',
+        model: MODEL,
+        prompt: 'Classify.',
+        input: {},
+        outputJsonSchema: {},
+        temperature: 0,
+      });
+      expect(fake.calls[0]!.url).toBe(
+        `https://aiplatform.${location}.rep.googleapis.com/v1/projects/p/locations/${location}/publishers/google/models/${MODEL}:generateContent`,
+      );
+    }
+  });
+
   it('computes the cost from the token counts', async () => {
     const result = await provider(fakeTransport().transport).generateStructured({
       task: 'intent_detection',
@@ -107,6 +124,81 @@ describe('VertexModelProvider', () => {
     expect(result.outputTokens).toBe(200);
     // 1000 * 0.30/M + 200 * 2.50/M
     expect(result.costUsd).toBeCloseTo(0.0008, 8);
+  });
+
+  it('charges the non-global price off the global endpoint (Vertex pricing, Gemini 3 and later)', async () => {
+    const result = await new VertexModelProvider({ project: 'p', location: 'eu', transport: fakeTransport().transport, fetchMedia }).generateStructured({
+      task: 'intent_detection',
+      model: MODEL,
+      prompt: 'Classify.',
+      input: {},
+      outputJsonSchema: {},
+      temperature: 0,
+    });
+    // 1000 * 0.33/M + 200 * 2.75/M
+    expect(result.costUsd).toBeCloseTo(0.00088, 8);
+  });
+
+  it('counts thinking tokens as output tokens: Vertex bills reasoning at the output price', async () => {
+    const transport: VertexTransport = async () => ({
+      candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 200, thoughtsTokenCount: 300 },
+    });
+    const result = await provider(transport).generateStructured({
+      task: 'agent_onboarding',
+      model: MODEL,
+      prompt: 'Act.',
+      input: {},
+      outputJsonSchema: {},
+      temperature: 0.2,
+    });
+    expect(result.outputTokens).toBe(500);
+    // 1000 * 0.30/M + 500 * 2.50/M
+    expect(result.costUsd).toBeCloseTo(0.00155, 8);
+  });
+
+  it('refuses the retired Gemini 2.5 models (Vertex retired them on 2026-10-20)', async () => {
+    const fake = fakeTransport();
+    for (const model of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+      await expect(
+        provider(fake.transport).generateStructured({ task: 'intent_detection', model, prompt: 'Classify.', input: {}, outputJsonSchema: {}, temperature: 0 }),
+      ).rejects.toThrow(/price/);
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it('asks the agent tasks to think at MEDIUM, and leaves the one-shot tasks on the default', async () => {
+    const fake = fakeTransport();
+    for (const task of ['agent_onboarding', 'agent_weekly', 'agent_drafts', 'intent_detection'] as const) {
+      await provider(fake.transport).generateStructured({ task, model: MODEL, prompt: 'Act.', input: {}, outputJsonSchema: {}, temperature: 0.2 });
+    }
+    await provider(fake.transport).analyzeImage({ task: 'image_review', model: MODEL, prompt: 'Review.', imageUrl: 'https://storage.example.test/photo.jpg', outputJsonSchema: {} });
+    const thinking = fake.calls.map((c) => c.body.generationConfig.thinkingConfig);
+    expect(thinking).toEqual([{ thinkingLevel: 'MEDIUM' }, { thinkingLevel: 'MEDIUM' }, { thinkingLevel: 'MEDIUM' }, undefined, undefined]);
+  });
+
+  // Gemini 3.5 Flash-Lite rejects a request whose last contents turn has the role `model`, and any custom
+  // frequency or presence penalty (agent.md, Running on dev). The agent's history travels inside its input.
+  it('sends every request as one user turn, with no frequency or presence penalty', async () => {
+    const fake = fakeTransport();
+    const p = provider(fake.transport);
+    await p.generateStructured({
+      task: 'agent_drafts',
+      model: MODEL,
+      prompt: 'Act.',
+      input: { history: [{ role: 'model', text: 'previous step' }] },
+      outputJsonSchema: {},
+      temperature: 0.2,
+    });
+    await p.analyzeImage({ task: 'image_review', model: MODEL, prompt: 'Review.', imageUrl: 'https://storage.example.test/photo.jpg', outputJsonSchema: {} });
+    await p.transcribeAudio({ model: MODEL, prompt: 'Transcribe.', audioUrl: 'https://storage.example.test/voice.ogg', languageHint: 'he' });
+    expect(fake.calls).toHaveLength(3);
+    for (const { body } of fake.calls) {
+      expect(body.contents.map((c) => c.role)).toEqual(['user']);
+      expect(body.contents.at(-1)!.role).not.toBe('model');
+      expect(Object.keys(body.generationConfig)).not.toContain('frequencyPenalty');
+      expect(Object.keys(body.generationConfig)).not.toContain('presencePenalty');
+    }
   });
 
   it('refuses a model without a price', async () => {

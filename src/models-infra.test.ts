@@ -20,6 +20,9 @@ describe('models and agent flows in Terraform', () => {
   it('defaults to the model simulator with no flows; only dev passes the variables', () => {
     expect(models).toMatch(/variable "models"[\s\S]*?default\s*=\s*"simulator"/);
     expect(models).toMatch(/variable "agent_flows"[\s\S]*?default\s*=\s*\[\]/);
+    // Gemini 3.5 Flash-Lite is served only on global and the us/eu multi-regions (agent.md, Running on dev).
+    expect(models).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
+    expect(read('environments/dev/variables.tf')).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
     for (const env of ['stage', 'prod']) expect(read(`environments/${env}/main.tf`)).not.toMatch(/\b(models|agent_flows)\s*=/);
     expect(read('environments/dev/main.tf')).toMatch(/agent_flows\s*=\s*var\.agent_flows/);
   });
