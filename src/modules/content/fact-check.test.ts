@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Fact } from '../../contracts/model-tasks.js';
 import type { DesignSpec } from '../../contracts/design-spec.js';
-import { captionSources, checkCaptions, checkDesign, contentHash, factSources } from './fact-check.js';
+import { captionSources, checkCaptions, checkDesign, contentHash, factSources, factsUsedBy } from './fact-check.js';
 
 const facts: Fact[] = [
   { id: 'f1', type: 'promotion', value: 'מבצע על חלות', sourceQuote: 'מבצע על חלות' },
@@ -221,5 +221,20 @@ describe('checkDesign (title and badge fact check)', () => {
       expect(checkDesign(design('חלות', { kind: 'holiday' }), ctx)).toMatchObject({ reason: 'fact_mismatch', detail: expect.stringMatching(/holiday/) });
       expect(checkDesign(design('חלות', { kind: 'holiday' }), { ...ctx, holidayInWeek: true })).toBeNull();
     });
+  });
+});
+
+describe('factsUsedBy (the facts a version rests on)', () => {
+  const all: Fact[] = [
+    ...facts,
+    { id: 'f6', type: 'product', value: 'חלות מתוקות', sourceQuote: 'חלות מתוקות' },
+  ];
+  it('names the facts whose numbers or words the captions, title and badge use, and the badge fact', () => {
+    const used = factsUsedBy({ captions: { instagram: { text: 'חלות מתוקות: 15% הנחה', hashtags: [] } }, title: 'עד יום שישי' }, all);
+    expect(used.sort()).toEqual(['f3', 'f4', 'f6']);
+    expect(factsUsedBy({ captions: { instagram: { text: 'שלום', hashtags: [] } }, title: 'חלות', badge: { kind: 'discount', text: '-15%', factId: 'f4' } }, all)).toEqual(['f4']);
+  });
+  it('names none for a text with no sourced detail', () => {
+    expect(factsUsedBy({ captions: { instagram: { text: 'שלום', hashtags: [] } }, title: 'חלות' }, all)).toEqual([]);
   });
 });

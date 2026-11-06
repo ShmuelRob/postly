@@ -220,7 +220,9 @@ e2eTest(
       expect(c1!.designSpec).toEqual(design2);
       // The carousel: one render per slide, and the cover and the later slides are separate files.
       expect((c1!.renderedMedia as { instagram: string[] }).instagram).toHaveLength(3);
-      expect(run.owner.received().filter((m) => m.text?.includes('/3')).length).toBeGreaterThanOrEqual(0);
+      // The owner is shown every slide, then the buttons: three slide messages for the carousel and an image on each pair of buttons, five in all (the counters
+      // on slides 2 and 3 are measured on the page in styles/carousel.test.ts).
+      expect(run.owner.received().filter((m) => m.image !== undefined)).toHaveLength(5);
 
       // The photo notes were written once, and the agent saw them.
       const reviewed = await db.withBusiness('workflow', businessId, (tx) => tx.select({ id: schema.mediaAsset.id, review: schema.mediaAsset.review }).from(schema.mediaAsset));

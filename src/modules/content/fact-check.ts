@@ -220,3 +220,23 @@ export function checkDesign(design: { title: string; badge?: DesignSpec['badge']
   if (badge.kind === 'holiday' && !context.holidayInWeek) return { reason: 'fact_mismatch', detail: 'a holiday badge needs a holiday in the post week' };
   return null;
 }
+
+/**
+ * The facts a version rests on: the badge's fact, and each fact whose numbers (or, with none, whose
+ * words) appear in the captions, the title or the badge. Used to record a fix's own `fact_sources`
+ * and to check it against them, instead of the old version's.
+ */
+export function factsUsedBy(content: { captions: ChannelCaptionsLike; title: string; badge?: DesignSpec['badge'] }, facts: readonly Fact[]): string[] {
+  const text = [...Object.values(content.captions).flatMap((c) => (c ? [c.text, ...c.hashtags] : [])), content.title, content.badge && 'text' in content.badge ? content.badge.text : ''].join(' ');
+  const numbers = new Set(text.match(NUMBER) ?? []);
+  const badgeFact = content.badge && 'factId' in content.badge ? content.badge.factId : undefined;
+  return facts
+    .filter((f) => {
+      if (f.id === badgeFact) return true;
+      const own = [...f.value.matchAll(NUMBER)].map((m) => m[0]);
+      return own.length > 0 ? own.some((n) => numbers.has(n)) : text.includes(f.value);
+    })
+    .map((f) => f.id);
+}
+
+type ChannelCaptionsLike = Partial<Record<string, { text: string; hashtags: string[] } | undefined>>;

@@ -15,7 +15,7 @@ import { encodeButtonId, WindowClosedError, type SendButtonsRequest, type SendTe
 import type { RenderRequest, RenderResult } from '../../contracts/providers/renderer.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { checkCaptions, contentHash, factSources } from '../content/index.js';
+import { checkCaptions, checkDesign, contentHash, factSources, factsUsedBy } from '../content/index.js';
 import type { Agent, AgentDeps, DraftOutcome, TurnResult } from '../agent/index.js';
 import * as copy from './drafts-copy.js';
 import * as weeklyCopy from './weekly-copy.js';
@@ -660,6 +660,31 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     }
   }
 
+  /**
+   * The code fact check of a version's own content against the facts it uses (its `usedFactIds`) and the
+   * profile: every detail in its captions, title and badge must have a source. A refusal means nothing
+   * may be written or sent. Run before anything changes, and again right before the version is written.
+   */
+  async function checkContent(
+    business: typeof schema.business.$inferSelect,
+    post: PostRow,
+    content: { captions: ChannelCaptions; usedFactIds: string[]; design: DesignSpec },
+  ): Promise<DraftOutcome | null> {
+    const profile = BusinessProfile.parse(business.profile);
+    const plan = post.plan as PlannedPost;
+    const facts = await weekFacts(business.id, post.weeklyUpdateId);
+    const sources = {
+      planFactIds: plan.factIds,
+      facts,
+      profile: { location: profile.location, contact: profile.contact, differentiator: profile.differentiator },
+    };
+    const caption = checkCaptions({ captions: content.captions, usedFactIds: content.usedFactIds }, sources);
+    if (caption) return refused('fact_mismatch', caption);
+    const holidayInWeek = content.design.badge?.kind === 'holiday' ? await holidayInWeekFor(business.id, post.id) : false;
+    const design = checkDesign(content.design, { ...sources, usedFactIds: content.usedFactIds, holidayInWeek });
+    return design ? refused(design.reason, design.detail) : null;
+  }
+
   /** Writes the version, immutable from here (with its design spec), sends it with the buttons, and applies DRAFT_READY. */
   async function versionAndSend(
     business: typeof schema.business.$inferSelect,
@@ -670,6 +695,9 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const businessId = business.id;
     const plan = post.plan as PlannedPost;
     const facts = (await weekFacts(businessId, post.weeklyUpdateId)).filter((f) => plan.factIds.includes(f.id));
+    // factCheckPassed is written only after this version's own check: a mismatch writes and sends nothing.
+    const problem = await checkContent(business, post, content);
+    if (problem) return problem;
     // Any new version invalidates earlier approvals, before it exists (state-machines.md, Approval guard).
     await deps.invalidate(businessId, post.id);
     const version = await db.withBusiness('content', businessId, async (tx) => {
@@ -713,6 +741,9 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const post = await loadPost(businessId, input.postId);
     if (!loaded || !post) return refused('unknown_id', 'no such post');
     // From planned: DRAFT_STARTED; from awaiting_clarification: DETAIL_PROVIDED; from drafting: nothing (agent.md, create_draft).
+    // The same check the tool ran, before the post moves (the workflow does not trust its caller's checks).
+    const problem = await checkContent(loaded.business, post, input);
+    if (problem) return problem;
     if (post.status === 'planned' && !(await postEvent(businessId, post.id, 'DRAFT_STARTED')).ok) return refused('not_allowed', 'the post cannot start drafting');
     if (post.status === 'awaiting_clarification' && !(await postEvent(businessId, post.id, 'DETAIL_PROVIDED')).ok) return refused('not_allowed', 'the post is not ready for a draft');
     const rendered = await renderDesign(loaded.business, post, input.captions, input.design);
@@ -734,7 +765,10 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const narrowed = (input.captions ?? (version.captions as ChannelCaptions));
     const captions = Object.fromEntries(Object.entries(narrowed).filter(([n]) => !input.networks || input.networks.includes(n))) as ChannelCaptions;
     const design = input.design ?? designOf(version, plan);
-    const usedFactIds = (version.factSources as { factId: string }[]).map((f) => f.factId);
+    // The facts the new content uses, not the old version's: they are checked against and recorded as its fact_sources.
+    const usedFactIds = factsUsedBy({ captions, title: design.title, ...(design.badge ? { badge: design.badge } : {}) }, (await weekFacts(businessId, post.weeklyUpdateId)).filter((f) => plan.factIds.includes(f.id)));
+    const problem = await checkContent(loaded.business, post, { captions, usedFactIds, design });
+    if (problem) return problem;
     const rendered = await renderDesign(loaded.business, post, captions, design);
     if (!('media' in rendered)) return rendered;
 
@@ -826,6 +860,8 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     const result = await deps.agent!.runTurn(businessId, 'drafts', { kind: 'burst', messageIds: burst.messages.map((m) => m.id) });
     if (week) await afterAgentTurn(businessId, week.id, result);
   }
+
+  const holidayInWeekFor = (businessId: string, postId: string) => holidayInWeek(businessId, postId);
 
   /** Whether the post's week holds a holiday (the holiday badge). */
   async function holidayInWeek(businessId: string, postId: string): Promise<boolean> {

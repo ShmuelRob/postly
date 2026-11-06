@@ -8,6 +8,7 @@ export {
   checkDesign,
   contentHash,
   factSources,
+  factsUsedBy,
   type CaptionCheckContext,
   type DesignCheckContext,
   type DesignProblem,
