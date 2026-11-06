@@ -225,7 +225,7 @@ e2eTest('a hand-off before the plan sends the week to review (EXTRACTION_FAILED)
 
   const [week] = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.weeklyUpdate));
   expect(week).toMatchObject({ status: 'needs_review' });
-  expect(run.owner.received().map((m) => m.text)).toEqual([handOffLine('פוסטלי')]);
+  expect(run.owner.received().map((m) => m.text)).toEqual([handOffLine('פוסטלי', 'he')]);
   const items = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem));
   expect(items.map((i) => [i.kind, (i.details as { reason?: string }).reason])).toEqual([['handoff', 'sensitive']]);
   const [state] = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.conversationState));

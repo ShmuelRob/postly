@@ -129,6 +129,12 @@ describe.each(ROLES)('%s', (role) => {
         ? columns.filter((c) => !grant.updateExcept.includes(c))
         : grant.updateColumns;
     expect(updatable.map((r) => r.c).sort()).toEqual([...expectedColumns].sort());
+
+    // S(col, ...): a column grant only, e.g. the scheduler's cost sum over model_run.
+    const selectable = await catalog`
+      select c from unnest(${columns}::text[]) as c
+      where has_column_privilege(${login}, ${'public.' + table}, c, 'SELECT')`;
+    expect(selectable.map((r) => r.c).sort()).toEqual([...(grant.verbs.has('SELECT') ? columns : grant.selectColumns)].sort());
   });
 
   it('is refused creating a temporary table', async () => {
@@ -148,8 +154,20 @@ describe.each(ROLES)('%s', (role) => {
         : db.withSystem(role as (typeof SYSTEM_PURPOSES)[number], (tx) => tx.execute(sql`select 1 from ${sql.identifier(table)} limit 1`));
     for (const { name } of TABLES) {
       const message = await dbError(run(name));
-      if (has(name, role, 'SELECT')) expect({ name, message }).toEqual({ name, message: undefined });
+      const columns = grants.get(name)!.get(role)!.selectColumns;
+      if (has(name, role, 'SELECT') || columns.length > 0) expect({ name, message }).toEqual({ name, message: undefined });
       else expect({ name, message }).toEqual({ name, message: `permission denied for table ${name}` });
+      if (columns.length > 0) {
+        // S(col, ...): the granted columns read, every other column is refused.
+        const other = TABLES.find((t) => t.name === name)!.columns.map((c) => c.name).find((c) => !columns.includes(c))!;
+        const select = (cols: string[]) => sql`select ${sql.join(cols.map((c) => sql.identifier(c)), sql`, `)} from ${sql.identifier(name)} limit 1`;
+        const runSql = (query: ReturnType<typeof sql>) =>
+          (BUSINESS_ROLES as readonly string[]).includes(role)
+            ? db.withBusiness(role as (typeof BUSINESS_ROLES)[number], zero, (tx) => tx.execute(query))
+            : db.withSystem(role as (typeof SYSTEM_PURPOSES)[number], (tx) => tx.execute(query));
+        expect(await dbError(runSql(select(columns)))).toBeUndefined();
+        expect(await dbError(runSql(select([other])))).toBe(`permission denied for table ${name}`);
+      }
     }
   });
 });

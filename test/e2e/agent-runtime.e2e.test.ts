@@ -8,7 +8,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, expect, inject } from 'vitest';
-import type { AgentStep } from '../../src/contracts/agent.js';
 import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createAgent, handOffLine, type Agent } from '../../src/modules/agent/index.js';
@@ -17,7 +16,8 @@ import { createMessaging } from '../../src/modules/messaging/index.js';
 import { createModelLayer } from '../../src/modules/model-layer/index.js';
 import { createWorkflow } from '../../src/modules/workflow/index.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
-import { e2eTest, type AppFactory, type Providers } from './harness/index.js';
+import { call, step, stepWith } from '../../src/simulators/scripted-agent.js';
+import { e2eTest, type AppFactory, type E2eRun, type Providers } from './harness/index.js';
 
 const OWNER = '+972501234590';
 const BUSINESS_PHONE = '+972521111190';
@@ -38,19 +38,16 @@ async function newBusiness(): Promise<string> {
   return businessId;
 }
 
-const step = (calls: AgentStep['calls'], confidence = 0.9): AgentStep => ({ calls, confidence });
-
 e2eTest('a scripted agent asks the owner, a closed window refuses a message, and a limit hands off with the turn in the console', async ({ e2e }) => {
   const businessId = await newBusiness();
-  const model = new ModelSimulator({ defaults: false });
+  const model = new ModelSimulator({ defaults: false, strictAgents: true });
   // Turn 1, on the owner's update: one question. Turn 2, a day later: a message the closed window
   // refuses, then end the turn. Turn 3: a step below the confidence floor, which hands off.
-  model.script(
-    'agent_weekly',
-    step([{ tool: 'ask_owner', text: QUESTION, topic: 'detail:date', expects: 'answer' }]),
-    step([{ tool: 'ask_owner', text: 'עוד משהו לפני שאני מכינה טיוטות?', topic: 'anything_else', expects: 'answer' }]),
-    step([{ tool: 'end_turn' }]),
-    step([{ tool: 'end_turn' }], 0.1),
+  model.scriptAgent(
+    'weekly',
+    [step(call.askOwner(QUESTION, { topic: 'detail:date' }))],
+    [step(call.askOwner('עוד משהו לפני שאני מכינה טיוטות?', { topic: 'anything_else' })), step(call.endTurn())],
+    [stepWith(0.1, call.endTurn())],
   );
   const providers = {
     messaging: new MessagingSimulator({ businessNumber: BUSINESS_PHONE }),
@@ -64,6 +61,7 @@ e2eTest('a scripted agent asks the owner, a closed window refuses a message, and
   const now = () => new Date(clock);
   const questions: string[] = [];
   let agent!: Agent;
+  let run!: E2eRun;
   let flush = async () => {};
   const app: AppFactory = ({ messaging: provider, model: recorded }) => {
     const messaging = createMessaging({
@@ -80,11 +78,13 @@ e2eTest('a scripted agent asks the owner, a closed window refuses a message, and
       messaging,
       events: { questionAsked: async (_b, q) => void questions.push(q.key) },
       now,
+      // Every turn, with its last step's results and its stop reason, goes into the e2e report.
+      onTurnEnd: (turn) => run.recordAgentTurn(turn),
     });
     flush = () => messaging.flushBursts();
     return { deliverInbound: async (message) => void (await messaging.receive(message)) };
   };
-  const run = await e2e.start({ providers, app, ownerPhone: OWNER, businessPhone: BUSINESS_PHONE });
+  run = await e2e.start({ providers, app, ownerPhone: OWNER, businessPhone: BUSINESS_PHONE });
 
   // 1. The owner's update starts a turn; the agent's question reaches the owner.
   await run.owner.sendsText('השבוע 15% הנחה על ורדים');
@@ -112,5 +112,9 @@ e2eTest('a scripted agent asks the owner, a closed window refuses a message, and
   ]);
   expect(turns[1]!.steps).toMatchObject([{ calls: [{ result: { status: 'refused', reason: 'window_closed' } }] }, { calls: [{ result: { status: 'ok' } }] }]);
   // The window is closed, so even the hand-off line waits for the owner; a person picks it up from the console.
-  expect(run.owner.received().map((m) => m.text)).not.toContain(handOffLine('פוסטלי'));
+  expect(run.owner.received().map((m) => m.text)).not.toContain(handOffLine('פוסטלי', 'he'));
+  // The report has the three turns as the runtime reported them, and the scripts ran exactly.
+  expect(run.modelCalls().every((c) => c.task === 'agent_weekly')).toBe(true);
+  expect(model.agentSteps.map((s) => [s.turn, s.step])).toEqual([[1, 1], [2, 1], [2, 2], [3, 1]]);
+  expect(run.agentScriptProblems()).toEqual([]);
 });

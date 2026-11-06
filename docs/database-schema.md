@@ -47,7 +47,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `console` | `app_sys_console` | The team console: reading everything, resolving items, handoffs, retries and manual scheduling (a publication still publishes only when the publishing job's hash check passes), pauses, model settings. The human-owned H5 tests use it to force states |
 | `example_set` | `app_sys_example_set` | Example-set runs, whose `model_run` rows have no business |
 
-**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `U(col, ...)` is an update of those columns only. `U(-col, ...)` is an update of every column except those. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
+**Grant matrix.** `S` select, `I` insert, `U` update, `D` delete; `S(col, ...)` is a select of those columns only; `U(col, ...)` is an update of those columns only. `U(-col, ...)` is an update of every column except those. A blank cell is no access. The contract test `src/db/least-privilege.db.test.ts` copies this table.
 
 | Table | messaging | workflow | content | design | approval | publishing | model | billing | business_data | deletion | phone_lookup | scheduler | console | example_set |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
 | `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
-| `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S | S | SI |
+| `model_run` |  |  |  |  |  |  | SI |  |  |  |  | S(cost_usd, created_at) | S | SI |
 | `console_item` |  | SI |  |  |  | SI | SI |  |  |  | SI |  | SI U(-id, -business_id) |  |
 | `workflow_event` |  | I |  |  | I | I |  | I |  |  |  |  | S |  |
 | `model_task_config` |  |  |  |  |  |  | S |  |  |  |  |  | SU | S |
@@ -391,7 +391,7 @@ The agent's declines and the questions it already asked are read back from these
 - **`business.profile.persona`**: inside the existing profile jsonb, no column (WP-89).
 - **`console_item_kind`** gains `agent_limit` (WP-90).
 - **`model_task` enum** (WP-89, `0017_agent_tasks`): gains `agent_onboarding`, `agent_weekly` and `agent_drafts`. The enum is recreated rather than extended, because drizzle applies pending migrations in one transaction and a value added with `ADD VALUE` cannot be used before commit; `model_run`, `model_task_config` and `prompt_template` move to the new type. The three tasks get `model_task_config` rows on `gemini-2.5-flash-lite` (A8; temperature 0.2, `max_cost_usd` 0.02, 2 retries) and a placeholder version 1 prompt that only hands off, until each agent package adds its real prompt as version 2 (H7).
-- **No new login (WP-90).** The design proposed an `agent` role; WP-90 runs the agent module as `workflow` instead, so no secret, Terraform change or connection pool is added (security.md, D7 and D9). `workflow` gains SIU on `agent_turn` and S on `agent_config` and `system_control`; `scheduler` gains S on `model_run` to sum the spend across businesses for the global cap.
+- **No new login (WP-90).** The design proposed an `agent` role; WP-90 runs the agent module as `workflow` instead, so no secret, Terraform change or connection pool is added (security.md, D7 and D9). `workflow` gains SIU on `agent_turn` and S on `agent_config` and `system_control`; `scheduler` gains S on `model_run` to sum the spend across businesses for the global cap; `0021_scheduler_model_run_columns` narrows it to `S(cost_usd, created_at)`, the two columns the sum reads, so the scheduler never sees a business's model inputs or outputs (H4, review of #119).
 
 ### System tables
 

@@ -86,7 +86,10 @@ export function scrub(text: string): string {
     .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@\S*/gi, REDACTED)
     .replace(/\bBearer\s+\S+/gi, REDACTED)
     .replace(/[A-Za-z0-9_-]{32,}/g, (run) => (UUID.test(run) || !/\d/.test(run) ? run : REDACTED))
-    .replace(/\+?\d[\d\s-]{6,}\d/g, (run) => (run.replace(/\D/g, '').length >= 9 ? REDACTED : run))
+    // UUIDs are matched first and kept whole: their digit groups (e.g. "1-02987394") can look like a phone.
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\+?\d[\d\s-]{6,}\d/gi, (run) =>
+      UUID.test(run) || run.replace(/\D/g, '').length < 9 ? run : REDACTED,
+    )
     .slice(0, MAX_STRING);
 }
 

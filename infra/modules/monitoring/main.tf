@@ -53,6 +53,7 @@ locals {
     "web-health-check-failing", "web-5xx-responses", "error-log-lines", "cloud-sql-cpu-or-disk-high",
     "publishing-failures", "webhook-errors", "pgboss-backlog", "worker-not-running", "channel-disconnected",
     "cost-spike", "model-validation-failures", "cloud-sql-connections-near-max", "error-budget-burn",
+    "agent-global-budget",
   ]
 }
 
