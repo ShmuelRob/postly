@@ -3,6 +3,7 @@ import { Phone } from './contracts/common.js';
 import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { type AgentFlows, parseAgentFlows } from './agent-flows.js';
 import { IAP_AUDIENCE_FORMS, IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
+import { DEFAULT_BURST_QUIET_MS } from './modules/messaging/index.js';
 import { realModelsRefused } from './modules/model-layer/index.js';
 
 export { PROCESS_LOGINS };
@@ -40,6 +41,16 @@ const Env = z.object({
     .default('eu'),
   /** Which flows run on the agent for every business; written into system_control at web startup. Unset: left alone. */
   POSTLY_AGENT_FLOWS: z.string().optional(),
+  /**
+   * The burst quiet window in milliseconds (technical-design.md, Operational defaults): inbound messages
+   * from one number merge until this long passes without a new one. 20 s by default; dev sets 2 s.
+   */
+  BURST_QUIET_MS: z
+    .string()
+    .regex(/^\d+$/, 'BURST_QUIET_MS must be a whole number of milliseconds')
+    .transform(Number)
+    .refine((ms) => ms >= 500 && ms <= 60_000, 'BURST_QUIET_MS must be from 500 to 60000')
+    .optional(),
   /** The server and database, with no user or password: each login gets its own. */
   DATABASE_URL: z.url().refine((u) => new URL(u).username === '', 'DATABASE_URL must have no user; each role login is built from it'),
   PUBLIC_BASE_URL: z.url(),
@@ -78,6 +89,8 @@ export interface Config {
   vertex?: { project: string; location: string };
   /** The global agent flow switch to apply at startup (POSTLY_AGENT_FLOWS); undefined leaves it as it is. */
   agentFlows?: AgentFlows;
+  /** The burst quiet window (BURST_QUIET_MS). */
+  burstQuietMs: number;
 }
 
 /** The environments where the simulators may answer (docs/deployment.md, "Simulated mode"). */
@@ -150,5 +163,6 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
     models,
     ...(models === 'vertex' ? { vertex: { project: parsed.data.VERTEX_PROJECT!, location: parsed.data.VERTEX_LOCATION } } : {}),
     ...(agentFlows ? { agentFlows } : {}),
+    burstQuietMs: parsed.data.BURST_QUIET_MS ?? DEFAULT_BURST_QUIET_MS,
   };
 }

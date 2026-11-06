@@ -11,6 +11,8 @@ import { ModelSimulator } from '../../simulators/model.js';
 import { createModelLayer, type ModelLayer } from '../model-layer/index.js';
 import { createAgent, handOffLine, type AgentDeps } from './index.js';
 import { weeklyAgent } from './agents/weekly.js';
+import { agents as agentRegistry } from './agents/index.js';
+import { handOff } from './handoff.js';
 
 // The agent runtime (WP-90, agent.md: Runtime, Limits, Tools) against the migrated database and the
 // model simulator with scripted agent steps. No test calls a real model.
@@ -125,6 +127,27 @@ describe('a turn', () => {
     ]);
   });
 
+  // docs/observability.md, Timing lines: one `agent step` line per step and one `agent turn ended` per turn.
+  it('logs each step and the turn with their durations and counts, and none of the text', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      sim.script('agent_weekly', step([decline(), ask('עד מתי המבצע של 15%?', 'detail:date', 'none')]), step([END]));
+      await agentWith().runTurn(businessId, 'weekly', trigger);
+    } finally {
+      setLogSink(undefined);
+    }
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    const steps = parsed.filter((l) => l.message === 'agent step');
+    expect(steps).toEqual([
+      expect.objectContaining({ agent: 'weekly', step: 1, tools: 'record_decline,ask_owner', modelMs: expect.any(Number), toolsMs: expect.any(Number) }),
+      expect.objectContaining({ step: 2, tools: 'end_turn' }),
+    ]);
+    const [ended] = parsed.filter((l) => l.message === 'agent turn ended');
+    expect(ended).toMatchObject({ agent: 'weekly', trigger: 'event:test', status: 'done', stopReason: 'end_turn', steps: 2, toolCalls: 3, durationMs: expect.any(Number), costUsd: expect.any(Number) });
+    expect(lines.join('\n')).not.toContain('המבצע');
+  });
+
   it('builds the context from this business only, with the persona and without the approver number', async () => {
     sim.script('agent_weekly', step([END]));
     await agentWith().runTurn(businessId, 'weekly', trigger);
@@ -232,6 +255,45 @@ describe('one turn per business', () => {
     sim.script('agent_weekly', step([END]));
     expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'done' });
     expect((await turnRow(stale!.id)).status).toBe('failed');
+  });
+});
+
+// agent.md, Runtime ("No silent turn"): the 2026-11-06 sandbox turn that ended with end_turn and said nothing.
+describe('end_turn and the owner who waits for a reply', () => {
+  const doneWeekly = (done: boolean) => ({ ...weeklyAgent, isDone: async () => done });
+  const withDone = (done: boolean) => agentWith({ agents: { ...agentRegistry, weekly: doneWeekly(done) } });
+
+  it('evaluates the done rule after end_turn, so a turn whose work is done ends done', async () => {
+    sim.script('agent_weekly', step([END]));
+    const result = await withDone(true).runTurn(businessId, 'weekly', trigger, { mustReply: true });
+    expect(result).toMatchObject({ status: 'done', stopReason: 'done', messagesSent: 0 });
+    expect(await consoleItems()).toHaveLength(0);
+  });
+
+  it('hands off with the line when a turn the owner waits on ends with nothing sent and not done', async () => {
+    sim.script('agent_weekly', step([END]));
+    const result = await withDone(false).runTurn(businessId, 'weekly', { kind: 'burst', messageIds: [] }, { mustReply: true });
+    expect(result).toMatchObject({ status: 'handed_off', stopReason: 'end_turn', messagesSent: 0 });
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי', 'he') }]);
+    expect(await handoffAt()).not.toBeNull();
+    expect(await consoleItems()).toEqual([expect.objectContaining({ kind: 'agent_limit', referenceId: result.turnId, details: expect.objectContaining({ reason: 'silent_turn' }) })]);
+    expect((await turnRow(result.turnId!)).status).toBe('handed_off');
+  });
+
+  it('does not hand off when the turn sent the owner a message, or when the caller replies itself', async () => {
+    sim.script('agent_weekly', step([ask('קיבלתי, תודה!', 'info', 'none'), END]));
+    expect(await withDone(false).runTurn(businessId, 'weekly', trigger, { mustReply: true })).toMatchObject({ status: 'done', stopReason: 'end_turn', messagesSent: 1 });
+    sim.script('agent_weekly', step([END]));
+    expect(await withDone(false).runTurn(businessId, 'weekly', trigger)).toMatchObject({ status: 'done', stopReason: 'end_turn', messagesSent: 0 });
+    expect(await consoleItems()).toHaveLength(0);
+  });
+
+  it('the hand-off line reaches the approver even when the turn never read the context', async () => {
+    await handOff(
+      { db, messaging },
+      { businessId, turnId: randomUUID(), kind: 'agent_limit', details: { reason: 'error' }, approverPhone: '', personaName: 'פוסטלי', language: 'he', now: new Date() },
+    );
+    expect(sent).toEqual([{ to: approver, text: handOffLine('פוסטלי', 'he') }]);
   });
 });
 

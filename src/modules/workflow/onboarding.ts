@@ -280,6 +280,8 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
 
   const burstTrigger = (burst: OnboardingBurst) => ({ kind: 'burst' as const, messageIds: (burst.messages as { id?: string }[]).flatMap((m) => (m.id ? [m.id] : [])) });
   const eventTrigger = (name: string) => ({ kind: 'event' as const, name });
+  /** The owner waits on these turns; a turn that says nothing and is not done hands off (agent.md, No silent turn). */
+  const MUST_REPLY = { mustReply: true } as const;
 
   /** profile_questions with the agent: once the agent is done, code applies PROFILE_FIELDS_COMPLETE and the agent asks for the logo. */
   async function afterProfileTurn(burst: OnboardingBurst, result: TurnResult) {
@@ -291,7 +293,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     });
     if (!done.ok) return;
     await setQuestion(burst.businessId, null);
-    return afterBrandTurn(burst, await deps.agent!.runTurn(burst.businessId, 'onboarding', eventTrigger('brand_assets')));
+    return afterBrandTurn(burst, await deps.agent!.runTurn(burst.businessId, 'onboarding', eventTrigger('brand_assets'), MUST_REPLY));
   }
 
   /** brand_assets with the agent: once the agent is done, code applies BRAND_ASSETS_DONE and sends the style samples. */
@@ -329,11 +331,11 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     const { businessId } = burst;
     switch (step) {
       case 'profile_questions':
-        await afterProfileTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst)));
+        await afterProfileTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst), MUST_REPLY));
         return true;
       case 'brand_assets':
         await storeAssetAnswer(burst, draft, question);
-        await afterBrandTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst)));
+        await afterBrandTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst), MUST_REPLY));
         return true;
       case 'profile_review': {
         if (isOneOf(await ownerText(burst, draft), copy.APPROVAL_WORDS)) return false;
@@ -363,7 +365,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         if (!sent.ok) return;
         await reply(burst, copy.intro(persona));
         if (deps.agent && (await deps.agent.flowEnabled(businessId, 'onboarding'))) {
-          return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent')));
+          return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent'), MUST_REPLY));
         }
         return askNextProfileQuestion(burst, draft, null);
       }

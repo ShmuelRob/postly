@@ -130,7 +130,7 @@ WhatsApp accepts free-form messages (`sendText`, `sendButtons`) only within 24 h
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `generateStructured` | `task`, `model`, `prompt`, `input`, JSON schema of the output, `temperature` | Raw `output`, `inputTokens`, `outputTokens`, `costUsd` |
+| `generateStructured` | `task`, `model`, `prompt`, `input`, JSON schema of the output, `temperature` | Raw `output`, `inputTokens`, `outputTokens`, optional `thinkingTokens` (the part of `outputTokens` that is reasoning, for the timing log lines), `costUsd` |
 | `analyzeImage` | `task`, `model`, `prompt`, `imageUrl`, JSON schema of the output | Same as `generateStructured` |
 | `transcribeAudio` | `model`, `prompt` (the active version of the `transcription` prompt; added 2026-11-05 by T5), `audioUrl`, `languageHint` | `text`, `language`, `costUsd` |
 

@@ -51,6 +51,8 @@ module "postly" {
   sql_high_availability     = false
   deletion_protection       = false
   worker_max_instances      = 1
+  # A short quiet window so the sandbox answers quickly (technical-design.md, Operational defaults).
+  burst_quiet_ms            = 2000
   media_noncurrent_days     = 7
   media_coldline_after_days = 180
   sql_retained_backups      = 3

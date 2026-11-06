@@ -114,4 +114,14 @@ export interface TurnResult {
   turnId: string | null;
   status: 'done' | 'waiting' | 'handed_off' | 'failed' | 'skipped';
   stopReason: AgentTurnStopReason | null;
+  /** Messages the turn's own tools sent the owner (ask_owner, request_photo; not the hand-off line). */
+  messagesSent: number;
+}
+
+export interface RunTurnOptions {
+  /**
+   * The owner waits on this turn and no code reply follows it unless it ends done (agent.md, Runtime,
+   * "No silent turn"): a turn that ends with end_turn, not done, and nothing sent hands off.
+   */
+  mustReply?: boolean;
 }

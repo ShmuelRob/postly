@@ -8,6 +8,8 @@ const task = z.enum(MODEL_TASK_NAMES);
 const usage = {
   inputTokens: z.int().min(0),
   outputTokens: z.int().min(0),
+  /** The part of outputTokens that is the model's reasoning, when the provider reports it (timing log lines). */
+  thinkingTokens: z.int().min(0).optional(),
   costUsd: z.number().min(0),
 };
 

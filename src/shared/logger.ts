@@ -95,7 +95,8 @@ export function scrub(text: string): string {
 
 function clean(key: string, value: unknown): string | number | boolean | null | undefined {
   if (value === undefined || value === null) return value;
-  if (sensitiveKey(key)) return REDACTED;
+  // A model call's token counts (`inputTokens`, docs/observability.md, Timing lines) are numbers, never a token.
+  if (sensitiveKey(key) && !(typeof value === 'number' && /^[a-z]+Tokens$/.test(key))) return REDACTED;
   if (value instanceof Error) return scrub(value.message);
   if (typeof value === 'string') return scrub(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;

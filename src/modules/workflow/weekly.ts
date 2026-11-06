@@ -209,7 +209,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
       });
     }
     if (step === 'awaiting_answer' && !(await conversation(businessId, 'ANSWER_RECEIVED', null)).ok) return;
-    const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) });
+    const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) }, { mustReply: true });
     await afterTurn(businessId, burst.from, weekId, result);
   }
 
@@ -316,7 +316,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
         // the conversation moves to processing_update first, so its questions can wait for answers.
         lateWeeks.set(week.id, late);
         await workflow.apply(businessId, { machine: 'conversation', id: businessId, event: 'UPDATE_RECEIVED', source: 'inbound' });
-        const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) });
+        const result = await agent!.runTurn(businessId, 'weekly', { kind: 'burst', messageIds: messageIds(burst) }, { mustReply: true });
         return afterTurn(businessId, burst.from, week.id, result);
       }
       await plan(burst, week.id, profile, update, late);

@@ -273,10 +273,28 @@ export function createMessaging(options: MessagingOptions): Messaging {
         return delivered;
       }
       const ids = step.burst.messages.map((x) => x.id);
+      const claimedAt = now().getTime();
+      const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
+      // docs/observability.md, Timing lines: received (the first message) → claimed → handed over.
+      const timing = (outcome: 'ok' | 'failed') => {
+        const received = Date.parse(step.burst.messages[0]?.receivedAt ?? '') || claimedAt;
+        const done = now().getTime();
+        log.info('inbound burst handled', {
+          ...context,
+          messageCount: ids.length,
+          quietMs,
+          forced: force,
+          outcome,
+          receivedToClaimMs: claimedAt - received,
+          handlerMs: done - claimedAt,
+          totalMs: done - received,
+        });
+      };
       try {
-        const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
         await withLogContext(context, () => withSpan('inbound burst', context, () => handler.handleInbound(step.burst)));
+        timing('ok');
       } catch (error) {
+        timing('failed');
         // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
         await db.withBusiness('messaging', businessId, (tx) =>
           tx.update(schema.message).set({ claimedAt: null }).where(inArray(schema.message.id, ids)),

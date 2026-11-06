@@ -49,6 +49,7 @@ async function main(command: string | undefined) {
   const { app, db, close } = await createSimulatedApp({
     store,
     burstWake: jobBurstWake(queue),
+    burstQuietMs: config.burstQuietMs,
     databaseUrls: config.databaseUrls,
     poolMax: config.dbPoolMax,
     webhookSecret: config.webhookSecret,
@@ -60,7 +61,7 @@ async function main(command: string | undefined) {
     // POSTLY_AGENT_FLOWS: one writer, the web process, applies the switch at startup.
     ...(command === 'web' && config.agentFlows ? { agentFlows: config.agentFlows } : {}),
   });
-  log.info('composition', { models: config.models, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}), ...(command === 'web' && config.agentFlows ? { agentFlows: Object.entries(config.agentFlows).filter(([, on]) => on).map(([flow]) => flow).join(',') || 'none' } : {}) });
+  log.info('composition', { models: config.models, burstQuietMs: config.burstQuietMs, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}), ...(command === 'web' && config.agentFlows ? { agentFlows: Object.entries(config.agentFlows).filter(([, on]) => on).map(([flow]) => flow).join(',') || 'none' } : {}) });
 
   // Deployed processes sit behind Cloud Run's front end, one proxy hop (docs/security.md, D8).
   const deployed = config.env !== 'local' && config.env !== 'test';

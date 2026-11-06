@@ -62,6 +62,15 @@ variable "web_max_instances" {
     error_message = "web_max_instances must be between 1 and 10."
   }
 }
+variable "burst_quiet_ms" {
+  description = "The burst quiet window in ms (BURST_QUIET_MS, technical-design.md Operational defaults): inbound messages from one number merge until this long passes without a new one."
+  type        = number
+  default     = 20000
+  validation {
+    condition     = var.burst_quiet_ms >= 500 && var.burst_quiet_ms <= 60000 && floor(var.burst_quiet_ms) == var.burst_quiet_ms
+    error_message = "burst_quiet_ms must be a whole number from 500 to 60000."
+  }
+}
 variable "worker_max_instances" {
   type    = number
   default = 2
@@ -203,6 +212,7 @@ locals {
     BUSINESS_NUMBER  = var.business_number
     MEDIA_BUCKET     = module.storage.name
     DB_POOL_MAX      = tostring(local.pool_max)
+    BURST_QUIET_MS   = tostring(var.burst_quiet_ms)
     }, local.simulated ? {
     SIMULATOR_STORE = "postgres"
     SANDBOX_URL     = local.sandbox_url
