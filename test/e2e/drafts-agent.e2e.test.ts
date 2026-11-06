@@ -1,6 +1,6 @@
 /**
  * The drafts agent (WP-94; agent.md: create_draft, apply_change, Photo edits, Badge element, Fixes).
- * With the drafts flow switched to the agent for one business, a planned week is drafted on the
+ * With the drafts flow on the agent (always, outside the one-shot test compositions), a planned week is drafted on the
  * scripted agent (no real model) and rendered by the real design engine, so the report shows the posts
  * the owner would see: a single post with a straightened, cropped photo and a discount badge, and a
  * three-slide carousel in the numbered layout with a sticker. A caption that invents a price is
@@ -89,6 +89,7 @@ async function start(e2e: E2eHarness) {
   const app: AppFactory = ({ messaging, publishing, model: recorded }) => {
     ref.postly = createApp({
       db,
+      oneShotFlows: false,
       providers: { messaging, publishing, models: { google: recorded } },
       design,
       media: storage,
@@ -124,7 +125,7 @@ async function start(e2e: E2eHarness) {
   const [a1, a2, a3, a4] = await addPhotos(storage, businessId);
   const weekId = crypto.randomUUID();
   await db.withSystem('console', async (tx) => {
-    await tx.update(schema.business).set({ status: 'active', profile, style: 'warm', agentFlows: { drafts: true } }).where(eq(schema.business.id, businessId));
+    await tx.update(schema.business).set({ status: 'active', profile, style: 'warm' }).where(eq(schema.business.id, businessId));
     await tx.update(schema.conversationState).set({ step: 'processing_update' }).where(eq(schema.conversationState.businessId, businessId));
   });
   await db.withBusiness('workflow', businessId, async (tx) => {

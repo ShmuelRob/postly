@@ -14,7 +14,8 @@ import { startTelemetry } from './shared/telemetry-gcp.js';
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
 // by `npm run build` (tsconfig.build.json). Until the vendor adapters
 // land (WP-41) the composition uses the simulators (simulated mode, WP-51), so no run reaches a vendor
-// except Gemini with POSTLY_MODELS=vertex; stage and prod refuse to start (src/config.ts).
+// except Gemini, which every deployed environment calls through Vertex AI; stage and prod refuse to
+// start (src/config.ts).
 
 async function main(command: string | undefined) {
   setLogLabels({ process: command ?? 'unknown' });
@@ -56,12 +57,12 @@ async function main(command: string | undefined) {
     publicBaseUrl: config.publicBaseUrl,
     businessNumber: config.businessNumber,
     ...(process.env.SANDBOX_URL ? { sandboxUrl: process.env.SANDBOX_URL } : {}),
-    // POSTLY_MODELS=vertex: real Gemini, the other providers still simulated (agent.md, Running on dev).
+    // Deployed: real Gemini, the other providers still simulated (agent.md, Running on dev).
     ...(config.vertex ? { vertex: config.vertex } : {}),
-    // POSTLY_AGENT_FLOWS: one writer, the web process, applies the switch at startup.
-    ...(command === 'web' && config.agentFlows ? { agentFlows: config.agentFlows } : {}),
+    // The agents always run: onboarding, weekly and drafts, with no switch (agent.md, Running on dev).
+    oneShotFlows: false,
   });
-  log.info('composition', { models: config.models, burstQuietMs: config.burstQuietMs, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}), ...(command === 'web' && config.agentFlows ? { agentFlows: Object.entries(config.agentFlows).filter(([, on]) => on).map(([flow]) => flow).join(',') || 'none' } : {}) });
+  log.info('composition', { models: config.models, burstQuietMs: config.burstQuietMs, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}) });
 
   // Deployed processes sit behind Cloud Run's front end, one proxy hop (docs/security.md, D8).
   const deployed = config.env !== 'local' && config.env !== 'test';

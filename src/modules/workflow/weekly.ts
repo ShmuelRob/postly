@@ -36,6 +36,8 @@ export interface WeeklyDeps {
   now?: () => Date;
   /** Runs once the week's plan is stored: drafting (technical-design.md, Drafts flow). */
   afterPlan?(businessId: string, weekId: string): Promise<void>;
+  /** The one-shot weekly flow instead of the agent: only tests compose it (`oneShotFlows`), until A9's cleanup. */
+  oneShot?: boolean;
 }
 
 export interface WeeklyUpdates {
@@ -111,11 +113,11 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
         : {}),
     });
 
-  // The weekly-update agent (agent.md; WP-93), behind its agent_flows switch. The workflow gives it
+  // The weekly-update agent (agent.md; WP-93), always on with the full model layer. The workflow gives it
   // the state machine effects its tools need; the agent module never imports workflow.
   const models = deps.model;
   const agent: Agent | undefined =
-    models.costCap && models.spentSince && models.spentByAllSince && models.spentOnTurn
+    !deps.oneShot && models.costCap && models.spentSince && models.spentByAllSince && models.spentOnTurn
       ? createAgent({
           db,
           models: models as AgentDeps['models'],
@@ -260,7 +262,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
     const { businessId } = burst;
     const loaded = await loadBusiness(businessId);
     if (!loaded || loaded.business.status !== 'active') return;
-    const agentOn = agent !== undefined && (await agent.flowEnabled(businessId, 'weekly'));
+    const agentOn = agent !== undefined;
     const busy = loaded.step === 'processing_update';
     const answering = agentOn && loaded.step === 'awaiting_answer';
     if (loaded.step !== 'idle' && !busy && !answering) return;

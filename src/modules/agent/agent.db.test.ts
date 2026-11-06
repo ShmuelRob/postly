@@ -433,18 +433,6 @@ describe('the hand-off line', () => {
   });
 });
 
-describe('flows', () => {
-  it('are off by default, and a business override wins over the global switch', async () => {
-    const agent = agentWith();
-    expect(await agent.flowEnabled(businessId, 'weekly')).toBe(false);
-    await db.withBusiness('workflow', businessId, (tx) =>
-      tx.update(schema.business).set({ agentFlows: { weekly: true } }).where(and(eq(schema.business.id, businessId))),
-    );
-    expect(await agent.flowEnabled(businessId, 'weekly')).toBe(true);
-    expect(await agent.flowEnabled(businessId, 'drafts')).toBe(false);
-  });
-});
-
 describe('module direction (agent.md)', () => {
   it('the agent module never imports workflow', () => {
     const dir = new URL('./', import.meta.url);

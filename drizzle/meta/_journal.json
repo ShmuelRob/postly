@@ -169,6 +169,13 @@
       "when": 1794441608000,
       "tag": "0023_gemini_3_5_flash_lite",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794441609000,
+      "tag": "0024_drop_agent_flows",
+      "breakpoints": true
     }
   ]
 }

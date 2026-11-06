@@ -57,7 +57,9 @@ interface ModelInfo {
 /**
  * The models the adapter may call, with Vertex AI's standard pay-as-you-go prices for up to 200K input
  * tokens (https://cloud.google.com/vertex-ai/generative-ai/pricing, read 2026-11-06). The output price
- * covers the response and the reasoning. A model missing here is refused, so the Gemini 2.5 models
+ * covers the response and the reasoning. PROVISIONAL: check before launch. Audio input is counted at the
+ * text rate; the table lists one input price for text, image, video and audio on 3.5 Flash-Lite, but a
+ * model added here may bill audio higher. A model missing here is refused, so the Gemini 2.5 models
  * Vertex retired on 2026-10-20 can no longer be called.
  */
 const MODELS: Record<string, ModelInfo> = {

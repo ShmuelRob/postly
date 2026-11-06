@@ -1,39 +1,33 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseAgentFlows } from './agent-flows.js';
 
-// The model and the agent flows per environment (agent.md, Running on dev; docs/deployment.md, "Real
-// Gemini and the agent flows on dev"): Terraform must set what src/config.ts reads, real Gemini and
-// the flows only where dev's tfvars ask for them, and Vertex AI access for web and worker only.
+// The model per environment (agent.md, Running on dev; docs/deployment.md, "Real Gemini and the agents
+// on dev"): Terraform sets what src/config.ts reads, Vertex AI everywhere with no switch and no agent
+// flow switch, and Vertex AI access for web and worker only.
 
 const read = (path: string) => readFileSync(new URL(`../infra/${path}`, import.meta.url), 'utf8');
 const models = read('modules/stack/models.tf');
 
-describe('models and agent flows in Terraform', () => {
-  it('sets POSTLY_MODELS, VERTEX_* with vertex, and POSTLY_AGENT_FLOWS when flows are listed, for web and worker', () => {
-    expect(models).toMatch(/POSTLY_MODELS\s*=\s*var\.models/);
-    expect(models).toMatch(/VERTEX_PROJECT\s*=\s*var\.project_id,\s*VERTEX_LOCATION\s*=\s*var\.vertex_location/);
-    expect(models).toMatch(/POSTLY_AGENT_FLOWS\s*=\s*join\(",", var\.agent_flows\)/);
+describe('the model in Terraform', () => {
+  it('sets VERTEX_PROJECT and VERTEX_LOCATION for web and worker in every environment, with no switch', () => {
+    expect(models).toMatch(/model_env\s*=\s*\{\s*VERTEX_PROJECT\s*=\s*var\.project_id,\s*VERTEX_LOCATION\s*=\s*var\.vertex_location\s*\}/);
     expect(read('modules/stack/main.tf')).toMatch(/app_env = merge\([\s\S]*?local\.model_env\)/);
   });
 
-  it('defaults to the model simulator with no flows; only dev passes the variables', () => {
-    expect(models).toMatch(/variable "models"[\s\S]*?default\s*=\s*"simulator"/);
-    expect(models).toMatch(/variable "agent_flows"[\s\S]*?default\s*=\s*\[\]/);
-    // Gemini 3.5 Flash-Lite is served only on global and the us/eu multi-regions (agent.md, Running on dev).
-    expect(models).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
-    expect(read('environments/dev/variables.tf')).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
-    for (const env of ['stage', 'prod']) expect(read(`environments/${env}/main.tf`)).not.toMatch(/\b(models|agent_flows)\s*=/);
-    expect(read('environments/dev/main.tf')).toMatch(/agent_flows\s*=\s*var\.agent_flows/);
+  it('has no models or agent_flows variable, and sets no POSTLY_MODELS or POSTLY_AGENT_FLOWS, anywhere', () => {
+    const files = ['modules/stack/models.tf', 'modules/stack/main.tf', 'environments/dev/main.tf', 'environments/dev/variables.tf', 'environments/dev/terraform.tfvars.example'];
+    for (const env of ['stage', 'prod']) files.push(`environments/${env}/main.tf`);
+    for (const file of files) {
+      const text = read(file);
+      expect(text, file).not.toMatch(/variable "(models|agent_flows)"/);
+      expect(text, file).not.toMatch(/^\s*(models|agent_flows)\s*=/m);
+      expect(text, file).not.toMatch(/POSTLY_MODELS|POSTLY_AGENT_FLOWS/);
+    }
   });
 
-  it("dev's example turns on real Gemini and all three flows, in a form the app accepts", () => {
-    const example = read('environments/dev/terraform.tfvars.example');
-    expect(example).toMatch(/^models\s*=\s*"vertex"$/m);
-    const flows = example.match(/^agent_flows\s*=\s*\[(.*)\]$/m)?.[1];
-    expect(flows).toBeDefined();
-    const names = [...flows!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
-    expect(parseAgentFlows(names.join(','))).toEqual({ onboarding: true, weekly: true, drafts: true });
+  it('defaults the location to the EU multi-region (Gemini 3.5 Flash-Lite is served only on global, eu and us)', () => {
+    expect(models).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
+    expect(read('environments/dev/variables.tf')).toMatch(/variable "vertex_location"[\s\S]*?default\s*=\s*"eu"/);
   });
 
   it('grants Vertex AI to the web and worker accounts only', () => {
@@ -52,8 +46,8 @@ describe('models and agent flows in Terraform', () => {
     for (const env of ['stage', 'prod']) expect(read(`environments/${env}/main.tf`)).not.toMatch(/burst_quiet_ms/);
   });
 
-  it('adds a monthly Vertex AI budget only with real Gemini and a billing account', () => {
-    expect(models).toMatch(/model_budget\s*=\s*var\.models == "vertex" && var\.billing_account != null/);
+  it('adds a monthly Vertex AI budget only with a billing account', () => {
+    expect(models).toMatch(/model_budget\s*=\s*var\.billing_account != null/);
     expect(models).toMatch(/resource "google_billing_budget" "model" \{\s*count\s*=\s*local\.model_budget \? 1 : 0/);
     expect(read('environments/dev/variables.tf')).toMatch(/variable "model_budget_usd"[\s\S]*?default\s*=\s*50/);
   });

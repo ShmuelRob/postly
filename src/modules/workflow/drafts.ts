@@ -43,7 +43,7 @@ export const AGENT_QUESTION_PREFIX = 'agent:drafts:';
 export interface DraftsDeps {
   db: Database;
   workflow: Workflow;
-  /** The agent (WP-94): with it, and the drafts flow switched on in agent_flows, drafting and fixes run on it. */
+  /** The agent (WP-94): with it (every deployed composition), drafting and fixes run on it; without it, the one-shot flow (tests only, `oneShotFlows`). */
   agent?: Agent;
   /** Whether the week that starts on this Sunday (a UTC midnight) holds a holiday: the holiday badge. */
   holidayInWeek?: (weekStart: Date) => boolean;
@@ -597,12 +597,12 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     await change(burst, business, target, text);
   }
 
-  // The drafts agent (WP-94; agent.md, Agents and How it fits the state machines), behind its
-  // agent_flows switch. The agent module never imports workflow: its tools reach the drafts code
+  // The drafts agent (WP-94; agent.md, Agents and How it fits the state machines), on whenever it is
+  // given. The agent module never imports workflow: its tools reach the drafts code
   // below through the events the app gives it (`agentDraft`, `agentChange`, `agentAsked`).
 
-  /** Whether the drafts flow runs on the agent for this business. */
-  const agentOn = async (businessId: string) => deps.agent !== undefined && (await deps.agent.flowEnabled(businessId, 'drafts'));
+  /** Whether the drafts flow runs on the agent: whenever the composition gives it one. */
+  const agentOn = async (_businessId: string) => deps.agent !== undefined;
 
   /** Per business: whether a draft could not be sent because the window had closed, during the running turn. */
   const agentRuns = new Map<string, Run>();
