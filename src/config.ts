@@ -30,8 +30,14 @@ const Env = z.object({
   POSTLY_MODELS: z.enum(['simulator', 'vertex'], { error: 'POSTLY_MODELS must be "simulator" or "vertex"' }).default('simulator'),
   /** With POSTLY_MODELS=vertex: the project Vertex AI bills. */
   VERTEX_PROJECT: z.string().min(1).optional(),
-  /** With POSTLY_MODELS=vertex: the endpoint's region (Vertex serves no Gemini from me-west1), or `global`. */
-  VERTEX_LOCATION: z.string().regex(/^(global|[a-z]+-[a-z]+\d+)$/, 'VERTEX_LOCATION must be global or a region such as europe-west4').default('europe-west4'),
+  /**
+   * With POSTLY_MODELS=vertex: the endpoint's location. `eu` (the EU multi-region) by default: Vertex serves
+   * no Gemini from me-west1, and Gemini 3.5 Flash-Lite only on `global` and the `eu`/`us` multi-regions.
+   */
+  VERTEX_LOCATION: z
+    .string()
+    .regex(/^(global|eu|us|[a-z]+-[a-z]+\d+)$/, 'VERTEX_LOCATION must be global, eu, us or a region such as europe-west4')
+    .default('eu'),
   /** Which flows run on the agent for every business; written into system_control at web startup. Unset: left alone. */
   POSTLY_AGENT_FLOWS: z.string().optional(),
   /** The server and database, with no user or password: each login gets its own. */

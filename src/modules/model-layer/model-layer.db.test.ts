@@ -38,12 +38,11 @@ beforeEach(async () => {
 });
 
 describe('seed rows', () => {
-  it('runs every task on a Gemini Flash model through Google (0010), and the agents on Flash Lite (0017)', async () => {
+  it('runs every task on Gemini 3.5 Flash-Lite through Google, with no fallback (0023)', async () => {
     const rows = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelTaskConfig));
     expect(rows).toHaveLength(MODEL_TASK_NAMES.length);
     for (const row of rows) {
-      const model = row.task.startsWith('agent_') ? 'gemini-2.5-flash-lite' : 'gemini-2.5-flash';
-      expect([row.task, row.provider, row.model]).toEqual([row.task, 'google', model]);
+      expect([row.task, row.provider, row.model]).toEqual([row.task, 'google', 'gemini-3.5-flash-lite']);
       expect(row.fallbackModel).toBeNull();
     }
   });
@@ -69,7 +68,7 @@ describe('model layer run', () => {
     await expect(layer().run(businessId, 'intent_detection', intent)).resolves.toEqual(validIntent);
 
     const [call] = sim.callsFor('intent_detection');
-    expect(call?.request).toMatchObject({ task: 'intent_detection', model: 'gemini-2.5-flash', temperature: 0, input: intent });
+    expect(call?.request).toMatchObject({ task: 'intent_detection', model: 'gemini-3.5-flash-lite', temperature: 0, input: intent });
     expect((call?.request as { prompt: string }).prompt).toContain('אין כוונה של אישור');
 
     const runs = await runsOf(businessId);
@@ -194,7 +193,7 @@ describe('config limits', () => {
     await createModelLayer({ db, providers: { google: sim, backup } }).run(businessId, 'intent_detection', intent);
     const runs = await runsOf(businessId);
     expect(runs.map((r) => [r.provider, r.model, r.valid])).toEqual([
-      ['google', 'gemini-2.5-flash', false],
+      ['google', 'gemini-3.5-flash-lite', false],
       ['backup', 'backup-model', true],
     ]);
   });

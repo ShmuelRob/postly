@@ -16,12 +16,12 @@ variable "models" {
 }
 
 variable "vertex_location" {
-  description = "The Vertex AI endpoint's region for Gemini (VERTEX_LOCATION). Vertex serves no Gemini from me-west1; europe-west4 serves Flash and Flash Lite. \"global\" also works."
+  description = "The Vertex AI endpoint's location for Gemini (VERTEX_LOCATION). Vertex serves no Gemini from me-west1, and Gemini 3.5 Flash-Lite only on global and the eu/us multi-regions; eu keeps processing in the EU."
   type        = string
-  default     = "europe-west4"
+  default     = "eu"
   validation {
-    condition     = can(regex("^(global|[a-z]+-[a-z]+[0-9]+)$", var.vertex_location))
-    error_message = "vertex_location must be global or a region such as europe-west4."
+    condition     = can(regex("^(global|eu|us|[a-z]+-[a-z]+[0-9]+)$", var.vertex_location))
+    error_message = "vertex_location must be global, eu, us or a region such as europe-west4."
   }
 }
 
