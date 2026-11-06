@@ -18,7 +18,7 @@ import { openH5Db } from '../h5/db.js';
 import { subjectApp, subjectExtras } from '../h5/subject.js';
 import { createH5World, type H5World } from '../h5/world.js';
 import { e2eTest } from './harness/index.js';
-import { createTestIap, TEST_IAP_AUDIENCE } from './harness/iap.js';
+import { createTestIap, TEST_CLOUD_RUN_IAP_AUDIENCE, TEST_IAP_AUDIENCE } from './harness/iap.js';
 
 const OWNER = '+972501233441';
 const BUSINESS_PHONE = '+972501234561';
@@ -117,6 +117,70 @@ e2eTest('a team member signed in through IAP pauses all publishing: the pause na
   } finally {
     await server.close();
     // The pause is shared by the whole database: never leave it on for the next case.
+    await db.setGlobalPause(false);
+    await world?.close();
+    await db.close();
+  }
+});
+
+// Dev's console sits behind Cloud Run's built-in IAP (docs/security.md, "Console exposure"), with no
+// load balancer: IAP signs the assertion for the Cloud Run service, and the browser's Host is the
+// service's run.app URL. The console accepts only that audience and that host.
+const CLOUD_RUN_HOST = 'postly-dev-console-123456789012.me-west1.run.app';
+const SANDBOX_AUDIENCE = '/projects/123456789012/locations/me-west1/services/postly-dev-sandbox';
+
+e2eTest('dev console behind Cloud Run IAP: only an assertion for the console service on its run.app URL gets in, and the action names the signed-in account', { timeout: 90_000 }, async ({ e2e }) => {
+  const clock = () => new Date(START);
+  const messaging = new MessagingSimulator({ businessNumber: BUSINESS_PHONE });
+  const db = openH5Db();
+  let world: H5World | undefined;
+  await e2e.start({
+    providers: { messaging, publishing: new PublishingSimulator({ now: clock }), model, payment, renderer },
+    app: async (p) => {
+      world = await createH5World({ messaging: p.messaging, publishing: p.publishing, now: clock, databaseUrls: inject('databaseUrls') });
+      return world.app;
+    },
+    ownerPhone: OWNER,
+    businessPhone: BUSINESS_PHONE,
+    now: clock,
+  });
+  const iap = createTestIap();
+  const actions: object[] = [];
+  const server = buildConsoleServer({
+    console: createConsole(db.db, subjectApp(world!).workflow),
+    auth: { mode: 'iap', verifier: createIapVerifier({ audience: TEST_CLOUD_RUN_IAP_AUDIENCE, fetchKeys: async () => iap.keys }) },
+    allowedHosts: [CLOUD_RUN_HOST],
+    log: (line) => void actions.push(line),
+  });
+  const control = async () => (await db.db.withSystem('console', (tx) => tx.select().from(schema.systemControl)))[0];
+  const consolePost = (path: string, assertion: string, host = CLOUD_RUN_HOST) =>
+    server.inject({ method: 'POST', url: `/console/api${path}`, headers: { host, origin: `https://${host}`, 'content-type': 'application/json', [IAP_HEADER]: assertion }, payload: JSON.stringify({ reason: 'checking dev sign-in' }) });
+  const forConsole = (email = TEAM_MEMBER) => iap.assertion(email, { claims: { aud: TEST_CLOUD_RUN_IAP_AUDIENCE } });
+
+  try {
+    // A real IAP assertion, but for the sandbox service: refused, nothing changes.
+    expect((await consolePost('/system/pause', iap.assertion(TEAM_MEMBER, { claims: { aud: SANDBOX_AUDIENCE } }))).statusCode).toBe(401);
+    // The load balancer's audience is not this console's either.
+    expect((await consolePost('/system/pause', iap.assertion(TEAM_MEMBER))).statusCode).toBe(401);
+    // The service's other URL (Cloud Run's hashed one) is not the console's host.
+    expect((await consolePost('/system/pause', forConsole(), 'postly-dev-console-abcdefghij-zf.a.run.app')).statusCode).toBe(403);
+    expect((await control())?.publishingPaused ?? false).toBe(false);
+
+    // Signed in on the run.app URL: the page names the account, and the pause is recorded with it.
+    const page = await server.inject({ method: 'GET', url: '/console', headers: { host: CLOUD_RUN_HOST, [IAP_HEADER]: forConsole() } });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain(`Signed in as ${TEAM_MEMBER}`);
+    expect((await consolePost('/system/pause', forConsole())).statusCode).toBe(200);
+    expect(await control()).toMatchObject({ publishingPaused: true, pausedBy: TEAM_MEMBER });
+    expect((await consolePost('/system/resume', forConsole())).statusCode).toBe(200);
+    expect(await control()).toMatchObject({ publishingPaused: false });
+
+    expect(actions).toEqual([
+      expect.objectContaining({ msg: 'console action', actor: TEAM_MEMBER, path: '/console/api/system/pause', status: 200 }),
+      expect.objectContaining({ msg: 'console action', actor: TEAM_MEMBER, path: '/console/api/system/resume', status: 200 }),
+    ]);
+  } finally {
+    await server.close();
     await db.setGlobalPause(false);
     await world?.close();
     await db.close();

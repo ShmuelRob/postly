@@ -9,20 +9,20 @@
 
 ## חשיפת הקונסולה וכניסת צוות (WP-82)
 - הקונסולה רצה כתהליך נפרד (`main.js console`) וכשירות Cloud Run נפרד; שירות ה-web הציבורי לא רושם את נתיבי הקונסולה (מחזיר 404).
-- הכניסה היא דרך Google IAP: ‏load balancer חיצוני ב-HTTPS, ואחריו backend service עם IAP, ‏serverless NEG ושירות הקונסולה. ה-ingress של הקונסולה הוא "פנימי ו-load balancer", בלי `allUsers`; רק סוכן השירות של IAP מקבל `run.invoker`.
-- מי נכנס: המשתנה `console_members` ב-Terraform (למשל `user:x@gmail.com` או `group:...`). ברירת המחדל ריקה.
-- גם האפליקציה בודקת כל בקשה: את ה-JWT בכותרת `x-goog-iap-jwt-assertion` (חתימה מול המפתחות של Google, ה-audience מההגדרות, תוקף, ואימייל). בלי JWT תקין התשובה 401; בלי audience מוגדר כל בקשה נדחית.
+- הכניסה היא דרך Google IAP. ב-stage וב-prod: ‏load balancer חיצוני ב-HTTPS, ואחריו backend service עם IAP, ‏serverless NEG ושירות הקונסולה, וה-ingress הוא "פנימי ו-load balancer". ב-dev: ‏IAP המובנה של Cloud Run על השירות עצמו (`cloud_run_iap`), בכתובת ה-run.app, בלי load balancer, דומיין או עלות, וה-ingress הוא "all" (IAP בודק כל בקשה קודם). בשני המקרים אין `allUsers`, ורק סוכן השירות של IAP מקבל `run.invoker`.
+- מי נכנס: המשתנה `console_members` ב-Terraform (למשל `user:x@gmail.com` או `group:...`), על ה-backend service או על שירות הקונסולה בלבד. ברירת המחדל ריקה ב-stage וב-prod, וב-dev היא `sandbox_invokers`. Terraform מסרב ל-`allUsers` ול-`allAuthenticatedUsers`.
+- גם האפליקציה בודקת כל בקשה: את ה-JWT בכותרת `x-goog-iap-jwt-assertion` (חתימה מול המפתחות של Google, ה-audience מההגדרות בדיוק, תוקף, ואימייל). ה-audience הוא backend service מאחורי load balancer, או שירות Cloud Run עם IAP המובנה; token ש-IAP חתם לשירות אחר (למשל ה-sandbox) נדחה. בלי JWT תקין התשובה 401; בלי audience מוגדר כל בקשה נדחית.
 - האימייל המאומת הוא מבצע הפעולה (D4): בהשהיה הכללית, בשינוי מחיר, בשורות ה-audit של אירועי workflow מהקונסולה (`team:<email>`), בפרטי העברה לאדם, ובשורת לוג לכל POST (כולל ביטול). השדה `by` בגוף הבקשה נשמר רק כהערה.
 - מקומית ובבדיקות: `CONSOLE_AUTH=dev-bypass` (ברירת המחדל ב-local ו-test), רק loopback, והמבצע הוא `CONSOLE_DEV_ACTOR`. תהליך עם dev-bypass ב-stage או prod לא עולה.
-- ההגנות מ-WP-80 (Host, ‏Origin, ‏JSON) נשארות.
-- דומיין: המשתנה `console_domain` עם תעודה מנוהלת של Google. אפשר להתחיל בלי דומיין: Terraform משתמש בשם `sslip.io` שנגזר מכתובת ה-IP, רק ל-dev.
-- OAuth: מסך הסכמה מסוג External ו-OAuth client נוצרים פעם אחת ידנית בכל פרויקט (ה-API של Google לזה הוצא משימוש). ה-client id נכנס ל-`console_iap_client_id` והסוד ל-Secret Manager. עד שה-client id מוגדר, Terraform לא יוצר load balancer והקונסולה לא נגישה.
-- עלות: כ-18 דולר בחודש לכל סביבה עבור ה-load balancer.
+- ההגנות מ-WP-80 (Host, ‏Origin, ‏JSON) נשארות; ב-dev ה-Host המותר הוא כתובת ה-run.app הקבועה של הקונסולה.
+- דומיין (stage ו-prod): המשתנה `console_domain` עם תעודה מנוהלת של Google. אפשר להתחיל בלי דומיין: Terraform משתמש בשם `sslip.io` שנגזר מכתובת ה-IP, רק ל-dev.
+- OAuth: מסך הסכמה מסוג External ו-OAuth client נוצרים פעם אחת ידנית בכל פרויקט (ה-API של Google לזה הוצא משימוש). ה-client id נכנס ל-`console_iap_client_id` והסוד ל-Secret Manager. עד שה-client id מוגדר, Terraform לא יוצר load balancer והקונסולה לא נגישה. ב-dev ה-client נוצר ב-Cloud console ‏("Auto generate credentials") ונשמר בהגדרות ה-IAP של הפרויקט, כך שאין client id או סוד ב-Terraform.
+- עלות: כ-18 דולר בחודש לכל סביבה עבור ה-load balancer; ב-dev אפס.
 
 ## חשיפת ה-sandbox
 - ה-sandbox של dev ‏(WP-51) משחק את בעל העסק על הסימולטורים, קיים רק ב-dev, ואף פעם לא ציבורי: Terraform מסרב ל-`allUsers` ול-`allAuthenticatedUsers` ב-`sandbox_invokers`.
-- דרך ה-proxy (ברירת המחדל): לחשבונות ב-`sandbox_invokers` יש `run.invoker` על שירות ה-sandbox בלבד, ו-`gcloud run services proxy` מוסיף את ה-token שלהם.
-- בדפדפן (כש-`sandbox_iap_client_id` מוגדר): IAP המובנה של Cloud Run, בלי load balancer ובלי עלות. החשבונות ב-`sandbox_invokers` מקבלים `iap.httpsResourceAccessor` על השירות בלבד, וסוכן השירות של IAP מקבל `run.invoker`. ה-OAuth client הוא של הפרויקט (מסך הסכמה External), כמו בקונסולה; הסוד נקרא ל-state של Terraform. ה-client של gcloud רשום כ-programmatic client כדי שה-proxy ימשיך לעבוד.
+- בדפדפן (`cloud_run_iap`, ברירת המחדל ב-dev): IAP המובנה של Cloud Run, בלי load balancer ובלי עלות. החשבונות ב-`sandbox_members` (ברירת מחדל: `sandbox_invokers`) מקבלים `iap.httpsResourceAccessor` על השירות בלבד, וסוכן השירות של IAP מקבל `run.invoker`. ה-OAuth client הוא של הפרויקט (מסך הסכמה External), נוצר פעם אחת ב-Cloud console ונשמר בהגדרות ה-IAP של הפרויקט; אין סוד ב-Terraform.
+- דרך ה-proxy: לחשבונות ב-`sandbox_invokers` יש `run.invoker` על שירות ה-sandbox בלבד, ו-`gcloud run services proxy` מוסיף את ה-token שלהם. כש-IAP פעיל, IAP בודק קודם וה-client של gcloud כבר לא רשום, ולכן ה-proxy עלול לא לעבור; זה רק מצמצם גישה.
 - האפליקציה לא בודקת את הכותרת החתומה של IAP (אין בה התנהגות לפי משתמש). נגד CSRF היא דוחה `POST` ל-`/api/` עם `Origin` של host אחר (403).
 
 ## חובות טכניים (לפי סדר חשיבות)

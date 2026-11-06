@@ -3,16 +3,21 @@ import { z } from 'zod';
 
 /**
  * Verifies the signed header Identity-Aware Proxy adds to every request it lets through to the
- * console (docs/security.md, "Console exposure"). The console checks it itself even though only the
- * load balancer can reach the service: a mistake in ingress or IAM must not open the console, and
+ * console (docs/security.md, "Console exposure"). The console checks it itself even though only IAP
+ * can reach the service: a mistake in ingress or IAM must not open the console, and
  * the email in it is the actor of every console action (D4).
  */
 
 export const IAP_HEADER = 'x-goog-iap-jwt-assertion';
 export const IAP_ISSUER = 'https://cloud.google.com/iap';
 export const IAP_KEYS_URL = 'https://www.gstatic.com/iap/verify/public_key-jwk';
-/** `/projects/<project number>/global/backendServices/<backend service id>`. */
-export const IAP_AUDIENCE_PATTERN = /^\/projects\/\d+\/global\/backendServices\/\d+$/;
+/**
+ * The audience IAP signs: `/projects/<project number>/global/backendServices/<backend service id>`
+ * behind a load balancer (stage, prod), `/projects/<project number>/locations/<region>/services/<service>`
+ * with Cloud Run's built-in IAP (dev). The verifier still requires the one configured value exactly.
+ */
+export const IAP_AUDIENCE_PATTERN = /^\/projects\/\d+\/(?:global\/backendServices\/\d+|locations\/[a-z]+-[a-z]+\d+\/services\/[a-z](?:[-a-z0-9]*[a-z0-9])?)$/;
+export const IAP_AUDIENCE_FORMS = '/projects/<number>/global/backendServices/<id> or /projects/<number>/locations/<region>/services/<service>';
 
 const CLOCK_SKEW_SECONDS = 30;
 const KEYS_MAX_AGE_MS = 60 * 60_000;
@@ -76,7 +81,7 @@ function decodeJson(part: string): unknown {
 
 export function createIapVerifier(options: IapVerifierOptions): IapVerifier {
   if (!IAP_AUDIENCE_PATTERN.test(options.audience)) {
-    throw new Error(`IAP audience must be /projects/<number>/global/backendServices/<id>, got ${JSON.stringify(options.audience)}`);
+    throw new Error(`IAP audience must be ${IAP_AUDIENCE_FORMS}, got ${JSON.stringify(options.audience)}`);
   }
   const fetchKeys = options.fetchKeys ?? fetchIapKeys;
   const now = options.now ?? Date.now;

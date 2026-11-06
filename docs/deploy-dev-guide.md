@@ -72,7 +72,7 @@ Roughly **280 to 330 USD a month**, almost all of it fixed, because dev is sized
 | Cloud Run web | 1 vCPU, 2 GiB, 1 instance always on, CPU always allocated | (1 × 0.000018 + 2 × 0.000002) USD/s × 2.63 M s | ~58 to 65 |
 | Cloud Run worker | 2 vCPU, 4 GiB, 1 instance always on, CPU always allocated | (2 × 0.000018 + 4 × 0.000002) USD/s × 2.63 M s | ~115 to 130 |
 | Cloud Run console | scales to zero, CPU only during requests | used rarely | ~0 |
-| Console load balancer (IAP sign-in) | one global forwarding rule, created only once `console_iap_client_id` is set | ~0.025 USD/h × 730 h | ~18 |
+| Console and sandbox sign-in | Cloud Run's built-in IAP, no load balancer | free | 0 |
 | Secret Manager, Artifact Registry, logs (7 days), monitoring, VPC | small | | ~5 to 10 |
 
 The worker is the biggest line. Gemini calls (Vertex AI) are billed per use and are near zero on the simulators.
@@ -228,39 +228,23 @@ curl.exe -s "$(gcloud run services describe postly-dev-web --region me-west1 --f
 
 returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no public page.
 
-**The internal console.** It is the `postly-dev-console` service, reached through an HTTPS load balancer where you sign in with your Google account (IAP; [security.md](security.md#console-exposure)). Its own run.app URL refuses requests from the internet. Terraform builds the load balancer only after a one-time manual OAuth setup, so until you do it the console is unreachable (the safe default) and costs nothing. When you want it:
+**The internal console and the sandbox, in a browser.** Both open in a browser or on a phone, with Google sign-in through Cloud Run's built-in IAP on each service (no load balancer, no domain, no cost; [deployment.md](deployment.md#browser-sign-in-on-dev)). The console is `postly-dev-console`, the team's internal console ([security.md](security.md#console-exposure)); the sandbox, `postly-dev-sandbox`, lets you use dev by hand: you play the owner in a WhatsApp-style chat, see the mock Instagram and Facebook feed, and pay on the mock checkout page ([deployment.md](deployment.md#the-sandbox)).
 
-1. Do the OAuth consent screen (External), the OAuth client (Web application, with the IAP redirect URI), the client secret and the IAP service agent, as in [deployment.md](deployment.md#console-sign-in-one-time-steps).
-2. Add to `infra/environments/dev/terraform.tfvars`:
+1. Put your account in `terraform.tfvars`: `sandbox_invokers = ["user:<your-google-account>@gmail.com"]`. It is also who may open the console and the sandbox in a browser (`console_members` and `sandbox_members` default to it).
+2. Once, in the Cloud console, make the project's OAuth client: Cloud Run → `postly-dev-sandbox` → **Security** → tick **Identity-Aware Proxy (IAP)** → **Save** → **Edit policy** → **Configure in IAP** → **Configure consent screen** (Audience **External**, then add your Gmail under Audience → Test users) → **Auto generate credentials** → **Save**. This is the one step Terraform cannot do ([why](deployment.md#browser-sign-in-on-dev)).
+3. Delete any old `sandbox_iap_client_id`, `console_iap_client_id` or `console_domain` lines from `terraform.tfvars`. `terraform -chdir=infra/environments/dev plan -out=dev.tfplan`, review it (if the console's load balancer or the sandbox's `google_iap_settings` were applied before, the plan destroys them; that is expected), and `terraform -chdir=infra/environments/dev apply dev.tfplan`.
+4. Open the outputs and sign in with that account:
 
-   ```hcl
-   console_iap_client_id = "<CLIENT_ID>.apps.googleusercontent.com"
-   console_members       = ["user:<your-google-account>@gmail.com"]
-   # console_domain      = "console-dev.<your domain>"   # optional; unset uses <ip>.sslip.io
+   ```powershell
+   terraform -chdir=infra/environments/dev output -raw console_url
+   terraform -chdir=infra/environments/dev output -raw sandbox_url
    ```
 
-3. `terraform -chdir=infra/environments/dev plan -out=dev.tfplan`, review it, and `terraform -chdir=infra/environments/dev apply dev.tfplan`.
-4. With a domain, point an `A` record at the output `console_ip`. Without one, the output `console_url` is already an `sslip.io` name (fine for dev; use a real domain for stage and prod). The managed certificate needs up to about an hour before HTTPS works.
-5. Open `console_url` (it ends in `/console`) and sign in. An account not in `console_members` gets IAP's "You don't have access" page.
+   Any other account gets IAP's "You don't have access" page. If the apply fails on the IAP service agent's `run.invoker` grant, run `gcloud beta services identity create --service=iap.googleapis.com --project $PROJECT` and apply again.
 
-This adds about 18 USD a month.
+In the sandbox, the earlier conversation stays until you press **הרשמה חדשה מהמספר הזה** at the top of the page.
 
-**The sandbox.** `postly-dev-sandbox` lets you use dev by hand: you play the owner in a WhatsApp-style chat, see the mock Instagram and Facebook feed, and pay on the mock checkout page ([deployment.md](deployment.md#the-sandbox)). Put your account in `sandbox_invokers = ["user:<your-google-account>@gmail.com"]` in `terraform.tfvars`. Then either:
-
-- **From a browser or a phone (no port forward).** Do steps 1 to 4 of the console's OAuth setup ([deployment.md](deployment.md#console-sign-in-one-time-steps); the same OAuth client serves both, and the console's load balancer is not needed), then add
-
-  ```hcl
-  sandbox_iap_client_id = "<CLIENT_ID>.apps.googleusercontent.com"
-  ```
-
-  plan, review and apply, and open the `sandbox_url` output:
-
-  ```powershell
-  terraform -chdir=infra/environments/dev output -raw sandbox_url
-  ```
-
-  Sign in with that Google account. Any other account gets IAP's "You don't have access" page. This costs nothing extra. If the apply fails on the IAP service agent's `run.invoker` grant, run `gcloud beta services identity create --service=iap.googleapis.com --project $PROJECT` and apply again.
-- **Through the proxy (works either way).**
+- **The sandbox through the proxy (only with `cloud_run_iap = false`).**
 
   ```powershell
   gcloud run services proxy postly-dev-sandbox --region me-west1 --port 8081

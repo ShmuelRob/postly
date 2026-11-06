@@ -7,9 +7,10 @@
 body { margin: 0; background: var(--bg); }
 .layout { display: grid; grid-template-columns: minmax(340px, 420px) minmax(340px, 1fr) 300px; grid-template-rows: auto 1fr;
   gap: 16px; padding: 16px; height: 100vh; }
-.top { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; }
+.top { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.sign-up { margin-inline-start: auto; padding: 8px 14px; border-radius: 18px; border: 0; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 .tag { color: var(--muted); font-size: 14px; }
-.error { color: #b3261e; font-size: 13px; margin-inline-start: auto; }
+.error { color: #b3261e; font-size: 13px; }
 section, aside { background: var(--panel); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); min-height: 0; }
 .chat { display: flex; flex-direction: column; }
 .chat-head { background: var(--wa-head); color: #fff; display: flex; gap: 10px; align-items: center; padding: 10px 14px; }
@@ -62,3 +63,10 @@ section, aside { background: var(--panel); border-radius: 14px; overflow: hidden
 .checkout .actions { display: flex; gap: 8px; margin: 16px 0; }
 .checkout .actions button { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #888; cursor: pointer; }
 .checkout .actions button:first-child { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+
+/* A phone: one column (chat, then feed, then state), no horizontal scroll. */
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; height: auto; min-height: 100vh; padding: 8px; gap: 8px; }
+  .chat { height: 75vh; }
+  .feed { max-height: 80vh; }
+}

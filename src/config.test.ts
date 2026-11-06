@@ -209,6 +209,12 @@ describe('process configuration', () => {
       expect(loadConfig({ ...base, CONSOLE_AUTH: 'iap', CONSOLE_IAP_AUDIENCE: AUDIENCE }).console).toEqual({ auth: 'iap', iapAudience: AUDIENCE });
     });
 
+    it('accepts the audience Cloud Run’s built-in IAP signs, with the run.app host (dev)', () => {
+      const cloudRun = '/projects/123456789012/locations/me-west1/services/postly-dev-console';
+      const host = 'postly-dev-console-123456789012.me-west1.run.app';
+      expect(loadConfig({ ...dev, CONSOLE_IAP_AUDIENCE: cloudRun, CONSOLE_HOST: host }).console).toEqual({ auth: 'iap', iapAudience: cloudRun, host });
+    });
+
     it('refuses an audience that is not a backend service path, and an unknown mode', () => {
       expect(() => loadConfig({ ...dev, CONSOLE_IAP_AUDIENCE: 'postly-console' })).toThrow('CONSOLE_IAP_AUDIENCE');
       expect(() => loadConfig({ ...base, CONSOLE_AUTH: 'none' })).toThrow('CONSOLE_AUTH');

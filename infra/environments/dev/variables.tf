@@ -18,13 +18,23 @@ variable "alert_email" {
   default = null
 }
 variable "sandbox_invokers" {
-  description = "Who may open the dev sandbox (in a browser with sandbox_iap_client_id, or through gcloud run services proxy), for example [\"user:you@example.com\"]."
+  description = "Who may open the dev sandbox through gcloud run services proxy, and by default in a browser and the console, for example [\"user:you@gmail.com\"]."
   type        = list(string)
   default     = []
 }
-variable "sandbox_iap_client_id" {
-  description = "The OAuth client id made by hand (the console's works); set, the sandbox opens at sandbox_url in a browser through IAP (docs/deployment.md)."
-  type        = string
+variable "cloud_run_iap" {
+  description = "Google sign-in in a browser for the console and the sandbox, through Cloud Run's built-in IAP (docs/deployment.md, \"Browser sign-in on dev\")."
+  type        = bool
+  default     = true
+}
+variable "sandbox_members" {
+  description = "Who may open the sandbox in a browser; null uses sandbox_invokers."
+  type        = list(string)
+  default     = null
+}
+variable "console_members" {
+  description = "Who may sign in to the console; null uses sandbox_invokers."
+  type        = list(string)
   default     = null
 }
 variable "region" {
@@ -45,21 +55,6 @@ variable "github_repository" {
   description = "owner/name of the repository whose deploy workflow may deploy here."
   type        = string
   default     = "ShmuelRob/postly"
-}
-variable "console_iap_client_id" {
-  description = "The OAuth client id made by hand for IAP; null creates no console load balancer (docs/deployment.md)."
-  type        = string
-  default     = null
-}
-variable "console_domain" {
-  description = "The console's domain; null uses <ip>.sslip.io, which is for dev only (docs/security.md)."
-  type        = string
-  default     = null
-}
-variable "console_members" {
-  description = "Who may sign in to the console, e.g. [\"user:you@gmail.com\"]. Empty by default: nobody."
-  type        = list(string)
-  default     = []
 }
 
 variable "app_metric_alerts" {
