@@ -67,8 +67,6 @@ export interface Agent {
    * the conversation.
    */
   runTurn(businessId: string, agent: AgentName, trigger: TurnTrigger): Promise<TurnResult>;
-  /** Whether a flow runs on the agent for this business: business.agent_flows, else system_control. */
-  flowEnabled(businessId: string, agent: AgentName): Promise<boolean>;
 }
 
 export function createAgent(input: AgentDeps): Agent {
@@ -89,16 +87,6 @@ export function createAgent(input: AgentDeps): Agent {
   }
 
   return {
-    async flowEnabled(businessId, agent) {
-      return deps.db.withBusiness('workflow', businessId, async (tx) => {
-        const [business] = await tx.select({ flows: schema.business.agentFlows }).from(schema.business).where(eq(schema.business.id, businessId));
-        const own = (business?.flows ?? {}) as Partial<Record<AgentName, boolean>>;
-        if (typeof own[agent] === 'boolean') return own[agent];
-        const [control] = await tx.select({ flows: schema.systemControl.agentFlows }).from(schema.systemControl);
-        return ((control?.flows ?? {}) as Partial<Record<AgentName, boolean>>)[agent] === true;
-      });
-    },
-
     async runTurn(businessId, agentName, trigger) {
       const definition = agents[agentName];
       const started = deps.now();

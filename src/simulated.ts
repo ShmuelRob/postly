@@ -5,7 +5,6 @@ import { PAYMENT_WEBHOOK_PATH } from './modules/billing/index.js';
 import { createDesignRenderer } from './modules/design/index.js';
 import { WEBHOOK_PATH } from './modules/messaging/index.js';
 import { VertexModelProvider, type VertexTransport } from './modules/model-layer/index.js';
-import { type AgentFlows, applyAgentFlows } from './agent-flows.js';
 import { buildServer } from './server.js';
 import { conversationalModelSimulator } from './simulators/conversational/index.js';
 import { MessagingSimulator, PaymentSimulator, PersistentSimulator, PublishingSimulator, type SimulatorStore } from './simulators/index.js';
@@ -91,12 +90,16 @@ export interface SimulatedAppOptions extends SimulatedWorldOptions {
   databaseUrls: DatabaseUrls;
   /** Connections per database login (DB_POOL_MAX, docs/security.md D7); createDatabase's default otherwise. */
   poolMax?: number;
-  /** Defaults to `vertex` when given, else the conversational model simulator (POSTLY_MODELS=simulator). */
+  /** Defaults to `vertex` when given (every deployed environment), else the conversational model simulator (local runs). */
   models?: Record<string, ModelProvider>;
-  /** POSTLY_MODELS=vertex (agent.md, Running on dev): real Gemini, the other providers simulated. */
+  /** Deployed (agent.md, Running on dev): real Gemini through Vertex AI, the other providers simulated. */
   vertex?: VertexModelsOptions;
-  /** POSTLY_AGENT_FLOWS: written into system_control.agent_flows before the app starts (web only). */
-  agentFlows?: AgentFlows;
+  /**
+   * The one-shot flows instead of the agents (AppOptions.oneShotFlows; agent.md, A9), default `true` for
+   * the tests that drive them. main.ts always passes `false`, and no env variable, config field or
+   * Terraform value reaches this option (src/agents-always-on.test.ts).
+   */
+  oneShotFlows?: boolean;
   burstQuietMs?: number;
   /** The durable burst wake (T2): pg-boss in web and worker; tests may leave it out. */
   burstWake?: AppOptions['burstWake'];
@@ -137,7 +140,6 @@ export async function createSimulatedApp(options: SimulatedAppOptions) {
   const world = simulatedWorld(options);
   const models = options.models ?? simulatedModels(options, world.media);
   const db = createDatabase(options.databaseUrls, options.poolMax ? { max: options.poolMax } : {});
-  if (options.agentFlows) await applyAgentFlows(db, options.agentFlows);
   if (!(await world.media.read(SAMPLE_PHOTO_PATH))) {
     await world.media.put(SAMPLE_PHOTO_PATH, placeholderPng(1080, 1080, [246, 232, 210], [150, 82, 40]), 'image/png');
   }
@@ -167,6 +169,8 @@ export async function createSimulatedApp(options: SimulatedAppOptions) {
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.burstWake ? { burstWake: options.burstWake } : {}),
     ...(options.now ? { now: options.now } : {}),
+    // main.ts, the only deployed entry point, always passes false: the agents run (agent.md).
+    oneShotFlows: options.oneShotFlows ?? true,
   });
   return {
     app,

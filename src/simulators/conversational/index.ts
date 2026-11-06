@@ -5,7 +5,7 @@ import { playgroundIntent } from './intent.js';
 import { playgroundPlanning } from './weekly.js';
 
 // Word-rule stand-ins for the model tasks a human plays through in free Hebrew: the local playground
-// (WP-45) and the dev sandbox on the model simulator (WP-51, POSTLY_MODELS=simulator). Not product
+// (WP-45) and local runs on the model simulator (WP-51; deployed environments run on Vertex AI). Not product
 // logic; the real extraction, classification and planning are the model's.
 export { playgroundAgent, playgroundExtraction, playgroundIntent, playgroundPlanning };
 

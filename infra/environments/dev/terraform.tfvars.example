@@ -13,9 +13,8 @@ sandbox_invokers = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # Different lists per service (both default to sandbox_invokers):
 # console_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # sandbox_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
-# Real Gemini on dev, with WhatsApp, publishing and payments still simulated, and every agent flow on
-# (docs/deployment.md, "Real Gemini and the agent flows on dev"). models = "simulator" switches back.
-models      = "vertex"
-agent_flows = ["onboarding", "weekly", "drafts"]
+# Dev always runs on real Gemini (Vertex AI, EU multi-region) with every agent, while WhatsApp,
+# publishing and payments stay simulated (docs/deployment.md, "Real Gemini and the agents on dev").
+# There is no models or agent_flows variable any more; delete those lines from an older terraform.tfvars.
 # The monthly Vertex AI budget alert (USD 50 on dev, model_budget_usd): Billing > Account management.
 # billing_account = "REPLACE_WITH_BILLING_ACCOUNT_ID"

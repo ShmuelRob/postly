@@ -130,8 +130,6 @@ export const business = pgTable(
     timezone: text('timezone').notNull().default('Asia/Jerusalem'),
     cancelledAt: tz('cancelled_at'),
     dataDeleteAfter: tz('data_delete_after'),
-    /** Per-business override of which flows run on the agent (agent.md); null follows system_control. */
-    agentFlows: jsonb('agent_flows'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -548,8 +546,6 @@ export const systemControl = pgTable(
     pausedReason: text('paused_reason'),
     pausedAt: tz('paused_at'),
     pausedBy: text('paused_by'),
-    /** Which flows run on the agent for every business (agent.md); business.agent_flows wins. */
-    agentFlows: jsonb('agent_flows').notNull().default({}),
     agentDailyCostCapUsd: numeric('agent_daily_cost_cap_usd', { precision: 10, scale: 6 }).notNull().default('50'),
     /** The persona's global name per language (agent.md, A1). */
     agentName: jsonb('agent_name').notNull().default({ he: 'פוסטלי', en: 'Postly', ar: 'Postly', ru: 'Postly' }),

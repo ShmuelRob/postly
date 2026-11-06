@@ -74,7 +74,8 @@ describe('no paid model in tests or CI', () => {
         .filter(existsSync),
     ];
     expect(config.map(rel)).toContain('package.json');
-    const offenders = config.filter((f) => /POSTLY_MODELS\W{0,4}["']?vertex/i.test(readFileSync(f, 'utf8'))).map(rel);
+    // Every deployed POSTLY_ENV runs on Vertex AI (agent.md, Running on dev), so none may be set here.
+    const offenders = config.filter((f) => /POSTLY_ENV\W{0,4}["']?(dev|stage|prod)\b/i.test(readFileSync(f, 'utf8'))).map(rel);
     expect(offenders).toEqual([]);
   });
 });
