@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
 // the example-set loader) and their own browser hooks into timeouts.
 const browserTests = ['src/modules/design/render.test.ts', 'src/modules/design/styles/*.test.ts'];
 // End-to-end suites that drive Chromium (the playground UI): same reason, plus the database.
-const browserE2eTests = ['test/e2e/playground.e2e.test.ts'];
+const browserE2eTests = ['test/e2e/playground.e2e.test.ts', 'test/e2e/console.e2e.test.ts'];
 
 export default defineConfig({
   test: {

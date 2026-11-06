@@ -454,6 +454,34 @@ export const consoleItem = pgTable(
   (t) => [tenantIsolation(t.businessId)],
 );
 
+export const CONSOLE_ACTIONS = ['profile', 'agent_cost_cap', 'agent_config', 'model_task_config'] as const;
+
+/**
+ * The console's log of configuration and profile writes (database-schema.md, "console_action"),
+ * append-only. Null business_id for system settings.
+ */
+export const consoleAction = pgTable(
+  'console_action',
+  {
+    id: id(),
+    businessId: optionalBusinessId(),
+    actor: text('actor').notNull(),
+    /** One of CONSOLE_ACTIONS. */
+    action: text('action').$type<(typeof CONSOLE_ACTIONS)[number]>().notNull(),
+    /** The business id, the agent, or the task. */
+    target: text('target').notNull(),
+    before: jsonb('before'),
+    after: jsonb('after'),
+    reason: text('reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    tenantIsolation(t.businessId),
+    index('console_action_created_idx').on(t.createdAt),
+    index('console_action_business_created_idx').on(t.businessId, t.createdAt),
+  ],
+);
+
 /**
  * The workflow audit trail (WP-46), append-only. business_id is a plain value with no foreign key, so
  * the rows stay after the business is deleted (database-schema.md, "workflow_event").

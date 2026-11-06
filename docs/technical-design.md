@@ -274,20 +274,40 @@ WP-43, 2026-11-04. Each has an end-to-end test.
 
 ## Console (Phase 1)
 
-The internal team's console lives in `src/modules/console/`: Fastify routes under `/console` (a JSON API under `/console/api` and a React page rendered on the server) that read and write only through `withSystem('console')` and the workflow module. Its actions:
+The internal team's console lives in `src/modules/console/`: Fastify routes under `/console` (a JSON API under `/console/api` and a React page rendered on the server) that read and write only through `withSystem('console')` and the workflow module. The UI is in English; conversation and caption text is shown in the business's language with `dir="auto"`, so Hebrew reads right to left. The page works on a phone (one column, the tabs stay on top) and on a desktop.
+
+**Tabs** (`/console?tab=…`; plain links, the page is rendered on the server and a small script only posts actions):
+
+| Tab | What it shows |
+| --- | --- |
+| Overview (default) | Health at a glance: businesses by status, open console items by kind, agent turns and model runs in the last 24 hours with their cost and failures, model cost per day for 14 days, posts scheduled and published in the last 7 days, failed publications, the global pause, and the newest failures (model runs with an error or failed validation, failed publications) and agent turns |
+| Manage | Where the team changes things: the review queue (open console items, searchable and filtered by kind, each linked to its business's conversation and, when it has one, its model run), the businesses (status, step, handoff, pause and resume), a business's profile, the agent settings, the model task settings, the monthly price, the global pause, and the console's own action log |
+| Conversations | Every business's WhatsApp conversation as a chat (searchable by name), with a side panel about the client: the profile, posts and drafts (every version with its hash and fact check, the approval state of each version, publications per network with their schedule, publish time, status and last error, and the rendered images), the conversation step and open question, agent turns with their steps, model runs with their cost, channel connections, and open console items. On a phone the list, the chat and the panel are separate views |
+
+A model run opens on its own view (`?run=<id>`): task, prompt version, provider and model, attempt, tokens, cost, duration, validity, the error, and the input and output as JSON. An agent turn opens with its steps (each tool call and code's answer).
+
+**Actions.** Every write records the signed-in team member. Writes that change configuration or a profile also add a row to `console_action` (database-schema.md) with the value before and after, in the same transaction. The console never approves a post version, never publishes, never changes an approval, and never changes the approver number; it shows the approval state only.
 
 | Action | Effect |
 | --- | --- |
-| List businesses, conversations, drafts, console items, and the global pause | Read only |
+| List businesses, conversations, drafts, console items, model runs, agent turns, and the global pause | Read only |
 | See a business's agent turns | `GET /console/api/businesses/:id/agent-turns`: the newest 50 turns with their steps (each tool call and code's answer), stop reason and cost (WP-90) |
+| See a business's model runs, or one model run | `GET /console/api/businesses/:id/model-runs` (the newest 100, without input and output), `GET /console/api/model-runs/:id` (the whole row) |
+| See the overview | `GET /console/api/overview`: the counts and the 14-day cost series of the Overview tab |
+| See a rendered image or customer media | `GET /console/media/:assetId`: the bytes of a `media_asset`, read from storage by the console process behind the same IAP sign-in as every console request; never a public URL |
 | Resolve a console item | `status` becomes `resolved` |
 | Route a console item | Starts a [handoff](state-machines.md#human-handoff) for the item's business and resolves the item; an item without a business can only be resolved |
 | Start or clear a handoff | `startHandoff` / `clearHandoff` of the workflow module |
 | Retry a failed publication | Publication `RETRY_REQUESTED`, and the post `PUBLISHING_STARTED` when it is `failed`; the publishing job still checks the approved hash before anything goes live; resolves the matching `publication_failed` items |
 | Pause or resume a business | Business `PAUSE` / `RESUME` (resume needs a `verified` channel connection) |
 | Pause or resume all publishing | `system_control` through `setGlobalPause`, with the signed-in team member as `paused_by` |
+| Change a business's profile | `POST /console/api/businesses/:id/profile` (`profile`, optional `reason`): the whole profile, parsed with `BusinessProfile` when the business is past onboarding and `BusinessProfileDraft` while it onboards; `business.name` follows `profile.name`. Refused with 409 `approver_locked` when `approverPhone` differs from the current one: the approver number is part of the approval invariant and changes only with the owner. The owner gets no message; the team tells the owner when it matters |
+| Change the agent daily cost cap | `POST /console/api/system/agent-cost-cap` (`usd`, greater than 0): `system_control.agent_daily_cost_cap_usd` |
+| Change an agent's limits | `POST /console/api/agent-config/:agent`: any of the `agent_config` limits ([agent.md](agent.md#limits)), each checked for its type and a positive value (`min_confidence` between 0 and 1) |
+| Change a model task's settings | `POST /console/api/model-tasks/:task`: any of `model`, `fallbackModel`, `temperature` (0 to 2), `maxCostUsd` (greater than 0), `maxRetries` (0 to 5), `activePromptVersion` (only a version that exists in `prompt_template` for the task). The provider is not editable: only `google` has an adapter. A change of the active prompt version changes a customer-facing prompt, so it is for reviewed versions only (H7) |
 | See or change the monthly price | `GET /console/api/price` returns the current price and its history; `POST /console/api/price` (`amountAgorot`, optional `reason`) inserts a `plan_price` row with the signed-in team member as `changed_by`. A new price applies to payment links sent afterwards |
 | Cancel a business | The [cancellation](#cancellation-data-deletion-and-the-monthly-report) (WP-43) |
+| See the console action log | `GET /console/api/actions`: the newest 200 `console_action` rows |
 
 **Sign-in (WP-82).** The console runs as its own process (`main.js console`) and its own Cloud Run service; the public web service never serves it. Team members sign in with their Google accounts through Identity-Aware Proxy: on an external HTTPS load balancer in front of the console service in stage and prod (ingress internal and load balancer), and through Cloud Run's built-in IAP on the service in dev; never with a public invoker. The console verifies IAP's signed header `x-goog-iap-jwt-assertion` on every request (signature, audience, expiry) and refuses a request without a valid one (401). The verified email is the actor of every action: the global pause's `paused_by`, the price's `changed_by`, the cancellation, and a log line per action; a `by` in a request body is only a note. Locally and in tests a dev-only bypass (`CONSOLE_AUTH=dev-bypass`) answers only loopback addresses with a fixed actor, and refuses to start in stage or prod. Details: [security.md](security.md#console-exposure).
 
