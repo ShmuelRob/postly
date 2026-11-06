@@ -137,7 +137,7 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
 
   // 1. Intro and the first profile question.
   await run.owner.sendsText('היי, נרשמתי לפוסטלי');
-  expect(said()).toEqual([copy.intro, copy.questions.business]);
+  expect(said()).toEqual([copy.intro('פוסטלי'), copy.questions.business]);
 
   // 2. A voice answer: transcribed, then the profile fields are extracted from the transcript.
   modelSim.scriptTranscription({ text: VOICE_NAME, language: 'he' });
@@ -276,7 +276,7 @@ e2eTest('a profile question unanswered three times hands the conversation to a p
   await run.owner.sendsText('עכשיו?');
 
   expect(run.owner.received().map((m) => m.text)).toEqual([
-    copy.intro,
+    copy.intro('פוסטלי'),
     copy.questions.business,
     copy.reask(copy.questions.business),
     copy.reask(copy.questions.business),
@@ -468,7 +468,7 @@ e2eTest('a sweep during a slow reply hands the message over once: one reply, one
   await sending;
   await ref.postly!.messaging.sweepUnprocessed({ businessId });
 
-  expect(run.owner.received().map((m) => m.text)).toEqual([copy.intro, copy.questions.business]);
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.intro('פוסטלי'), copy.questions.business]);
   const state = await db.withBusiness('workflow', businessId, async (tx) => (await tx.select().from(schema.conversationState))[0]);
   expect(state?.step).toBe('profile_questions');
   expect(state?.openQuestion).toMatchObject({ key: 'business', attempts: 1 });

@@ -153,7 +153,9 @@ Sets one field of the onboarding draft (or of the active profile, A7).
 | `value` | Validated against that field's own schema in `BusinessProfileDraft` |
 | `sourceQuote` | Required for `name`, `location.*`, `contact.*`, `schedule.*`, `differentiator`, `mainProducts` and `fixedHashtags`: words of the owner's own messages in the context, verbatim (whitespace runs count as one space). Optional for fields with defaults (`tone`, `contentTypes`, `formats`) when the agent infers them from the owner's answers |
 
-Code checks the quote (`quote_not_found`) and that the value's numbers (hours, phone digits, house number) appear in the quote. On an active business, code sends the owner a fixed confirmation naming the field and its new value (H6). It can't touch: the approver, the business status, channels, the subscription, posts.
+Code checks the quote (`quote_not_found`): it may come from any of the owner's messages in the context. Code checks that the value's numbers (hours, phone digits, house number) appear in the quote, or in the field's saved value, so a correction ("on Friday we close at 13:00") keeps the numbers the owner gave before (`value_not_in_quote`); a phone matches in its `+972` and local `0` forms. On an active business, code sends the owner a fixed confirmation naming the field and its whole new value (H6, `src/modules/agent/tools/profile-copy.ts`; WP-92), whichever agent made the change; a closed window skips it. It can't touch: the approver, the business status, channels after onboarding, the subscription, posts.
+
+**Nested fields (WP-92).** A part of a nested field (`location.city`) is saved into the profile only once its whole object is valid (all four `location` parts, all three `schedule` parts, and so on). Until then the call succeeds with `saved: false` and the parts still `waitingFor`, and the parts given so far are read back from this onboarding's earlier `set_profile_field` calls (the turn history). So the stored profile is always a valid `BusinessProfileDraft`, and the agent's context never loses it.
 
 ### `record_fact`
 
@@ -242,6 +244,19 @@ Code sets the handoff flag, opens a `handoff` console item with the turn id and 
 ### `end_turn`
 
 No fields. Ends the turn without waiting for anything (for example after an acknowledgement). Code still evaluates the done rule.
+
+### The onboarding agent in the flow (WP-92)
+
+With `agent_flows.onboarding` on for the business:
+
+- **intro** (code): the persona's intro, `onboardingCopy.intro(name)`: her name (A1: the business's `persona.agentName`, else `system_control.agent_name` for the language, else Postly / פוסטלי) and feminine Hebrew (A2). Then the first agent turn asks the first question.
+- **profile_questions**: each owner burst runs a turn. When the turn ends `done`, code applies `PROFILE_FIELDS_COMPLETE` (its usual guard) and starts a brand-assets turn at once, which asks for the logo.
+- **brand_assets**: an image answers the open photo request: for `photo_request:logo`, code sets `brand.logoAssetId` from the first image; other images join the open question's `photoAssetIds`. Then the turn runs; when it ends `done`, code applies `BRAND_ASSETS_DONE` and sends the style samples.
+- **profile_review**: the approval words still approve by code. Any other text runs a turn; `done` (a correction saved) applies `PROFILE_CORRECTED` and code resends the summary; a turn that ends without a change gets the "what to correct?" line; a question from the agent waits for the answer.
+- Every other step (style choice, approval, channels, activation, payment link) is code, unchanged. With the flow off, onboarding runs the fixed questions as before.
+- The agent's `questionAsked` event stores its open question on `conversation_state` (attempts counted per key), so a repeated topic still meets the three-attempt limit.
+
+**Not yet with the onboarding agent:** a voice note's transcript does not reach the agent, because the context builder reads each message's text only (a runtime follow-up). With the flow on, a voice answer is seen as an empty message.
 
 ## How it fits the state machines
 
