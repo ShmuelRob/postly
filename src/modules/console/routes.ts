@@ -5,6 +5,7 @@ import { ConsoleActionError, type ConsoleService } from './console.js';
 import { IAP_HEADER, IapAssertionError, type IapVerifier } from './iap.js';
 import { log } from '../../shared/logger.js';
 import { renderConsolePage } from './page.js';
+import { loadPageData } from './page-data.js';
 
 export const CONSOLE_PATH = '/console';
 
@@ -34,6 +35,11 @@ export interface ConsoleRouteOptions {
   perMinute?: number;
   /** One line per console action (actor, method, path, status); defaults to the shared logger. */
   log?(line: Record<string, unknown>): void;
+  /**
+   * The bytes of a stored file by its storage path, for GET /console/media/:assetId (security.md,
+   * "Media in the console"); without it that route answers 404. A missing file throws.
+   */
+  readMedia?(storagePath: string): Promise<Uint8Array>;
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -67,6 +73,48 @@ const PriceBody = z.object({
   by: z.string().min(1).optional(),
   reason: z.string().optional(),
 });
+
+// The redesigned console's API (technical-design.md, "Console (Phase 1)"). Unknown keys are refused;
+// the actor comes from the sign-in, never from a body.
+const Reason = z.string().max(500).optional();
+const AssetId = z.object({ assetId: z.uuid() });
+const Name = (key: 'agent' | 'task') => z.object({ [key]: z.string().min(1).max(100) });
+const ModelRunsQuery = z.object({ limit: z.coerce.number().int().min(1).max(500).optional() });
+const ActionsQuery = z.object({ businessId: z.uuid().optional() });
+const ProfileBody = z.object({ profile: z.record(z.string(), z.unknown()), reason: Reason }).strict();
+const CostCapBody = z.object({ usd: z.number().positive(), reason: Reason }).strict();
+const positiveInt = z.number().int().positive().optional();
+const positiveUsd = z.number().positive().optional();
+const AgentConfigBody = z
+  .object({
+    maxSteps: positiveInt,
+    maxToolCalls: positiveInt,
+    maxTurnCostUsd: positiveUsd,
+    maxBusinessDailyCostUsd: positiveUsd,
+    timeoutMs: positiveInt,
+    minConfidence: z.number().min(0).max(1).optional(),
+    maxRefusals: positiveInt,
+    maxRepeatedQuestions: positiveInt,
+    reason: Reason,
+  })
+  .strict();
+const ModelTaskBody = z
+  .object({
+    model: z.string().trim().min(1).optional(),
+    fallbackModel: z.string().trim().min(1).nullable().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    maxCostUsd: z.number().positive().optional(),
+    maxRetries: z.number().int().min(0).max(5).optional(),
+    activePromptVersion: z.number().int().optional(),
+    reason: Reason,
+  })
+  .strict();
+
+/** WriteMeta of a write: the signed-in actor, and the reason when one was typed. */
+const meta = (actor: string, reason: string | undefined) => (reason === undefined ? { actor } : { actor, reason });
+/** The body's fields without `reason` and without the keys left out (exactOptionalPropertyTypes). */
+const patchOf = <T extends Record<string, unknown>>({ reason: _, ...rest }: T & { reason?: string | undefined }) =>
+  Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) as { [K in keyof Omit<T, 'reason'>]-?: Exclude<T[K], undefined> };
 
 const actors = new WeakMap<FastifyRequest, string>();
 
@@ -141,13 +189,40 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
       const id = (params: unknown) => Id.parse(params).id;
 
       scope.get('/', async (request, reply) => {
-        const [businesses, drafts, items, system, price] = await Promise.all([c.businesses(), c.drafts(), c.openItems(), c.system(), c.price()]);
-        const conversations = await Promise.all(businesses.slice(0, 20).map(async (b) => [b.id, await c.messages(b.id)] as const));
-        const html = renderConsolePage({ businesses, drafts, items, system, price, conversations: Object.fromEntries(conversations), actor: consoleActor(request) });
-        return reply.type('text/html; charset=utf-8').send(html);
+        const html = renderConsolePage(await loadPageData(c, request.query, consoleActor(request)));
+        return reply.type('text/html; charset=utf-8').header('cache-control', 'private, no-store').send(html);
       });
 
       scope.get('/api/businesses', (_q, reply) => run(reply, () => c.businesses()));
+      scope.get('/api/overview', (_q, reply) => run(reply, () => c.overview()));
+      scope.get('/api/business-rows', (_q, reply) => run(reply, () => c.businessRows()));
+      scope.get('/api/businesses/:id', (q, reply) => run(reply, () => c.business(id(q.params))));
+      scope.get('/api/businesses/:id/posts', (q, reply) => run(reply, () => c.posts(id(q.params))));
+      scope.get('/api/businesses/:id/model-runs', (q, reply) => run(reply, () => c.modelRuns(id(q.params))));
+      scope.get('/api/model-runs', (q, reply) => run(reply, () => c.modelRuns(undefined, ModelRunsQuery.parse(q.query).limit)));
+      scope.get('/api/model-runs/:id', (q, reply) => run(reply, () => c.modelRun(id(q.params))));
+      scope.get('/api/settings', (_q, reply) => run(reply, () => c.settings()));
+      scope.get('/api/model-tasks', (_q, reply) => run(reply, () => c.modelTasks()));
+      scope.get('/api/agent-config', (_q, reply) => run(reply, () => c.agentConfigs()));
+      scope.get('/api/actions', (q, reply) => run(reply, () => c.actions(ActionsQuery.parse(q.query).businessId)));
+      // security.md, "Media in the console": the bytes behind the same sign-in, never a public URL.
+      scope.get('/media/:assetId', async (q, reply) => {
+        const parsed = AssetId.safeParse(q.params);
+        if (!options.readMedia || !parsed.success) return reply.code(404).send({ reason: 'not_found' });
+        try {
+          const asset = await c.mediaAsset(parsed.data.assetId);
+          const bytes = await options.readMedia(asset.storagePath);
+          return reply
+            .code(200)
+            .header('cache-control', 'private, no-store')
+            .header('x-content-type-options', 'nosniff')
+            .type(asset.mimeType)
+            .send(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+        } catch (error) {
+          if (error instanceof ConsoleActionError) return reply.code(error.status).send({ reason: error.reason });
+          throw error;
+        }
+      });
       scope.get('/api/businesses/:id/messages', (q, reply) => run(reply, () => c.messages(id(q.params))));
       scope.get('/api/businesses/:id/agent-turns', (q, reply) => run(reply, () => c.agentTurns(id(q.params))));
       scope.get('/api/drafts', (q, reply) => run(reply, () => c.drafts(DraftsQuery.parse(q.query).businessId)));
@@ -180,6 +255,32 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
           const body = PauseBody.parse(q.body ?? {});
           const reason = withNote(body.reason, body.by, actor);
           return reason === undefined ? c.setGlobalPause(true, actor) : c.setGlobalPause(true, actor, reason);
+        }),
+      );
+      scope.post('/api/businesses/:id/profile', (q, reply) =>
+        run(reply, () => {
+          const { profile, reason } = ProfileBody.parse(q.body ?? {});
+          return c.setProfile(id(q.params), profile, meta(consoleActor(q), reason));
+        }),
+      );
+      scope.post('/api/system/agent-cost-cap', (q, reply) =>
+        run(reply, () => {
+          const { usd, reason } = CostCapBody.parse(q.body ?? {});
+          return c.setAgentCostCap(usd, meta(consoleActor(q), reason));
+        }),
+      );
+      scope.post('/api/agent-config/:agent', (q, reply) =>
+        run(reply, () => {
+          const { agent } = Name('agent').parse(q.params) as { agent: string };
+          const body = AgentConfigBody.parse(q.body ?? {});
+          return c.setAgentConfig(agent, patchOf(body), meta(consoleActor(q), body.reason));
+        }),
+      );
+      scope.post('/api/model-tasks/:task', (q, reply) =>
+        run(reply, () => {
+          const { task } = Name('task').parse(q.params) as { task: string };
+          const body = ModelTaskBody.parse(q.body ?? {});
+          return c.setModelTask(task, patchOf(body), meta(consoleActor(q), body.reason));
         }),
       );
       scope.get('/api/price', (q, reply) => run(reply, () => c.price(PriceQuery.parse(q.query).plan)));

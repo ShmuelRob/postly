@@ -3,7 +3,7 @@ import { loadConfig } from './config.js';
 import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
 import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
-import { createConsole, createIapVerifier, type ConsoleAuth } from './modules/console/index.js';
+import { ConsoleActionError, createConsole, createIapVerifier, type ConsoleAuth } from './modules/console/index.js';
 import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
@@ -47,7 +47,7 @@ async function main(command: string | undefined) {
   const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
   // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
   const queue = await createPgBossQueue({ connectionString: config.jobsUrl, observeDepth: command === 'worker' });
-  const { app, db, close } = await createSimulatedApp({
+  const { app, world, db, close } = await createSimulatedApp({
     store,
     burstWake: jobBurstWake(queue),
     databaseUrls: config.databaseUrls,
@@ -82,6 +82,12 @@ async function main(command: string | undefined) {
       // The cancellation keeps its reason; the actor is in the console action log line (WP-46 audit rows later).
       cancelBusiness: (id) => app.cancellation.cancel(id, 'console'),
       auth,
+      // security.md, "Media in the console": the bytes come from the app's media store, behind the sign-in.
+      readMedia: async (storagePath) => {
+        const file = await world.media.read(storagePath);
+        if (!file) throw new ConsoleActionError(404, 'not_found');
+        return file.data;
+      },
       ...(deployed ? { trustProxyHops: 1 } : {}),
       ...(c.auth === 'iap' && c.host ? { allowedHosts: [c.host] } : {}),
     });
