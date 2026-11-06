@@ -71,3 +71,14 @@ resource "google_logging_metric" "channel_disconnected" {
     business_id = "EXTRACT(labels.businessId)"
   }
 }
+
+# The agents' global daily budget was reached (agent.md, Limits; log line `agent global budget reached`).
+resource "google_logging_metric" "agent_global_budget" {
+  project = var.project_id
+  name    = "postly-${var.env_name}-agent-global-budget"
+  filter  = "${local.postly_logs} AND jsonPayload.message=\"agent global budget reached\""
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+}

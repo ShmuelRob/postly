@@ -173,6 +173,21 @@ gcloud run revisions list --service postly-ENV-web --region REGION --project PRO
 
 **Escalate / pause:** pause the one business if posts keep failing; tell the human if more than one business disconnects or it looks like a vendor-wide token problem.
 
+## Agent global budget
+
+**Alert:** "Postly ENV: agent global daily budget reached" (any log line with `message` "agent global budget reached", WARNING, with `businessId`, `agent`, `agentTurnId`, `capUsd` and `spentUsd`, in 10 minutes; log metric `postly-ENV-agent-global-budget`).
+
+**Means:** the agents' model spend across all businesses since 00:00 UTC reached `system_control.agent_daily_cost_cap_usd` (USD 50 by default; agent.md, Limits). Every agent turn now hands its conversation to a person with an `agent_limit` console item, reason `global_budget`, until 00:00 UTC.
+
+**Check:**
+1. Console: the open `agent_limit` items with reason `global_budget`, and the agent turns of the first businesses to hit it.
+2. The `model_run` records of the day by business and task: one business or one task looping, or real growth.
+3. Compare with [Cost spike](#cost-spike).
+
+**Do:** answer the handed-off conversations from the console. A loop: pause that business and fix the cause. Real growth: raise the cap in `system_control` only with the human's approval (it is spend).
+
+**Escalate / pause:** tell the human every time this fires; the cap is a money decision.
+
 ## Cost spike
 
 **Alert:** "Postly ENV: model cost spike" (model cost above USD 5 in 1 hour, set per environment; metric `postly.model.cost_usd`). 

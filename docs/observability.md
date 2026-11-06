@@ -80,8 +80,9 @@ Every `ERROR` log line is also an error event: the logger adds `@type: type.goog
 | `postly-<env>-business-events` | Every line that names a business | `business_id`, `event` (the `message`), `severity` |
 | `postly-<env>-webhook-errors` | Non-2xx responses on `/webhooks/*`, from the Cloud Run request log | `route` |
 | `postly-<env>-channel-disconnected` | Lines `channel disconnected` | `business_id` |
+| `postly-<env>-agent-global-budget` | Lines `agent global budget reached` | none |
 
-The line `channel disconnected` (severity `WARNING`, with `businessId`, `channelId`, `network` and `providerStatus`) is the contract for the channel-disconnected alert; the publishing module's daily channel health check logs it once, when a verified channel becomes `disconnected` (`logChannelDisconnected` in `src/modules/publishing/channels.ts`, tested in `channels-log.test.ts`). `business_id` is a label on purpose: Postly has a few hundred businesses in Phase 1, well within Cloud Monitoring's label limits; past a few thousand, move the per-business view to Log Analytics.
+The line `channel disconnected` (severity `WARNING`, with `businessId`, `channelId`, `network` and `providerStatus`) is the contract for the channel-disconnected alert. The line `agent global budget reached` (severity `WARNING`, with `businessId`, `agent`, `agentTurnId`, `capUsd` and `spentUsd`) is the contract for the agent global budget alert: the agent runtime logs it for each turn the cap stops (agent.md, Limits; tested in `agent.db.test.ts`). For the channel line, the publishing module's daily channel health check logs it once, when a verified channel becomes `disconnected` (`logChannelDisconnected` in `src/modules/publishing/channels.ts`, tested in `channels-log.test.ts`). `business_id` is a label on purpose: Postly has a few hundred businesses in Phase 1, well within Cloud Monitoring's label limits; past a few thousand, move the per-business view to Log Analytics.
 
 ### Dashboards
 
@@ -102,6 +103,7 @@ The line `channel disconnected` (severity `WARNING`, with `businessId`, `channel
 | Job queue stuck | a queue holds more than 50 queued jobs for 15 min | `postly.queue.depth`, `state=queued` | `pgboss-backlog` |
 | Worker not running | no worker instance, or no instance data, for 10 min | `run.googleapis.com/container/instance_count` | `worker-not-running` |
 | Publishing channel disconnected | any `channel disconnected` line in 10 min | `postly-<env>-channel-disconnected` | `channel-disconnected` |
+| Agent global daily budget reached | any `agent global budget reached` line in 10 min | `postly-<env>-agent-global-budget` | `agent-global-budget` |
 | Model cost spike | model spend above `model_cost_hourly_usd` (USD 5 by default) in 1 h | `postly.model.cost_usd` | `cost-spike` |
 | Model validation failures | at least 5 invalid outputs for one task in 30 min | `postly.model.calls.count`, `outcome=invalid` | `model-validation-failures` |
 | Cloud SQL connections near max | connections above 80% of `max_connections` for 10 min | `cloudsql.googleapis.com/database/postgresql/num_backends` | `cloud-sql-connections-near-max` |

@@ -154,7 +154,7 @@ The flows below describe the fixed (one-shot) path, which stays as the fallback 
 Built in WP-30 (2026-11-03); the copy is provisional (H6) and queued for the human. The workflow module runs the [onboarding machine](state-machines.md#onboarding); each step uses the module that owns it.
 
 - **Inbound media.** Messaging downloads every voice note and image through `getMedia`, stores the file, records a `media_asset` row (`voice` or `photo`, source `owner`), and passes the asset ids with the burst. Voice notes are transcribed with the `transcription` task before anything reads the text.
-- **Agent note.** With the onboarding agent on, the profile questions, the brand assets and profile corrections are the agent's (agent.md); the intro, style samples, profile summary, channel connection and activation stay as below.
+- **Agent note.** With the onboarding agent on (`agent_flows.onboarding`, WP-92), the profile questions, the brand assets and profile corrections are the agent's, and code applies `PROFILE_FIELDS_COMPLETE`, `BRAND_ASSETS_DONE` and `PROFILE_CORRECTED` when the agent's turn ends done ([agent.md](agent.md#the-onboarding-agent-in-the-flow-wp-92)); the intro (now in the persona's voice, feminine), style samples, profile summary, channel connection and activation stay as below.
 - **Profile questions.** One or two topics per message, in a fixed order: name, field and products; location, hours, and pickup or delivery; audience and differentiator; channels and Shabbat publishing. Each answer goes to `profile_extraction` with the fields asked, and the fields found merge into the `BusinessProfileDraft` in `business.profile`. A question whose required fields stay empty is asked again, up to three times in all, and then the conversation is handed off to a person.
 - **Brand assets.** The agent asks for a logo, then for photos of the business; the owner can skip each. The first image after the logo question is the logo (`brand.logoAssetId`).
 - **Style samples.** The design module renders one sample post per style from the owner's first photo (or a bundled sample photo when there is none), with the business name and logo, and messaging sends each with its style name. The owner answers with a style name or number.
@@ -279,6 +279,7 @@ The internal team's console lives in `src/modules/console/`: Fastify routes unde
 | Action | Effect |
 | --- | --- |
 | List businesses, conversations, drafts, console items, and the global pause | Read only |
+| See a business's agent turns | `GET /console/api/businesses/:id/agent-turns`: the newest 50 turns with their steps (each tool call and code's answer), stop reason and cost (WP-90) |
 | Resolve a console item | `status` becomes `resolved` |
 | Route a console item | Starts a [handoff](state-machines.md#human-handoff) for the item's business and resolves the item; an item without a business can only be resolved |
 | Start or clear a handoff | `startHandoff` / `clearHandoff` of the workflow module |

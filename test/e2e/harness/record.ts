@@ -1,4 +1,5 @@
 import type { Network } from '../../../src/contracts/common.js';
+import type { AgentStepRecord, AgentTurnReport } from '../../../src/simulators/scripted-agent.js';
 
 /** An image as the report shows it: the bytes are embedded as a data URI so the report is one file. */
 export interface ImageAttachment {
@@ -70,6 +71,12 @@ export interface ScreenshotEntry {
   image: ImageAttachment;
 }
 
+/** One step the scripted agent served (agent.md, Testing without paying for a model). */
+export type AgentStepEntry = AgentStepRecord & { at: string };
+
+/** One agent turn as the runtime reported it: every step's calls and results, and why it stopped. */
+export type AgentTurnEntry = AgentTurnReport & { at: string };
+
 /** Everything one end-to-end test recorded about what the owner and the networks would see. */
 export interface E2eRecord {
   transcript: TranscriptEntry[];
@@ -78,6 +85,8 @@ export interface E2eRecord {
   modelCalls?: ModelCallEntry[];
   consoleItems?: ConsoleEntry[];
   screenshots?: ScreenshotEntry[];
+  agentSteps?: AgentStepEntry[];
+  agentTurns?: AgentTurnEntry[];
 }
 
 export function emptyRecord(): E2eRecord {

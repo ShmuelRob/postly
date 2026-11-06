@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, inject, it } from 'v
 import { MODEL_TASK_NAMES } from '../../contracts/model-tasks.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import type { ModelProvider } from '../../contracts/providers/model.js';
 import { ModelSimulator } from '../../simulators/model.js';
 import { createModelLayer, ModelTaskFailedError } from './index.js';
 import { memoryTelemetry } from '../../shared/telemetry-memory.js';
@@ -207,6 +208,59 @@ describe('config limits', () => {
     expect(sim.callsFor('intent_detection')).toHaveLength(1);
     const [item] = await consoleOf(businessId);
     expect((item?.details as { errors: string[] }).errors.at(-1)).toMatch(/cost limit/);
+  });
+});
+
+// agent.md, Limits (WP-90): a step's cap counts every attempt, retries included; spend for the budgets.
+describe('agent budgets', () => {
+  const setCap = (maxCostUsd: string) =>
+    db.withSystem('console', (tx) => tx.update(schema.modelTaskConfig).set({ maxCostUsd }).where(eq(schema.modelTaskConfig.task, 'intent_detection')));
+  afterEach(() => setCap('0.010000'));
+
+  /** A provider whose every answer is invalid and costs `costUsd`. */
+  const pricey = (costUsd: number): ModelProvider => ({
+    name: 'google',
+    generateStructured: async () => ({ output: { intent: 'approve' }, inputTokens: 1, outputTokens: 1, costUsd }),
+    analyzeImage: async () => ({ output: {}, inputTokens: 1, outputTokens: 1, costUsd }),
+    transcribeAudio: async () => ({ text: '', language: 'he', costUsd }),
+  });
+
+  it('starts a retry only while the spend so far plus the last attempt stays within the cap', async () => {
+    await setCap('1.000000');
+    const layer = createModelLayer({ db, providers: { google: pricey(0.008) } });
+    await expect(layer.run(businessId, 'intent_detection', intent, { maxCostUsd: 0.02 })).rejects.toThrow(ModelTaskFailedError);
+    const runs = await runsOf(businessId);
+    expect(runs).toHaveLength(2);
+    expect(runs.reduce((sum, r) => sum + Number(r.costUsd), 0)).toBeLessThanOrEqual(0.02);
+    const [item] = await consoleOf(businessId);
+    expect((item?.details as { errors: string[] }).errors.at(-1)).toMatch(/cost limit/);
+  });
+
+  it('uses the lower of the config cap and the caller cap', async () => {
+    await setCap('0.010000');
+    const layer = createModelLayer({ db, providers: { google: pricey(0.008) } });
+    await expect(layer.run(businessId, 'intent_detection', intent, { maxCostUsd: 0.5 })).rejects.toThrow(ModelTaskFailedError);
+    expect(await runsOf(businessId)).toHaveLength(1);
+  });
+
+  it('records the agent turn on every model_run of the call', async () => {
+    const agentTurnId = randomUUID();
+    sim.scriptInvalid('intent_detection', { intent: 'approve' });
+    sim.script('intent_detection', validIntent);
+    await createModelLayer({ db, providers: { google: sim } }).run(businessId, 'intent_detection', intent, { agentTurnId });
+    expect((await runsOf(businessId)).map((r) => r.agentTurnId)).toEqual([agentTurnId, agentTurnId]);
+  });
+
+  it('sums a business spend, and every business spend, since a time', async () => {
+    const other = await newBusiness();
+    const layer = createModelLayer({ db, providers: { google: pricey(0.004) } });
+    const since = new Date(Date.now() - 1000);
+    await setCap('0.004000');
+    await layer.run(businessId, 'intent_detection', intent).catch(() => undefined);
+    await layer.run(other, 'intent_detection', intent).catch(() => undefined);
+    expect(await layer.spentSince(businessId, since)).toBeCloseTo(0.004, 6);
+    expect(await layer.spentSince(businessId, new Date(Date.now() + 60_000))).toBe(0);
+    expect(await layer.spentByAllSince(since)).toBeGreaterThanOrEqual(0.008 - 1e-9);
   });
 });
 

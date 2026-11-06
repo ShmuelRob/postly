@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Uuid } from './common.js';
+import { type Language, Uuid } from './common.js';
 
 // The fixed photo operations, title, badge and carousel layout of a post (agent.md, Photo edits;
 // design-styles.md, Photo edits and badge). Nothing here creates or alters what a photo shows.
@@ -36,6 +36,18 @@ export type BadgeKind = z.infer<typeof BadgeKind>;
 
 /** Kinds whose text is a number from a recorded fact; the others are fixed words per language. */
 export const FACT_BADGE_KINDS = ['discount', 'price'] as const satisfies readonly BadgeKind[];
+
+/** The fixed words of the stickers, per language; at most 8 characters each (design-styles.md, Badge). */
+export const STICKER_WORDS: Record<z.infer<typeof Language>, Record<Exclude<BadgeKind, 'discount' | 'price'>, string>> = {
+  he: { new: 'חדש', sale: 'מבצע', holiday: 'חג שמח' },
+  ar: { new: 'جديد', sale: 'تخفيضات', holiday: 'عيد سعيد' },
+  en: { new: 'NEW', sale: 'SALE', holiday: 'HOLIDAY' },
+  ru: { new: 'НОВОЕ', sale: 'АКЦИЯ', holiday: 'ПРАЗДНИК' },
+};
+
+export function stickerText(kind: Exclude<BadgeKind, 'discount' | 'price'>, language: z.infer<typeof Language>): string {
+  return STICKER_WORDS[language][kind];
+}
 
 /** Badge text: at most 8 characters, one line. */
 export const BadgeText = z.string().trim().min(1).max(8).regex(/^[^\n]*$/, 'Badge text is one line');

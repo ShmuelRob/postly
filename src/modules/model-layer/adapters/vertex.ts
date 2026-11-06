@@ -52,7 +52,16 @@ export interface VertexOptions {
 }
 
 /** Application Default Credentials: the Cloud Run service account in GCP, `gcloud auth application-default login` locally. */
-export function adcTransport(): VertexTransport {
+/**
+ * True where no test or CI job may reach a paid model (agent.md, Testing without paying for a model):
+ * Vitest sets NODE_ENV=test, and every CI job sets CI=true.
+ */
+export function realModelsRefused(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === 'test' || env.CI === 'true';
+}
+
+export function adcTransport(env: NodeJS.ProcessEnv = process.env): VertexTransport {
+  if (realModelsRefused(env)) throw new Error('Real Vertex AI calls are refused in tests and CI (agent.md, Testing without paying for a model)');
   const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   return async (url, body) => {
     const client = await auth.getClient();

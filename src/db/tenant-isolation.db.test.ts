@@ -26,7 +26,8 @@ const businessOwned = Object.values(schema as Record<string, unknown>)
 /** The column that identifies a row: id, or business_id for conversation_state. */
 const keyOf = (name: string) => (name === 'conversation_state' ? 'business_id' : 'id');
 /** A column the updating role may set in place on each table. */
-const touchColumn = (name: string) => (name === 'approval' ? 'invalidated_at' : keyOf(name));
+// media_asset: the workflow role may update only `review` (WP-94), so that is the column to set.
+const touchColumn = (name: string) => (name === 'approval' ? 'invalidated_at' : name === 'media_asset' ? 'review' : keyOf(name));
 
 const roleFor = (name: string, verb: 'SELECT' | 'UPDATE' | 'DELETE') => roleWith(name, verb, BUSINESS_ROLES) as BusinessRole | undefined;
 const count = async (tx: Tx, query: SQL) => (await tx.execute(query)).count;
@@ -92,7 +93,8 @@ describe.each(businessOwned)('%s', (name) => {
     const own = a.keys.get(name)!;
     await expectDbError(
       db.withBusiness(updater!, a.id, (tx) => tx.execute(sql`update ${table} set business_id = ${b.id} where ${key} = ${own}`)),
-      name === 'approval' ? /permission denied/ : /row-level security/,
+      // The updater of approval and media_asset has a column-limited grant, so the move is refused at the privilege check.
+      name === 'approval' || name === 'media_asset' ? /permission denied/ : /row-level security/,
     );
   });
 });

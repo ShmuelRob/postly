@@ -112,6 +112,8 @@ describe('AgentStep', () => {
 
   it('converts to a JSON schema without oneOf, for the model layer', () => {
     expect(JSON.stringify(z.toJSONSchema(AgentStep))).not.toContain('oneOf');
+    // A field the model fills has a real type: no bare `{}` ("any") schema anywhere in a step.
+    expect(JSON.stringify(z.toJSONSchema(AgentStep))).not.toMatch(/"value":\{\}/);
   });
 });
 
@@ -156,6 +158,9 @@ describe('tool calls (agent.md, Tools)', () => {
     expect(call(req)).toBe(true);
     expect(call({ ...req, purpose: 'post' })).toBe(false);
     expect(call({ ...req, purpose: 'post', postId: uuid })).toBe(true);
+    // week: the weekly update asks for a photo before any post exists (WP-93).
+    expect(call({ ...req, purpose: 'week' })).toBe(true);
+    expect(call({ ...req, purpose: 'week', postId: uuid })).toBe(false);
   });
 
   it('record_decline: what was declined, and the owner quote', () => {

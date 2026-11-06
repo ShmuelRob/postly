@@ -60,7 +60,7 @@ Steps that stay code-only and agent-free: the intro message, the style samples a
 
 A **turn** is one run of one agent for one business, triggered by a claimed inbound burst routed to that agent by the conversation step, or by a code event (the plan was stored, so drafting starts; a detail was provided; the team cleared a handoff).
 
-1. **Lock.** The turn takes the business's `conversation_state` row (`for update` in a short transaction that marks the turn `running`), so at most one turn runs per business. A second trigger while a turn runs waits for the burst sweep, as an unprocessed burst does today.
+1. **Lock.** The turn takes the business's `conversation_state` row (`for update` in a short transaction that inserts the turn's `agent_turn` row as `running`), so at most one turn runs per business: a second trigger that finds a `running` turn younger than twice the turn timeout runs nothing (the burst stays unprocessed and the sweep hands it over again). An older `running` turn is a crashed one; it is closed as `failed` and the new turn starts.
 2. **Context.** Code builds the agent's input from this business only ([Context](#context)).
 3. **Step.** The model layer runs the agent's task. Its output is an `AgentStep`: one to four tool calls and a `confidence` (0 to 1). The output is Zod-validated like every model task; an invalid output retries within `model_task_config.max_retries` and then routes to the console.
 4. **Execute.** Code runs the step's tool calls in order. Each call is checked (allowed for this agent and state, input schema, the tool's code checks) and then applied through the module that owns the data, in that module's transaction and role. A refused call stops the step: the later calls in it are skipped, and the refusal reason goes back to the agent.
@@ -68,7 +68,11 @@ A **turn** is one run of one agent for one business, triggered by a claimed inbo
 6. **Loop.** Otherwise the tool results are appended to the context and the next step runs.
 7. **Record.** The `agent_turn` row gets the stop reason, the steps (tool calls and results), the total cost and duration; every model call of the turn is a `model_run` with the turn's id.
 
-A crash mid-turn leaves the turn `running`; the burst it came from is still unprocessed (its claim is a lease), so the sweep re-runs it. Every tool call is idempotent by `(turnId, stepIndex, callIndex)`: a re-run turn starts a new turn row, and a tool call whose owner message was already sent for the same burst is not sent twice (messaging checks for an outbound message with the same idempotency key).
+A crash mid-turn leaves the turn `running`; the burst it came from is still unprocessed (its claim is a lease), so the sweep re-runs it as a new turn. Each tool call's effect is its own transaction and is recorded in the turn's `steps` right after it runs, so a re-run sees what the crashed turn already did (its recorded calls are in the context's history). A crash between a send and its record can repeat that one message once; WP-90 accepts this (messaging has no idempotency key for free-form sends) and the console shows both turns.
+
+**Where the agent's own memory lives.** Declines (`record_decline`) and the questions already asked (for the repeated-question limit) are read from the business's earlier `agent_turn` rows: the successful `record_decline` and `ask_owner` calls of the current onboarding, or of the current business week once the business is active. No other table stores them.
+
+**Roles (WP-90).** The agent module runs as the existing `workflow` role, which already reads the context tables and writes `conversation_state` and console items; it gains `agent_turn` and read access to `agent_config` and `system_control`. No new database login is created, so no new secret, Terraform change or connection pool is needed (security.md, D7 and D9). Spend is read by the model layer: a business's spend as the `model` role, and the all-business spend as the `scheduler` system role, which gains read access to `model_run`.
 
 ### Limits
 
@@ -78,19 +82,22 @@ All limits are configuration values (`agent_config`, a system table, one row per
 | --- | --- | --- |
 | Steps per turn | 12 | Hand off: `agent_limit` console item, reason `max_steps` |
 | Tool calls per turn | 24 | Same, reason `max_tool_calls` |
-| Cost per turn | USD 0.06 | Same, reason `turn_budget`; the model layer refuses a call whose `max_cost_usd` would pass the remaining turn budget |
-| Cost per business per day | USD 1.00 | Same, reason `daily_budget`; summed from `model_run.cost_usd` since local midnight. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
-| Cost across all businesses per day | USD 50 | Every agent turn hands off (reason `global_budget`) and the team gets an alert; the old one-shot path is not a fallback for cost |
-| Turn duration | 90 seconds | The turn stops after the current tool call, reason `timeout` |
+| Cost per step | `model_task_config.max_cost_usd`, USD 0.02 for the agent tasks | Counts every attempt of the step, retries included: the model layer starts a retry only when the step's spend so far plus the last attempt's cost stays within the cap, and otherwise fails the step (the step then hands off, reason `invalid_output`). Retries never get a cap of their own |
+| Cost per turn | USD 0.06 | Same, reason `turn_budget`. A step starts only when the turn's remaining budget is at least the step's cap, so three full steps fit a turn and a fourth does not start. With the retry rule above each step stays within its cap, and the caps of the steps that started fit the budget, so a turn stays within its budget (an attempt that costs more than the one before it can still overshoot by that difference) |
+| Cost per business per day | USD 1.00 | Same, reason `daily_budget`; summed from `model_run.cost_usd` of every task (not only the agents') since local midnight in `business.timezone`, checked before each step against the step's cap. A business over its daily budget gets no agent turn until the next day; its messages are kept for the console |
+| Cost across all businesses per day | USD 50 (`system_control.agent_daily_cost_cap_usd`) | Every agent turn hands off (reason `global_budget`) and the team gets an alert (the log line `agent global budget reached`, one per stopped turn, and its alert in docs/observability.md); the old one-shot path is not a fallback for cost. Summed from `model_run.cost_usd` of every business since 00:00 UTC, checked before each step |
+| Turn duration | 90 seconds | The turn stops after the current tool call, reason `timeout`. A model call is bounded by the time the turn has left: one that hangs past it ends the turn, its late answer is dropped (no tool of it runs), and the turn row closes, so the business's next turn is not blocked |
 | Repeated question | The same `ask_owner.topic` 3 times in a week or an onboarding step | Hand off, reason `stuck` (the existing three-attempt rule) |
 | Low confidence | `confidence` below 0.4 on a step | The step's calls are not run; hand off, reason `low_confidence` |
 | Refused tool calls | 3 refusals in one turn | Hand off, reason `refusals` |
 
-A hand-off from a limit always sends the owner one fixed code line (H6: a person will continue shortly), sets the handoff flag, and opens one console item with the turn id. The console shows the turn's steps.
+A hand-off from a limit always sends the owner one fixed code line in the business's first language (H6: a person will continue shortly), sets the handoff flag, and opens one console item with the turn id. The console shows the turn's steps.
 
 ### Module direction
 
 The workflow module routes a burst or a code event to the agent module (`agent.runTurn(businessId, trigger)`); the agent module never imports workflow. The state machine events a tool needs (for example `DRAFT_READY` inside `create_draft`) reach the tools as callbacks injected when the app is wired (`createAgent({ events, messaging, content, design, ... })`), the same way flows get their providers today. So the dependency runs workflow → agent only, and dependency-cruiser keeps it that way.
+
+**Implementation note (WP-93, 2026-11-06).** Until WP-92, WP-93 and WP-94 have all landed, each flow creates its own agent instance in its workflow file (`workflow/weekly.ts` for the weekly agent) with the events its tools need, and a package adds an event to `AgentEvents` by a module augmentation in its own tool file (`planStored` in `tools/plan.ts`). The turn lock is in the database, so several instances are safe. Once the three packages are in, one `createAgent` in `app.ts` with every event replaces the per-flow instances (a cleanup the manager schedules).
 
 ### Context
 
@@ -105,6 +112,8 @@ The agent sees only what its task needs, all from one business (`withBusiness`):
 - the tool list for this agent and state, the done rule in words, and the remaining step and cost budget.
 
 It never sees phone numbers (the approver's number is replaced by "the owner"), other businesses, tokens, provider ids, or payment data.
+
+**Added by WP-94 (2026-11-06).** The context builder now carries the active preference rules, each post's current captions and `DesignSpec` (from its current version) and, for every photo in the messages and in the week's posts, the `image_review` notes (`description`, `usable`, and a suggested `crop`, `rotateDeg`, `brightness`, `contrast`). The notes live in `media_asset.review`, written once by the workflow when drafting starts (code calls `image_review` for each planned photo that has none; a failed review only means the agent drafts without notes). The `workflow` role gained `SELECT` on `preference_rule`, `post_version` and `media_asset`, and `UPDATE (review)` on `media_asset` (H4, migration 0022). `ContextPost.photos` (the post's planned photos with their notes) is the one contract addition (H1).
 
 ### Photos the agent sees
 
@@ -144,7 +153,9 @@ Sets one field of the onboarding draft (or of the active profile, A7).
 | `value` | Validated against that field's own schema in `BusinessProfileDraft` |
 | `sourceQuote` | Required for `name`, `location.*`, `contact.*`, `schedule.*`, `differentiator`, `mainProducts` and `fixedHashtags`: words of the owner's own messages in the context, verbatim (whitespace runs count as one space). Optional for fields with defaults (`tone`, `contentTypes`, `formats`) when the agent infers them from the owner's answers |
 
-Code checks the quote (`quote_not_found`) and that the value's numbers (hours, phone digits, house number) appear in the quote. On an active business, code sends the owner a fixed confirmation naming the field and its new value (H6). It can't touch: the approver, the business status, channels, the subscription, posts.
+Code checks the quote (`quote_not_found`): it may come from any of the owner's messages in the context. Code checks that the value's numbers (hours, phone digits, house number) appear in the quote, or in the field's saved value, so a correction ("on Friday we close at 13:00") keeps the numbers the owner gave before (`value_not_in_quote`); a phone matches in its `+972` and local `0` forms. On an active business, code sends the owner a fixed confirmation naming the field and its whole new value (H6, `src/modules/agent/tools/profile-copy.ts`; WP-92), whichever agent made the change; a closed window skips it. It can't touch: the approver, the business status, channels after onboarding, the subscription, posts.
+
+**Nested fields (WP-92).** A part of a nested field (`location.city`) is saved into the profile only once its whole object is valid (all four `location` parts, all three `schedule` parts, and so on). Until then the call succeeds with `saved: false` and the parts still `waitingFor`, and the parts given so far are read back from this onboarding's earlier `set_profile_field` calls (the turn history). So the stored profile is always a valid `BusinessProfileDraft`, and the agent's context never loses it.
 
 ### `record_fact`
 
@@ -165,10 +176,10 @@ Asks the owner for a photo.
 
 | Field | Rule |
 | --- | --- |
-| `purpose` | `logo`, `business` (onboarding), or `post` (with `postId`) |
+| `purpose` | `logo`, `business` (onboarding), `week` (the weekly update, before any post exists; added 2026-11-06 by WP-93), or `post` (with `postId`, and only `post` names a post) |
 | `text` | As `ask_owner.text` |
 
-Code sends the request (window rules as `ask_owner`) and stores the open question `photo_request` with the purpose; the next image from the owner answers it (for `logo`, code sets `brand.logoAssetId`). At most two photo requests per post. It can't touch: the media library beyond linking the answering photo.
+Code sends the request (window rules as `ask_owner`) and stores the open question `photo_request` with the purpose; the next image from the owner answers it (for `logo`, code sets `brand.logoAssetId`; for `week`, the photo joins `weekly_update.media_asset_ids`, so `plan_posts` may use it). At most two photo requests per post. It can't touch: the media library beyond linking the answering photo.
 
 ### `record_decline`
 
@@ -234,6 +245,19 @@ Code sets the handoff flag, opens a `handoff` console item with the turn id and 
 
 No fields. Ends the turn without waiting for anything (for example after an acknowledgement). Code still evaluates the done rule.
 
+### The onboarding agent in the flow (WP-92)
+
+With `agent_flows.onboarding` on for the business:
+
+- **intro** (code): the persona's intro, `onboardingCopy.intro(name)`: her name (A1: the business's `persona.agentName`, else `system_control.agent_name` for the language, else Postly / פוסטלי) and feminine Hebrew (A2). Then the first agent turn asks the first question.
+- **profile_questions**: each owner burst runs a turn. When the turn ends `done`, code applies `PROFILE_FIELDS_COMPLETE` (its usual guard) and starts a brand-assets turn at once, which asks for the logo.
+- **brand_assets**: an image answers the open photo request: for `photo_request:logo`, code sets `brand.logoAssetId` from the first image; other images join the open question's `photoAssetIds`. Then the turn runs; when it ends `done`, code applies `BRAND_ASSETS_DONE` and sends the style samples.
+- **profile_review**: the approval words still approve by code. Any other text runs a turn; `done` (a correction saved) applies `PROFILE_CORRECTED` and code resends the summary; a turn that ends without a change gets the "what to correct?" line; a question from the agent waits for the answer.
+- Every other step (style choice, approval, channels, activation, payment link) is code, unchanged. With the flow off, onboarding runs the fixed questions as before.
+- The agent's `questionAsked` event stores its open question on `conversation_state` (attempts counted per key), so a repeated topic still meets the three-attempt limit.
+
+**Not yet with the onboarding agent:** a voice note's transcript does not reach the agent, because the context builder reads each message's text only (a runtime follow-up). With the flow on, a voice answer is seen as an empty message.
+
 ## How it fits the state machines
 
 The machines do not get new states. What changes is who produces the events' inputs:
@@ -245,6 +269,14 @@ The machines do not get new states. What changes is who produces the events' inp
 - **Approval and after.** Unchanged and agent-free: `APPROVED` comes only from a button tap; `ALL_DRAFTS_RESOLVED`, the time proposal, `SCHEDULE_CONFIRMED` and publishing are code.
 
 Free text in `reviewing_drafts` that is not a change (such as "looks good") is still not an event: the drafts agent is not called for it; code resends the open drafts with their buttons, as today. Routing between "a change" and "not a change" stays with `intent_detection`.
+
+### How the drafts agent runs (WP-94)
+
+- **Where it starts.** With `agent_flows.drafts` on, `draftWeek` (after the plan is stored) writes the photo notes and runs one turn (trigger `plan_stored`); an owner text in `reviewing_drafts` that `intent_detection` reads as a change applies the conversation's `CHANGE_REQUESTED` and runs a turn on the burst. An answer to a question the agent asked comes back to it: its open question's key is stored as `agent:drafts:<topic>`, so the drafts flow takes the answer (`ANSWER_RECEIVED`) before the weekly flow can.
+- **Who does what.** The tools run the checks that need only data (ids and states, the plan's facts and photos, the 720-pixel crop rule, the fact check of captions, title and badge, the forbidden topics) and call the workflow through the events `draftCreated`, `changeApplied` and `holidayInWeek`; the workflow renders, writes the version (with its `design_spec`), sends it with the buttons and applies the post's events. The agent never sees the buttons.
+- **A fix renders first.** `apply_change` renders the new content before it invalidates anything, so a render that fails (`render_failed`) changes nothing and the agent can correct it; only then are the approvals invalidated, `CHANGE_REQUESTED` applied, the rule saved and the new version sent.
+- **Done.** On the plan's event the turn is done when no post is planned or drafting. On an owner message it also needs a draft written in this turn (`create_draft` or `apply_change` succeeded), because a fix leaves its post waiting for approval the whole time. After the turn, a post still drafting goes to `needs_review` (`DRAFT_FAILED`), and code applies `DRAFTS_SENT` (or hands off when no draft could be sent).
+- **Sticker words and holidays.** The fixed words (`STICKER_WORDS`, he, ar, en, ru) live in the contracts so the workflow resolves a badge's text without the design module; `holidayInWeek` is the jewish-calendar check for the post's Sunday-to-Saturday week.
 
 ## Photo edits
 
@@ -303,8 +335,12 @@ Prompt rules that code also enforces: no detail without a source (the fact check
 The human's rule: no test pays for an LLM.
 
 - **Every unit, db and e2e test** runs the agents on the **scripted agent**: a mode of the model simulator in which each `agent_*` task returns the next `AgentStep` from a deterministic script that the test supplies (a list of steps per turn, keyed by agent and turn number). A script that runs out, or a call to a task with no script, fails the test. The tests assert on the tool results, the state machine events, what the owner saw and what reached the networks. Refusals are tested by scripting bad tool calls (a quote that is not in the message, a badge that does not match a fact, an out-of-range crop, a third question).
+  - **How a script is read (WP-91).** A call whose `AgentContext.toolResults` is empty starts the agent's next scripted turn; any later step continues it (`toolResults` holds every result of the turn so far, while the runtime rebuilds the rest of the context before each step). A scripted invalid output or provider failure is followed by a retry with the same input, which takes the next entry of the same turn. A turn that ends with steps left over, a script that runs out, a context that is not an `AgentContext`, or a call to an agent with no script (once the test scripted any agent) is a violation: the simulator throws `ScriptedAgentError`, and the e2e harness fails the test at teardown even if the model layer's retry or console fallback swallowed the error. A model simulator with no agent script keeps the hand-off default, so an unscripted agent never acts.
+  - **The report.** Each scripted step (agent, turn, step, tool calls, confidence) is recorded with the results the runtime passed back in the next step's `toolResults`; the runtime's optional `onTurnEnd` hook (`AgentDeps.onTurnEnd`, once per turn after its `agent_turn` row is final; a `null` result is a call that never ran) adds the last step's results and the stop reason. The e2e report shows them in an "Agent steps" section.
+  - **Strict agents.** `new ModelSimulator({ strictAgents: true })` makes every agent call without a script a violation from the start, even when the test scripts no agent; the agent e2e tests use it.
+  - **No real model behind the harness.** The e2e harness refuses a model provider named like a real adapter (`google`), and a static test checks that no test file builds the Vertex adapter's real transport and that no CI workflow, `package.json` script or test config sets `POSTLY_MODELS=vertex`. The runtime guard on `NODE_ENV`/`CI` is the model layer's (WP-90).
 - **The model layer refuses a real provider in tests.** The provider factory throws when `NODE_ENV` is `test` or `CI` is `true` and the provider is not a simulator, so no Vitest run and no other CI job (the image build, the compose job) can reach a real model; a unit test proves both. `npm run check` and CI never set a real model.
-- **The playground and the dev sandbox** keep a word-rule stand-in (`src/simulators/conversational/`) extended with a simple rule agent, so the human can play the agent flows without a model.
+- **The playground and the dev sandbox** keep a word-rule stand-in (`src/simulators/conversational/`) extended with a simple rule agent, so the human can play the agent flows without a model. The rule agent is a pure function of the `AgentContext`, reading what the turn already did from `toolResults`: onboarding fills the asked fields from the owner's whole answer (quoting it verbatim) and asks for the next missing group, then asks "anything else?" once; brand assets ask for the logo and the business photos and record a decline when text comes instead of an image; the weekly agent records the update as one fact and plans the week from it; the drafts agent drafts each planned post from its plan (asking for a photo when there is none) and applies an owner's change to the first open draft. It is not product logic.
 - **The manual eval** (`npm run eval:agent`) is a separate script, outside Vitest and outside `npm run check`, that runs the example set's conversations against real Gemini. It refuses to start unless `POSTLY_AGENT_EVAL=1` is set, prints the expected cost before the first call, stops at a spend cap (`POSTLY_AGENT_EVAL_MAX_USD`, default 2), and writes a report: the conversations, the tool calls, the refusals, the drafts and their renders, and the cost. CI never runs it; a check fails if any CI workflow or `npm run check` references it.
 
 ## Data

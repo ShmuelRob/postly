@@ -136,8 +136,8 @@ describe('image_review', () => {
 
   it('requires the crop to be normalized', () => {
     const base = { usable: true, score: 0.7, issues: [] };
-    expect(output.safeParse({ ...base, crop: { x: 0.1, y: 0, width: 0.8, height: 1 } }).success).toBe(true);
-    expect(output.safeParse({ ...base, crop: { x: 0.5, y: 0, width: 0.8, height: 1 } }).success).toBe(false);
+    expect(output.safeParse({ ...base, crop: { x: 0.1, y: 0, w: 0.8, h: 1 } }).success).toBe(true);
+    expect(output.safeParse({ ...base, crop: { x: 0.5, y: 0, w: 0.8, h: 1 } }).success).toBe(false);
   });
 });
 

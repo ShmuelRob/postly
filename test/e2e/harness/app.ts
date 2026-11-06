@@ -16,7 +16,10 @@ import {
 import type { Network } from '../../../src/contracts/common.js';
 import type { BusinessRenderContext } from '../../../src/modules/design/index.js';
 import { modelTasks, type ModelTaskName } from '../../../src/contracts/model-tasks.js';
+import { ModelSimulator } from '../../../src/simulators/model.js';
+import { REAL_MODEL_PROVIDER_NAMES, type AgentTurnReport } from '../../../src/simulators/scripted-agent.js';
 import type {
+  AgentStepEntry,
   ConsoleEntry,
   E2eRecord,
   ModelCallEntry, ImageAttachment, PublishingEntry, RenderedImage, TranscriptEntry } from './record.js';
@@ -86,6 +89,10 @@ export interface E2eRun {
   modelCalls(): ModelCallEntry[];
   /** Adds items the team console holds to the report; the test reads them from where the app stored them. */
   recordConsoleItems(items: Omit<ConsoleEntry, 'at'>[]): void;
+  /** Adds an agent turn to the report; pass it as the agent runtime's `onTurnEnd` hook (WP-90). */
+  recordAgentTurn(turn: AgentTurnReport): void;
+  /** Off-script agent calls and scripted steps never played; the `e2eTest` fixture fails the test on any. */
+  agentScriptProblems(): string[];
   close(): Promise<void>;
 }
 
@@ -94,6 +101,10 @@ export interface E2eRun {
  * report see exactly what the owner and the networks would see.
  */
 export async function startE2eRun(record: E2eRecord, options: StartOptions): Promise<E2eRun> {
+  // No e2e run may reach a paid model (agent.md, Testing without paying for a model).
+  if ((REAL_MODEL_PROVIDER_NAMES as readonly string[]).includes(options.providers.model.name)) {
+    throw new Error(`The e2e harness refuses the real model provider "${options.providers.model.name}"; use the model simulator`);
+  }
   const now = () => (options.now ?? (() => new Date()))().toISOString();
   const readMedia = options.readMedia ?? (async () => undefined);
   const attach = async (ref: string): Promise<ImageAttachment> => {
@@ -101,6 +112,13 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
     if (!media) return { ref, mimeType: 'unknown' };
     return { ref, mimeType: media.mimeType, src: `data:${media.mimeType};base64,${Buffer.from(media.data).toString('base64')}` };
   };
+
+  // The scripted agent's steps, live: a step's results are attached when the next step runs.
+  const scripted = options.providers.model instanceof ModelSimulator ? options.providers.model : undefined;
+  const agentSteps = (): AgentStepEntry[] => (scripted?.agentSteps ?? []).map((s) => Object.assign(s, { at: (s as Partial<AgentStepEntry>).at ?? now() }));
+  if (scripted) {
+    Object.defineProperty(record, 'agentSteps', { get: agentSteps, enumerable: true, configurable: true });
+  }
 
   const providers: Providers = {
     messaging: recordMessaging(options.providers.messaging, record, now, attach),
@@ -169,8 +187,14 @@ export async function startE2eRun(record: E2eRecord, options: StartOptions): Pro
       record.consoleItems ??= [];
       record.consoleItems.push(...items.map((item) => ({ at: now(), ...item })));
     },
+    recordAgentTurn: (turn) => {
+      (record.agentTurns ??= []).push({ at: now(), ...structuredClone(turn) });
+    },
+    agentScriptProblems: () => scripted?.agentScriptProblems() ?? [],
     close: async () => {
       await app.close?.();
+      // Freeze the live steps into plain data for the reporter.
+      if (scripted) Object.defineProperty(record, 'agentSteps', { value: structuredClone(agentSteps()), enumerable: true, writable: true, configurable: true });
     },
   };
 }
@@ -304,4 +328,10 @@ function recordRenderer(inner: TemplateRenderer, record: E2eRecord, now: () => s
       return result;
     },
   };
+}
+
+/** Fails when any run's scripted agent went off script or left steps unplayed. */
+export function assertAgentScripts(runs: Pick<E2eRun, 'agentScriptProblems'>[]): void {
+  const problems = runs.flatMap((run) => run.agentScriptProblems());
+  if (problems.length) throw new Error(`The scripted agent went off script:\n- ${problems.join('\n- ')}`);
 }

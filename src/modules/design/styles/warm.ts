@@ -4,6 +4,7 @@
 // grain is an SVG noise drawn in code, so no texture file enters the repository.
 
 import { BADGE_EDGE, BADGE_SIZE, badgeFontSize, badgeHtml } from '../badge.js';
+import { counterCss, counterHtml } from '../carousel.js';
 import { ensureContrast, ensureGraphicContrast, fillForText } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { LOGO_BOX } from '../layout.js';
@@ -46,7 +47,7 @@ export const warm: StyleTemplate = {
 
   html(ctx) {
     const logo = `<div class="logo-circle">${logoHtml(ctx, 'logo')}</div>`;
-    if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logo}`;
+    if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logo}${counterHtml(ctx, 'counter')}`;
     return `${photoHtml(ctx, 'photo')}${logo}
       <div class="card"><div class="rule"><span data-graphic></span><span data-graphic></span></div>${overlayHtml(ctx, 'overlay')}</div>${badgeHtml(ctx, 'badge')}`;
   },
@@ -70,6 +71,7 @@ export const warm: StyleTemplate = {
         background: ${CARD_COLOR} ${paperGrain(0.14)}; border-radius: ${CARD_RADIUS}px;
         box-shadow: 0 10px 30px rgba(59, 42, 30, 0.18), inset 0 0 0 2px ${secondary}33;
         display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+      ${counterCss(ctx, 'counter', this.fonts.secondary, palette.background, palette.text)}
       .badge { position: absolute; top: ${safeArea}px; inset-inline-end: ${safeArea}px; width: ${BADGE_SIZE}px; height: ${BADGE_SIZE}px;
         border-radius: 50%; background: ${stamp}; color: ${CARD_COLOR}; ${fontCss(this.fonts.headline)}
         box-shadow: 0 0 0 ${BADGE_EDGE}px ${CARD_COLOR}, 0 10px 24px rgba(59, 42, 30, 0.28);

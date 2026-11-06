@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 import type { Language, Network } from '../../contracts/common.js';
+import type { PhotoEdit } from '../../contracts/design-spec.js';
 import {
   RenderRequest,
   RenderResult,
@@ -47,6 +48,11 @@ export interface Rasterizer {
 }
 
 export interface ImageProcessor {
+  /**
+   * Straightens (the corners are cropped, no empty edge) and tones a photo, in that order; returns
+   * PNG. A value outside the ranges throws. The edit's crop is the cover focus and is not applied here.
+   */
+  edit(photo: Uint8Array, edit: PhotoEdit): Promise<Uint8Array>;
   /** Cover-crops a photo to the box, centered on the crop when one is given; returns PNG. */
   coverCrop(photo: Uint8Array, box: Size, crop?: NormalizedCrop): Promise<Uint8Array>;
   /** Scales a logo to fit the square box, never upscaling; returns PNG and its size. */
@@ -143,8 +149,11 @@ export function createDesignEngine(deps: DesignEngineDeps): DesignEngine {
       for (const [index, photoBytes] of photos.entries()) {
         const kind: SlideKind = index === 0 ? 'cover' : 'photo';
         const box = style.photoBox(kind, group.size);
-        const crop = business.photoCrops?.[request.photoUrls[index]!];
-        const photo = await images.coverCrop(photoBytes, box, crop);
+        // The agent's crop (the request's edit) replaces the image_review crop as the cover focus.
+        const photoEdit = request.edits?.[index];
+        const crop = photoEdit?.crop ?? business.photoCrops?.[request.photoUrls[index]!];
+        const edited = photoEdit && (photoEdit.rotateDeg || photoEdit.brightness || photoEdit.contrast) ? await images.edit(photoBytes, photoEdit) : photoBytes;
+        const photo = await images.coverCrop(edited, box, crop);
         const ctx: SlideContext = {
           kind,
           canvas: group.size,
@@ -155,6 +164,7 @@ export function createDesignEngine(deps: DesignEngineDeps): DesignEngine {
           logo,
           overlayText: kind === 'cover' ? overlayText : '',
           ...(kind === 'cover' && request.badge !== undefined ? { badge: request.badge } : {}),
+          ...(photos.length > 1 ? { slide: { index: index + 1, total: photos.length, numbered: request.carouselLayout === 'numbered' } } : {}),
           safeArea: SAFE_AREA,
         };
 

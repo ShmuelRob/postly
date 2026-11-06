@@ -26,6 +26,11 @@ export type SlideContext = {
   logo: LogoImage | LogoText;
   /** Plain text; escape it with `escapeHtml`. Empty on photo slides. */
   overlayText: string;
+  /**
+   * Where this slide sits in its carousel (absent for a single post), and whether the layout is
+   * `numbered` (a counter on every slide after the cover, carousel.ts).
+   */
+  slide?: { index: number; total: number; numbered: boolean };
   /** The cover's badge, its text already resolved by the caller; absent on photo slides. */
   badge?: { kind: BadgeKind; text: string };
   /** 64 px on every side; elements marked `data-safe` must stay inside it. */

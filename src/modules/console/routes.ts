@@ -149,6 +149,7 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
 
       scope.get('/api/businesses', (_q, reply) => run(reply, () => c.businesses()));
       scope.get('/api/businesses/:id/messages', (q, reply) => run(reply, () => c.messages(id(q.params))));
+      scope.get('/api/businesses/:id/agent-turns', (q, reply) => run(reply, () => c.agentTurns(id(q.params))));
       scope.get('/api/drafts', (q, reply) => run(reply, () => c.drafts(DraftsQuery.parse(q.query).businessId)));
       scope.get('/api/items', (_q, reply) => run(reply, () => c.openItems()));
       scope.get('/api/system', (_q, reply) => run(reply, () => c.system()));

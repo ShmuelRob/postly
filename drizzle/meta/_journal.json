@@ -127,6 +127,41 @@
       "when": 1793923208000,
       "tag": "0017_agent_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794009608000,
+      "tag": "0018_agent_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794096008000,
+      "tag": "0019_agent_weekly_prompt",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794182408000,
+      "tag": "0020_agent_onboarding_prompt",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794268808000,
+      "tag": "0021_scheduler_model_run_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794355208000,
+      "tag": "0022_agent_drafts",
+      "breakpoints": true
     }
   ]
 }

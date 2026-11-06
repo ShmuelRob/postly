@@ -141,6 +141,42 @@ describe('renderReport', () => {
     expect(renderReport(run([test({ record: r })]))).not.toContain('javascript:alert(1)');
   });
 
+  it("shows the agent's steps: turn, tool calls, results and the turn's stop reason", () => {
+    const r: E2eRecord = {
+      ...emptyRecord(),
+      agentSteps: [
+        {
+          at,
+          agent: 'weekly',
+          turn: 1,
+          step: 1,
+          calls: [{ tool: 'record_fact', type: 'discount_percent', value: '20', sourceQuote: '20% הנחה' }],
+          confidence: 0.9,
+          results: [{ tool: 'record_fact', result: { status: 'refused', reason: 'quote_not_found', detail: 'not in the message' } }],
+        },
+        { at, agent: 'weekly', turn: 1, step: 2, output: { calls: [] }, results: [] },
+      ],
+      agentTurns: [
+        {
+          at,
+          agent: 'weekly',
+          businessId: 'b1',
+          turnId: 'turn-1',
+          stopReason: 'waiting_for_owner',
+          steps: [{ calls: [{ tool: 'end_turn' }, { tool: 'ask_owner', text: 'עד מתי?', topic: 'info', expects: 'answer' }], results: [{ status: 'ok', data: {} }, null] }],
+        },
+      ],
+    };
+    const html = renderReport(run([test({ record: r })]));
+    expect(html).toContain('<h3>Agent steps</h3>');
+    expect(html).toContain('record_fact');
+    expect(html).toContain('20% הנחה');
+    expect(html).toContain('refused: quote_not_found');
+    expect(html).toContain('invalid output');
+    expect(html).toContain('waiting_for_owner');
+    expect(html).toContain('end_turn (ok), ask_owner (not run)');
+  });
+
   it('handles a test that recorded nothing', () => {
     const html = renderReport(run([test({ state: 'skipped' })]));
     expect(html).toContain('data-state="skipped"');

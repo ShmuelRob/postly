@@ -1,19 +1,22 @@
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
+import type { AgentToolResult } from '../../contracts/agent.js';
+import { DesignSpec, stickerText } from '../../contracts/design-spec.js';
 import { BusinessProfile } from '../../contracts/business-profile.js';
 import { NETWORKS, type Network } from '../../contracts/common.js';
 import type { z } from 'zod';
 import type { Language as LanguageSchema } from '../../contracts/common.js';
 
 type Language = z.infer<typeof LanguageSchema>;
-import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost } from '../../contracts/model-tasks.js';
+import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost, PREFERENCE_SCOPES } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { RenderedMedia } from '../../contracts/post-version.js';
 import { encodeButtonId, WindowClosedError, type SendButtonsRequest, type SendTemplateRequest, type SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { RenderRequest, RenderResult } from '../../contracts/providers/renderer.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { checkCaptions, contentHash, factSources } from '../content/index.js';
+import { checkCaptions, checkDesign, contentHash, factSources, factsUsedBy } from '../content/index.js';
+import type { Agent, AgentDeps, DraftOutcome, TurnResult } from '../agent/index.js';
 import * as copy from './drafts-copy.js';
 import * as weeklyCopy from './weekly-copy.js';
 import { MAX_QUESTION_ATTEMPTS, type OnboardingBurst } from './onboarding.js';
@@ -31,9 +34,19 @@ export interface DraftsBurst extends OnboardingBurst {
   messages: { id: string; content: { kind: string; payload?: unknown }; mediaAssetIds: string[] }[];
 }
 
+/** The refusal reasons a tool result can carry (agent.md, Tools). */
+type DraftRefusal = Extract<AgentToolResult, { status: 'refused' }>['reason'];
+
+/** The open question's key for a question the drafts agent asked, so its answer comes back to the agent. */
+export const AGENT_QUESTION_PREFIX = 'agent:drafts:';
+
 export interface DraftsDeps {
   db: Database;
   workflow: Workflow;
+  /** The agent (WP-94): with it, and the drafts flow switched on in agent_flows, drafting and fixes run on it. */
+  agent?: Agent;
+  /** Whether the week that starts on this Sunday (a UTC midnight) holds a holiday: the holiday badge. */
+  holidayInWeek?: (weekStart: Date) => boolean;
   messaging: {
     sendText(businessId: string, request: SendTextRequest): Promise<unknown>;
     sendButtons(businessId: string, request: SendButtonsRequest): Promise<unknown>;
@@ -76,6 +89,17 @@ export interface Drafts {
   resendOpen(businessId: string, to: string, text: string): Promise<void>;
   /** The post's planned topic, for the approval confirmation. */
   topicOf(businessId: string, postId: string): Promise<string | undefined>;
+  /** The agent's `create_draft`: render, version and send a post's first draft (WP-94). */
+  agentDraft(businessId: string, input: { postId: string; captions: ChannelCaptions; usedFactIds: string[]; design: DesignSpec }): Promise<DraftOutcome>;
+  /** The agent's `apply_change`: invalidate, change, render, version and send (WP-94). */
+  agentChange(
+    businessId: string,
+    input: { postId: string; ownerQuote: string; captions?: ChannelCaptions; design?: DesignSpec; networks?: string[]; rule?: { text: string; scope: (typeof PREFERENCE_SCOPES)[number] } },
+  ): Promise<DraftOutcome>;
+  /** The agent asked the owner something about drafts: store the open question (WP-94). */
+  agentAsked(businessId: string, question: { key: string; askedFields: string[]; postId?: string }): Promise<void>;
+  /** Whether the post's week holds a holiday the calendar knows (the holiday badge, WP-94). */
+  holidayInWeek(businessId: string, postId: string): Promise<boolean>;
 }
 
 export type PhotoChoice = 'carousel' | 'one' | 'per_photo';
@@ -564,6 +588,8 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     if (!text) return resendDrafts(businessId, burst.from);
     const { intent } = await deps.model.run(businessId, 'intent_detection', { text, step: 'reviewing_drafts', draftsOpen: true });
     if (intent !== 'change_request' && intent !== 'weekly_update') return resendDrafts(businessId, burst.from);
+    // On the agent, the conversation goes to processing_update first and the agent applies the fix (agent.md, Fixes).
+    if (await agentOn(businessId)) return continueWithAgent(burst, 'CHANGE_REQUESTED');
     const open = await openDrafts(businessId);
     const target =
       question?.key === 'change_request' ? (await changeable(businessId)).find((p) => p.id === question.postId) : open.length === 1 ? open[0] : undefined;
@@ -571,10 +597,287 @@ export function createDrafts(deps: DraftsDeps): Drafts {
     await change(burst, business, target, text);
   }
 
+  // The drafts agent (WP-94; agent.md, Agents and How it fits the state machines), behind its
+  // agent_flows switch. The agent module never imports workflow: its tools reach the drafts code
+  // below through the events the app gives it (`agentDraft`, `agentChange`, `agentAsked`).
+
+  /** Whether the drafts flow runs on the agent for this business. */
+  const agentOn = async (businessId: string) => deps.agent !== undefined && (await deps.agent.flowEnabled(businessId, 'drafts'));
+
+  /** Per business: whether a draft could not be sent because the window had closed, during the running turn. */
+  const agentRuns = new Map<string, Run>();
+  const agentRun = (businessId: string): Run => {
+    const found = agentRuns.get(businessId);
+    if (found) return found;
+    const run: Run = { windowClosed: false };
+    agentRuns.set(businessId, run);
+    return run;
+  };
+
+  const refused = (reason: DraftRefusal, detail: string): DraftOutcome => ({ status: 'refused', reason, detail });
+
+  /** The design spec of a version, or a plain one from the plan (a version drafted before the agent has none). */
+  function designOf(version: VersionRow, plan: PlannedPost): DesignSpec {
+    const stored = DesignSpec.safeParse(version.designSpec);
+    if (stored.success) return stored.data;
+    return { photos: plan.mediaAssetIds.map((assetId) => ({ assetId })), title: plan.topic };
+  }
+
+  /** Renders a design for the post's networks and stores the files; a refusal says why it failed (nothing changed yet). */
+  async function renderDesign(
+    business: typeof schema.business.$inferSelect,
+    post: PostRow,
+    captions: ChannelCaptions,
+    design: DesignSpec,
+  ): Promise<{ media: RenderedMedia } | DraftOutcome> {
+    const businessId = business.id;
+    const profile = BusinessProfile.parse(business.profile);
+    try {
+      const badge = design.badge && {
+        kind: design.badge.kind,
+        text: 'text' in design.badge ? design.badge.text : stickerText(design.badge.kind, profile.languages[0] ?? 'he'),
+      };
+      const rendered = await deps.render(
+        { businessId, businessName: profile.name, languages: profile.languages },
+        {
+          style: profile.style,
+          format: post.format,
+          photoUrls: await Promise.all(design.photos.map((p) => deps.mediaUrl(businessId, p.assetId))),
+          overlayText: design.title,
+          ...(profile.brand?.logoAssetId ? { logoUrl: await deps.mediaUrl(businessId, profile.brand.logoAssetId) } : {}),
+          brandColors: profile.brand?.colors ?? [],
+          networks: Object.keys(captions) as Network[],
+          edits: design.photos.map(({ assetId: _assetId, ...edit }) => edit),
+          ...(badge ? { badge } : {}),
+          ...(design.carouselLayout ? { carouselLayout: design.carouselLayout } : {}),
+        },
+      );
+      const missing = (Object.keys(captions) as Network[]).find((n) => !rendered[n]?.length);
+      if (missing) throw new Error(`nothing rendered for ${missing}`);
+      return { media: await storeRenders(businessId, rendered) };
+    } catch (error) {
+      return refused('render_failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
+   * The code fact check of a version's own content against the facts it uses (its `usedFactIds`) and the
+   * profile: every detail in its captions, title and badge must have a source. A refusal means nothing
+   * may be written or sent. Run before anything changes, and again right before the version is written.
+   */
+  async function checkContent(
+    business: typeof schema.business.$inferSelect,
+    post: PostRow,
+    content: { captions: ChannelCaptions; usedFactIds: string[]; design: DesignSpec },
+  ): Promise<DraftOutcome | null> {
+    const profile = BusinessProfile.parse(business.profile);
+    const plan = post.plan as PlannedPost;
+    const facts = await weekFacts(business.id, post.weeklyUpdateId);
+    const sources = {
+      planFactIds: plan.factIds,
+      facts,
+      profile: { location: profile.location, contact: profile.contact, differentiator: profile.differentiator },
+    };
+    const caption = checkCaptions({ captions: content.captions, usedFactIds: content.usedFactIds }, sources);
+    if (caption) return refused('fact_mismatch', caption);
+    const holidayInWeek = content.design.badge?.kind === 'holiday' ? await holidayInWeekFor(business.id, post.id) : false;
+    const design = checkDesign(content.design, { ...sources, usedFactIds: content.usedFactIds, holidayInWeek });
+    return design ? refused(design.reason, design.detail) : null;
+  }
+
+  /** Writes the version, immutable from here (with its design spec), sends it with the buttons, and applies DRAFT_READY. */
+  async function versionAndSend(
+    business: typeof schema.business.$inferSelect,
+    post: PostRow,
+    content: { captions: ChannelCaptions; usedFactIds: string[]; design: DesignSpec; media: RenderedMedia },
+    run: Run,
+  ): Promise<DraftOutcome> {
+    const businessId = business.id;
+    const plan = post.plan as PlannedPost;
+    const facts = (await weekFacts(businessId, post.weeklyUpdateId)).filter((f) => plan.factIds.includes(f.id));
+    // factCheckPassed is written only after this version's own check: a mismatch writes and sends nothing.
+    const problem = await checkContent(business, post, content);
+    if (problem) return problem;
+    // Any new version invalidates earlier approvals, before it exists (state-machines.md, Approval guard).
+    await deps.invalidate(businessId, post.id);
+    const version = await db.withBusiness('content', businessId, async (tx) => {
+      await tx.select({ id: schema.post.id }).from(schema.post).where(eq(schema.post.id, post.id)).for('update');
+      const [last] = await tx.select({ n: max(schema.postVersion.versionNumber) }).from(schema.postVersion).where(eq(schema.postVersion.postId, post.id));
+      const [row] = await tx
+        .insert(schema.postVersion)
+        .values({
+          businessId,
+          postId: post.id,
+          versionNumber: (last?.n ?? 0) + 1,
+          captions: content.captions,
+          renderedMedia: content.media,
+          factSources: factSources(content.usedFactIds, facts),
+          factCheckPassed: true,
+          designSpec: content.design,
+          contentHash: contentHash({ format: post.format, captions: content.captions, renderedMedia: content.media }),
+        })
+        .returning();
+      await tx.update(schema.post).set({ currentVersionId: row!.id, updatedAt: new Date() }).where(eq(schema.post.id, post.id));
+      return row!;
+    });
+    try {
+      await sendDraft(businessId, business.approverPhone, post, version);
+    } catch (error) {
+      // The window closed: the draft is ready and goes out after the owner's next message.
+      if (!(error instanceof WindowClosedError) || !deps.messaging.sendTemplate) throw error;
+      run.windowClosed = true;
+    }
+    const ready = await postEvent(businessId, post.id, 'DRAFT_READY', async (tx) => {
+      const [row] = await tx.select({ current: schema.post.currentVersionId }).from(schema.post).where(eq(schema.post.id, post.id));
+      return row?.current === version.id ? null : 'the sent version is not the current version';
+    });
+    if (!ready.ok) return refused('not_allowed', 'the post did not accept the draft');
+    return { status: 'ok', data: { postId: post.id, versionNumber: version.versionNumber } };
+  }
+
+  /** create_draft (agent.md): the first version of a planned post, from the agent's captions and design. */
+  async function agentDraft(businessId: string, input: { postId: string; captions: ChannelCaptions; usedFactIds: string[]; design: DesignSpec }): Promise<DraftOutcome> {
+    const loaded = await loadBusiness(businessId);
+    const post = await loadPost(businessId, input.postId);
+    if (!loaded || !post) return refused('unknown_id', 'no such post');
+    // From planned: DRAFT_STARTED; from awaiting_clarification: DETAIL_PROVIDED; from drafting: nothing (agent.md, create_draft).
+    // The same check the tool ran, before the post moves (the workflow does not trust its caller's checks).
+    const problem = await checkContent(loaded.business, post, input);
+    if (problem) return problem;
+    if (post.status === 'planned' && !(await postEvent(businessId, post.id, 'DRAFT_STARTED')).ok) return refused('not_allowed', 'the post cannot start drafting');
+    if (post.status === 'awaiting_clarification' && !(await postEvent(businessId, post.id, 'DETAIL_PROVIDED')).ok) return refused('not_allowed', 'the post is not ready for a draft');
+    const rendered = await renderDesign(loaded.business, post, input.captions, input.design);
+    if (!('media' in rendered)) return rendered;
+    return versionAndSend(loaded.business, post, { ...input, media: rendered.media }, agentRun(businessId));
+  }
+
+  /** apply_change (agent.md): a fix to a post with a version. The render comes first, so a render that fails changes nothing. */
+  async function agentChange(
+    businessId: string,
+    input: { postId: string; ownerQuote: string; captions?: ChannelCaptions; design?: DesignSpec; networks?: string[]; rule?: { text: string; scope: (typeof PREFERENCE_SCOPES)[number] } },
+  ): Promise<DraftOutcome> {
+    const loaded = await loadBusiness(businessId);
+    const post = await loadPost(businessId, input.postId);
+    if (!loaded || !post) return refused('unknown_id', 'no such post');
+    const version = await currentVersion(businessId, post);
+    if (!version) return refused('not_allowed', 'this post has no version to change');
+    const plan = post.plan as PlannedPost;
+    const narrowed = (input.captions ?? (version.captions as ChannelCaptions));
+    const captions = Object.fromEntries(Object.entries(narrowed).filter(([n]) => !input.networks || input.networks.includes(n))) as ChannelCaptions;
+    const design = input.design ?? designOf(version, plan);
+    // The facts the new content uses, not the old version's: they are checked against and recorded as its fact_sources.
+    const usedFactIds = factsUsedBy({ captions, title: design.title, ...(design.badge ? { badge: design.badge } : {}) }, (await weekFacts(businessId, post.weeklyUpdateId)).filter((f) => plan.factIds.includes(f.id)));
+    const problem = await checkContent(loaded.business, post, { captions, usedFactIds, design });
+    if (problem) return problem;
+    const rendered = await renderDesign(loaded.business, post, captions, design);
+    if (!('media' in rendered)) return rendered;
+
+    // A change to an approved or scheduled post invalidates its approval first, so a failure after
+    // this leaves a post that cannot publish (technical-design.md, Approval flow).
+    const invalidated = post.status === 'approved' || post.status === 'scheduled';
+    if (invalidated) await deps.invalidate(businessId, post.id);
+    if (!(await postEvent(businessId, post.id, 'CHANGE_REQUESTED')).ok) {
+      if (invalidated) {
+        await db.withBusiness('workflow', businessId, (tx) =>
+          tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: post.id, details: { reason: CHANGE_REFUSED } }),
+        );
+      }
+      return refused('not_allowed', 'the post did not accept the change');
+    }
+    // PRD, Context that updates automatically: the correction is saved as a rule once it is applied.
+    if (input.rule) {
+      const rule = input.rule;
+      await db.withBusiness('business_data', businessId, (tx) =>
+        tx.insert(schema.preferenceRule).values({ businessId, scope: rule.scope, rule: rule.text, sourcePostVersionId: version.id }),
+      );
+    }
+    return versionAndSend(loaded.business, (await loadPost(businessId, post.id))!, { captions, usedFactIds, design, media: rendered.media }, agentRun(businessId));
+  }
+
+  /** The agent asked the owner something about drafts: the open question waits for the answer (and a post waits for a detail). */
+  async function agentAsked(businessId: string, question: { key: string; askedFields: string[]; postId?: string }) {
+    const loaded = await loadBusiness(businessId);
+    const key = `${AGENT_QUESTION_PREFIX}${question.key}`;
+    const attempts = loaded?.question?.key === key ? loaded.question.attempts + 1 : 1;
+    if (question.postId) {
+      const post = await loadPost(businessId, question.postId);
+      if (post?.status === 'drafting') await postEvent(businessId, post.id, 'DETAIL_MISSING');
+    }
+    await conversation(businessId, 'QUESTION_ASKED', { key, askedFields: question.askedFields, attempts, photoAssetIds: [], ...(question.postId ? { postId: question.postId } : {}) });
+  }
+
+  /** The `image_review` notes of every photo the week's posts use, written once (agent.md, Photos the agent sees). */
+  async function reviewPhotos(businessId: string, weekId: string) {
+    const posts = await db.withBusiness('workflow', businessId, (tx) => tx.select({ plan: schema.post.plan }).from(schema.post).where(eq(schema.post.weeklyUpdateId, weekId)));
+    const ids = [...new Set(posts.flatMap((p) => (p.plan as PlannedPost).mediaAssetIds))];
+    if (ids.length === 0) return;
+    const rows = await db.withBusiness('workflow', businessId, (tx) =>
+      tx.select({ id: schema.mediaAsset.id, review: schema.mediaAsset.review }).from(schema.mediaAsset).where(inArray(schema.mediaAsset.id, ids)),
+    );
+    for (const row of rows.filter((r) => r.review === null)) {
+      try {
+        const review = await deps.model.run(businessId, 'image_review', { mediaAssetId: row.id, purpose: 'post_photo' }, { referenceId: row.id });
+        await db.withBusiness('workflow', businessId, (tx) => tx.update(schema.mediaAsset).set({ review }).where(eq(schema.mediaAsset.id, row.id)));
+      } catch (error) {
+        // The notes are help for the agent, not a requirement: without them it drafts from the photo ids.
+        if (!isModelFailure(error)) throw error;
+        log.warn('image review failed', { businessId, mediaAssetId: row.id, error: String(error) });
+      }
+    }
+  }
+
+  /**
+   * What follows a drafts-agent turn: a question waits for its answer; otherwise a post still being
+   * drafted goes to review, and DRAFTS_SENT (or the hand-off) follows as for the one-shot drafts.
+   */
+  async function afterAgentTurn(businessId: string, weekId: string, result: TurnResult) {
+    if (result.status === 'waiting') return;
+    const run = agentRuns.get(businessId) ?? { windowClosed: false };
+    agentRuns.delete(businessId);
+    const stuck = await db.withBusiness('workflow', businessId, (tx) =>
+      tx.select().from(schema.post).where(and(eq(schema.post.weeklyUpdateId, weekId), eq(schema.post.status, 'drafting'))),
+    );
+    for (const post of stuck) await postEvent(businessId, post.id, 'DRAFT_FAILED');
+    // The runtime already handed the conversation to a person after a limit or a failure.
+    if (result.status === 'handed_off' || result.status === 'failed') return;
+    const loaded = await loadBusiness(businessId);
+    if (loaded) await finish(loaded.business, run);
+  }
+
+  async function draftWeekWithAgent(businessId: string, weekId: string) {
+    await reviewPhotos(businessId, weekId);
+    const result = await deps.agent!.runTurn(businessId, 'drafts', { kind: 'event', name: 'plan_stored' });
+    await afterAgentTurn(businessId, weekId, result);
+  }
+
+  /** The owner's change in `reviewing_drafts`, or the answer to a drafts question, run on the agent. */
+  async function continueWithAgent(burst: DraftsBurst, event: 'CHANGE_REQUESTED' | 'ANSWER_RECEIVED') {
+    const { businessId } = burst;
+    if (!(await conversation(businessId, event, null)).ok) return;
+    const [week] = await db.withBusiness('workflow', businessId, (tx) =>
+      tx.select({ id: schema.weeklyUpdate.id }).from(schema.weeklyUpdate).where(eq(schema.weeklyUpdate.businessId, businessId)).orderBy(desc(schema.weeklyUpdate.weekStart)).limit(1),
+    );
+    const result = await deps.agent!.runTurn(businessId, 'drafts', { kind: 'burst', messageIds: burst.messages.map((m) => m.id) });
+    if (week) await afterAgentTurn(businessId, week.id, result);
+  }
+
+  const holidayInWeekFor = (businessId: string, postId: string) => holidayInWeek(businessId, postId);
+
+  /** Whether the post's week holds a holiday (the holiday badge). */
+  async function holidayInWeek(businessId: string, postId: string): Promise<boolean> {
+    const post = await loadPost(businessId, postId);
+    if (!post || !deps.holidayInWeek) return false;
+    const [week] = await db.withBusiness('workflow', businessId, (tx) =>
+      tx.select({ start: schema.weeklyUpdate.weekStart }).from(schema.weeklyUpdate).where(eq(schema.weeklyUpdate.id, post.weeklyUpdateId)),
+    );
+    return week ? deps.holidayInWeek(new Date(`${week.start}T00:00:00.000Z`)) : false;
+  }
+
   return {
     async draftWeek(businessId, weekId) {
       try {
-        await draftWeek(businessId, weekId);
+        if (await agentOn(businessId)) await draftWeekWithAgent(businessId, weekId);
+        else await draftWeek(businessId, weekId);
       } catch (error) {
         // Any other error after the plan: the team gets the week and a person takes over, so the
         // conversation does not wait in processing_update answering every message with stillWorking.
@@ -587,16 +890,22 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       }
     },
     resendOpen: (businessId, to, text) => resendDrafts(businessId, to, text),
+    agentDraft,
+    agentChange,
+    agentAsked,
+    holidayInWeek,
     topicOf: async (businessId, postId) => ((await loadPost(businessId, postId))?.plan as PlannedPost | undefined)?.topic,
     async handle(burst) {
       const loaded = await loadBusiness(burst.businessId);
       if (!loaded || loaded.business.status !== 'active') return false;
       const { business, step, question } = loaded;
-      const forDrafts = step === 'reviewing_drafts' || (step === 'awaiting_answer' && question?.key === 'photo_choice');
+      const agentQuestion = step === 'awaiting_answer' && (question?.key.startsWith(AGENT_QUESTION_PREFIX) ?? false) && (await agentOn(burst.businessId));
+      const forDrafts = step === 'reviewing_drafts' || agentQuestion || (step === 'awaiting_answer' && question?.key === 'photo_choice');
       if (!forDrafts) return false;
       if (burst.from !== business.approverPhone || !(await workflow.mayAutoReply(burst.businessId))) return true;
       try {
-        if (step === 'awaiting_answer') await answerPhotoChoice(burst, question!);
+        if (agentQuestion) await continueWithAgent(burst, 'ANSWER_RECEIVED');
+        else if (step === 'awaiting_answer') await answerPhotoChoice(burst, question!);
         else await review(burst, business, question);
       } catch (error) {
         // A model task that failed every attempt is already a console item; a person takes over.

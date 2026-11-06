@@ -2,6 +2,7 @@
 // Rules are asserted on the laid-out page in dynamic.test.ts, including the example set.
 
 import { BADGE_SIZE, badgeFontSize, badgeHtml } from '../badge.js';
+import { counterCss, counterHtml } from '../carousel.js';
 import { edgeColor, ensureContrast } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { logoHtml, overlayHtml, photoHtml } from './shared.js';
@@ -25,7 +26,7 @@ export const dynamic: StyleTemplate = {
 
   html(ctx) {
     const base = `${photoHtml(ctx, 'photo')}<div class="stripe stripe-1" data-graphic="over-photo"></div><div class="stripe stripe-2" data-graphic="over-photo"></div>${logoHtml(ctx, 'logo')}${badgeHtml(ctx, 'badge')}`;
-    if (ctx.kind === 'photo') return base;
+    if (ctx.kind === 'photo') return `${base}${counterHtml(ctx, 'counter')}`;
     return `${base}<div class="band" data-graphic="over-photo">${overlayHtml(ctx, 'overlay')}</div>`;
   },
 
@@ -48,6 +49,7 @@ export const dynamic: StyleTemplate = {
       .overlay { ${fontCss(this.fonts.headline)} line-height: 1.1; color: ${text}; text-align: start; }
       .stripe { position: absolute; width: 520px; height: 34px; background: ${stripe};
         box-shadow: 0 8px 0 ${edgeColor(stripe, shadow)}; transform: rotate(${stripeAngle}deg); }
+      ${counterCss(ctx, 'counter', this.fonts.secondary, palette.background, palette.text)}
       .badge { position: absolute; top: ${safeArea + BADGE_MARGIN}px; inset-inline-start: ${safeArea + BADGE_MARGIN}px; width: ${BADGE_SIZE}px; height: ${BADGE_SIZE}px;
         border-radius: 50%; background: ${stripe}; color: ${badgeText}; ${fontCss(this.fonts.headline)} transform: rotate(${BADGE_ANGLE}deg);
         box-shadow: 0 10px 0 ${edgeColor(stripe, shadow)}; display: flex; align-items: center; justify-content: center; }

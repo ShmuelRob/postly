@@ -9,6 +9,7 @@ import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
 import { type BurstWake, createMessaging, type MediaStorage, type Messaging, type Timers } from './modules/messaging/index.js';
 import { createModelLayer } from './modules/model-layer/index.js';
+import { type AgentDeps, createAgent } from './modules/agent/index.js';
 import { and, eq } from 'drizzle-orm';
 import { BusinessProfile } from './contracts/business-profile.js';
 import * as schema from './db/schema.js';
@@ -22,6 +23,7 @@ import {
   type Publishing,
   type PublishingNotice,
   type Scheduling,
+  holidayInWeek,
 } from './modules/publishing/index.js';
 import {
   createApprovals,
@@ -49,6 +51,8 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 export interface AppOptions {
   db: Database;
+  /** Called after every agent turn (the e2e report's agent steps, WP-91). */
+  onAgentTurnEnd?: AgentDeps['onTurnEnd'];
   providers: {
     messaging: MessagingProvider;
     publishing: PublishingProvider;
@@ -144,6 +148,24 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
   const model = createModelLayer({ db, providers: providers.models, resolveMediaUrl: (b, a) => messaging.mediaUrl(b, a) });
+  // The hybrid agent (agent.md): its flows are off until agent_flows turns them on. Each flow
+  // stores the questions its agent asks; the weekly and drafts flows add theirs (WP-93, WP-94).
+  const agent = createAgent({
+    db,
+    models: model,
+    messaging,
+    events: {
+      async questionAsked(businessId, question) {
+        if (question.agent === 'onboarding') await onboarding!.agentAsked(businessId, question);
+        if (question.agent === 'drafts') await drafts!.agentAsked(businessId, question);
+      },
+      draftCreated: (businessId, input) => drafts!.agentDraft(businessId, input),
+      changeApplied: (businessId, input) => drafts!.agentChange(businessId, input),
+      holidayInWeek: (businessId, postId) => drafts!.holidayInWeek(businessId, postId),
+    },
+    ...(options.onAgentTurnEnd ? { onTurnEnd: options.onAgentTurnEnd } : {}),
+    ...(options.now ? { now: options.now } : {}),
+  });
   const scheduling = createScheduling({ db, apply: (b, r) => workflow.apply(b, r), ...(options.now ? { now: options.now } : {}) });
   approvals = createApprovals({
     db,
@@ -319,6 +341,7 @@ export function createApp(options: AppOptions): App {
   onboarding = createOnboarding({
     db,
     workflow,
+    agent,
     messaging,
     model,
     mediaUrl: (b, a) => messaging.mediaUrl(b, a),
@@ -335,6 +358,8 @@ export function createApp(options: AppOptions): App {
   drafts = createDrafts({
     db,
     workflow,
+    agent,
+    holidayInWeek,
     messaging,
     model,
     render: ({ businessId, businessName, languages }, request) =>
