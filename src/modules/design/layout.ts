@@ -5,8 +5,11 @@ import type { Language, Network } from '../../contracts/common.js';
 
 export type Size = { width: number; height: number };
 export type Direction = 'rtl' | 'ltr';
-/** A normalized crop from the `image_review` model task. */
-export type NormalizedCrop = { x: number; y: number; width: number; height: number };
+/**
+ * A normalized focus rectangle for the cover crop: the `image_review` suggestion, or the agent's
+ * `DesignSpec` crop. One shape for both (`EditCrop`: x, y, w, h in 0..1).
+ */
+export type NormalizedCrop = { x: number; y: number; w: number; h: number };
 
 /** Canvas per network. 4:5 everywhere for now; the engine renders once per distinct size. */
 export const OUTPUT_SIZES: Record<Network, Size> = {
@@ -56,8 +59,8 @@ export function coverWindow(
     width: Math.max(box.width, Math.round(photo.width * scale)),
     height: Math.max(box.height, Math.round(photo.height * scale)),
   };
-  const cx = crop ? crop.x + crop.width / 2 : 0.5;
-  const cy = crop ? crop.y + crop.height / 2 : 0.5;
+  const cx = crop ? crop.x + crop.w / 2 : 0.5;
+  const cy = crop ? crop.y + crop.h / 2 : 0.5;
   const clamp = (v: number, max: number) => Math.min(Math.max(Math.round(v), 0), max);
   return {
     resize,

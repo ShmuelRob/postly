@@ -2,6 +2,7 @@
 // Rules are asserted on the laid-out page in clean.test.ts, including the example set.
 
 import { BADGE_EDGE, badgeFontSize, badgeHtml } from '../badge.js';
+import { counterCss, counterHtml } from '../carousel.js';
 import { ensureContrast, ensureGraphicContrast, fillForText } from '../color.js';
 import { fontCss } from '../fonts.js';
 import { logoHtml, overlayHtml, photoHtml } from './shared.js';
@@ -21,7 +22,7 @@ export const clean: StyleTemplate = {
   },
 
   html(ctx) {
-    if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logoHtml(ctx, 'logo logo-corner')}`;
+    if (ctx.kind === 'photo') return `${photoHtml(ctx, 'photo')}${logoHtml(ctx, 'logo logo-corner')}${counterHtml(ctx, 'counter')}`;
     return `${photoHtml(ctx, 'photo')}
       <div class="band"><div class="bar" data-graphic></div>${overlayHtml(ctx, 'overlay')}${logoHtml(ctx, 'logo')}</div>${badgeHtml(ctx, 'badge')}`;
   },
@@ -44,6 +45,7 @@ export const clean: StyleTemplate = {
       .logo-text { ${fontCss(this.fonts.headline)} font-size: 32px; line-height: 1.1; color: ${text}; max-width: 240px; }
       .logo-corner { position: absolute; bottom: ${safeArea}px; inset-inline-end: ${safeArea}px; }
       .logo-corner.logo-text { background: ${palette.background}; padding: 12px 20px; border-radius: 8px; }
+      ${counterCss(ctx, 'counter', this.fonts.secondary, palette.background, palette.text)}
       .badge { position: absolute; top: ${safeArea}px; inset-inline-start: ${safeArea}px; width: ${TAG.width}px; height: ${TAG.height}px;
         padding-inline: ${TAG.padding}px; background: ${tag}; box-shadow: 0 0 0 ${BADGE_EDGE}px #FFFFFF; border-radius: 0;
         display: flex; align-items: center; justify-content: center; color: #FFFFFF; ${fontCss(this.fonts.headline)} }

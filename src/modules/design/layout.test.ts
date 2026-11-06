@@ -43,9 +43,9 @@ describe('coverWindow', () => {
     const photo = { width: 2000, height: 1000 };
     const box = { width: 1000, height: 1000 };
     // Crop centered at x = 0.8 -> 1600, window from 1100 to 2100 clamps to 1000.
-    expect(coverWindow(photo, box, { x: 0.7, y: 0, width: 0.2, height: 1 }).left).toBe(1000);
+    expect(coverWindow(photo, box, { x: 0.7, y: 0, w: 0.2, h: 1 }).left).toBe(1000);
     // Crop centered at x = 0.35 -> 700, window from 200.
-    expect(coverWindow(photo, box, { x: 0.3, y: 0.2, width: 0.1, height: 0.5 }).left).toBe(200);
+    expect(coverWindow(photo, box, { x: 0.3, y: 0.2, w: 0.1, h: 0.5 }).left).toBe(200);
   });
 
   it('upscales a small photo to cover the box', () => {
