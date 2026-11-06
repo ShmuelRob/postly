@@ -97,11 +97,58 @@ describe('process configuration', () => {
       expect(() => loadConfig(without(dev, 'DB_PASSWORD_APP_SIMULATOR'))).toThrow('DB_PASSWORD_APP_SIMULATOR');
     });
 
-    it('chooses the model provider separately: the simulator by default, Vertex once T5 lands its adapter', () => {
+    it('chooses the model provider separately: the simulator by default', () => {
       expect(loadConfig(dev).models).toBe('simulator');
+      expect(loadConfig(dev).vertex).toBeUndefined();
       expect(loadConfig({ ...dev, POSTLY_MODELS: 'simulator' }).models).toBe('simulator');
-      expect(() => loadConfig({ ...dev, POSTLY_MODELS: 'vertex' })).toThrow('T5');
       expect(() => loadConfig({ ...dev, POSTLY_MODELS: 'openai' })).toThrow('POSTLY_MODELS');
+    });
+  });
+
+  // agent.md, Running on dev: real Gemini on dev, with the other providers simulated.
+  describe('Vertex AI on dev (POSTLY_MODELS=vertex)', () => {
+    const vertex = { ...dev, POSTLY_MODELS: 'vertex', VERTEX_PROJECT: 'postly-dev-test', VERTEX_LOCATION: 'europe-west4' };
+
+    it('runs dev on Vertex with the project and location from the environment', () => {
+      const config = loadConfig(vertex);
+      expect(config.models).toBe('vertex');
+      expect(config.vertex).toEqual({ project: 'postly-dev-test', location: 'europe-west4' });
+    });
+
+    it('defaults the location to europe-west4 (Vertex serves no Gemini from me-west1)', () => {
+      expect(loadConfig(without(vertex, 'VERTEX_LOCATION')).vertex).toEqual({ project: 'postly-dev-test', location: 'europe-west4' });
+    });
+
+    it('needs the project', () => {
+      expect(() => loadConfig(without(vertex, 'VERTEX_PROJECT'))).toThrow('VERTEX_PROJECT');
+    });
+
+    it('is refused in tests and CI, whatever else is set', () => {
+      expect(() => loadConfig({ ...vertex, NODE_ENV: 'test' })).toThrow('refused in tests and CI');
+      expect(() => loadConfig({ ...vertex, CI: 'true' })).toThrow('refused in tests and CI');
+      expect(() => loadConfig({ ...vertex, POSTLY_ENV: 'test', SIMULATOR_STORE: 'memory' })).toThrow('refused in tests and CI');
+    });
+  });
+
+  // agent.md, Running on dev: which flows run on the agent, per environment.
+  describe('agent flows (POSTLY_AGENT_FLOWS)', () => {
+    it('leaves the switch alone when unset', () => {
+      expect(loadConfig(dev).agentFlows).toBeUndefined();
+    });
+
+    it('turns on exactly the listed flows and the others off', () => {
+      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'onboarding,weekly,drafts' }).agentFlows).toEqual({ onboarding: true, weekly: true, drafts: true });
+      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: ' weekly , onboarding ' }).agentFlows).toEqual({ onboarding: true, weekly: true, drafts: false });
+    });
+
+    it('turns every flow off with none', () => {
+      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none' }).agentFlows).toEqual({ onboarding: false, weekly: false, drafts: false });
+    });
+
+    it('refuses an unknown flow, an empty value, or none mixed with flows', () => {
+      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'onboarding,captions' })).toThrow('POSTLY_AGENT_FLOWS');
+      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: '' })).toThrow('POSTLY_AGENT_FLOWS');
+      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none,drafts' })).toThrow('POSTLY_AGENT_FLOWS');
     });
   });
 

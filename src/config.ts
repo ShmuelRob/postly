@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { Phone } from './contracts/common.js';
 import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
+import { type AgentFlows, parseAgentFlows } from './agent-flows.js';
 import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
+import { realModelsRefused } from './modules/model-layer/index.js';
 
 export { PROCESS_LOGINS };
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
@@ -24,8 +26,14 @@ const Env = z.object({
   POSTLY_PROVIDERS: z.enum(['simulators', 'vendors'], { error: 'POSTLY_PROVIDERS must be "simulators" or "vendors"' }),
   /** Where the simulators keep their state: `memory` (local and test) or `postgres` (required in dev). */
   SIMULATOR_STORE: z.enum(['memory', 'postgres'], { error: 'SIMULATOR_STORE must be "memory" or "postgres"' }).optional(),
-  /** The model provider: the model simulator, or Gemini through Vertex AI (T5). */
+  /** The model provider: the model simulator, or Gemini through Vertex AI (T5; agent.md, Running on dev). */
   POSTLY_MODELS: z.enum(['simulator', 'vertex'], { error: 'POSTLY_MODELS must be "simulator" or "vertex"' }).default('simulator'),
+  /** With POSTLY_MODELS=vertex: the project Vertex AI bills. */
+  VERTEX_PROJECT: z.string().min(1).optional(),
+  /** With POSTLY_MODELS=vertex: the endpoint's region (Vertex serves no Gemini from me-west1), or `global`. */
+  VERTEX_LOCATION: z.string().regex(/^(global|[a-z]+-[a-z]+\d+)$/, 'VERTEX_LOCATION must be global or a region such as europe-west4').default('europe-west4'),
+  /** Which flows run on the agent for every business; written into system_control at web startup. Unset: left alone. */
+  POSTLY_AGENT_FLOWS: z.string().optional(),
   /** The server and database, with no user or password: each login gets its own. */
   DATABASE_URL: z.url().refine((u) => new URL(u).username === '', 'DATABASE_URL must have no user; each role login is built from it'),
   PUBLIC_BASE_URL: z.url(),
@@ -60,6 +68,10 @@ export interface Config {
   /** Simulated mode (WP-51): where the simulators keep their state. */
   simulators: { store: 'memory' } | { store: 'postgres'; storeUrl: string };
   models: 'simulator' | 'vertex';
+  /** With models `vertex`: where Gemini is called. */
+  vertex?: { project: string; location: string };
+  /** The global agent flow switch to apply at startup (POSTLY_AGENT_FLOWS); undefined leaves it as it is. */
+  agentFlows?: AgentFlows;
 }
 
 /** The environments where the simulators may answer (docs/deployment.md, "Simulated mode"). */
@@ -88,7 +100,12 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
   if (!SIMULATED_ENVS.includes(envName)) {
     throw new Error(`POSTLY_PROVIDERS=simulators is not allowed in ${envName}: only local, test and dev may run on the simulators`);
   }
-  if (models === 'vertex') throw new Error('POSTLY_MODELS=vertex: the T5 Vertex AI adapter is not wired into the simulated composition yet');
+  // Real Gemini (agent.md, Running on dev): never in a test or a CI job, whatever else is set.
+  if (models === 'vertex' && (envName === 'test' || realModelsRefused(env))) {
+    throw new Error('POSTLY_MODELS=vertex is refused in tests and CI (agent.md, Testing without paying for a model)');
+  }
+  if (models === 'vertex' && !parsed.data.VERTEX_PROJECT) throw new Error('POSTLY_MODELS=vertex needs VERTEX_PROJECT');
+  const agentFlows = parsed.data.POSTLY_AGENT_FLOWS === undefined ? undefined : parseAgentFlows(parsed.data.POSTLY_AGENT_FLOWS);
   const store = parsed.data.SIMULATOR_STORE ?? 'memory';
   if (envName === 'dev' && store !== 'postgres') {
     throw new Error('dev requires SIMULATOR_STORE=postgres: web, worker and the sandbox must share the simulator state');
@@ -125,5 +142,7 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
     console: consoleConfig,
     simulators: store === 'postgres' ? { store, storeUrl: loginUrl(parsed.data.DATABASE_URL, SIMULATOR_LOGIN, env[passwordVar(SIMULATOR_LOGIN)]!) } : { store },
     models,
+    ...(models === 'vertex' ? { vertex: { project: parsed.data.VERTEX_PROJECT!, location: parsed.data.VERTEX_LOCATION } } : {}),
+    ...(agentFlows ? { agentFlows } : {}),
   };
 }

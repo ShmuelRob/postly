@@ -18,10 +18,13 @@ export interface TestDatabase {
  * One migrated Postgres for tests and the local playground. TEST_DATABASE_URL points at an existing
  * empty database with a superuser login; otherwise Testcontainers starts Postgres in Docker
  * (technical-design.md). The superuser runs the migrations and sets test passwords on the role logins.
+ * With `isolated`, Testcontainers starts a Postgres for the caller alone, even with TEST_DATABASE_URL set.
  */
-export async function startTestDatabase(): Promise<TestDatabase> {
+export async function startTestDatabase(options: { isolated?: boolean } = {}): Promise<TestDatabase> {
   let container: StartedPostgreSqlContainer | undefined;
-  let url = process.env.TEST_DATABASE_URL;
+  // `isolated`: always a Postgres of its own, for a test that sets global state the other files must not
+  // see, such as the agent flow switch in system_control (agent.md, Running on dev). Needs Docker.
+  let url = options.isolated ? undefined : process.env.TEST_DATABASE_URL;
   if (!url) {
     container = await new PostgreSqlContainer('postgres:17-alpine').start();
     url = container.getConnectionUri();
