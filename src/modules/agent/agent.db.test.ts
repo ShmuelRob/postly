@@ -226,7 +226,7 @@ describe('a turn', () => {
 describe('one turn per business', () => {
   it('runs nothing while another turn runs, or while a person handles the conversation', async () => {
     await db.withBusiness('workflow', businessId, (tx) => tx.insert(schema.agentTurn).values({ businessId, agent: 'weekly', trigger }));
-    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toEqual({ turnId: null, status: 'skipped', stopReason: null });
+    expect(await agentWith().runTurn(businessId, 'weekly', trigger)).toEqual({ turnId: null, status: 'skipped', stopReason: null, messagesSent: 0 });
 
     await newBusiness();
     await db.withBusiness('workflow', businessId, (tx) =>
