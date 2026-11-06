@@ -261,7 +261,10 @@ export function createAgent(input: AgentDeps): Agent {
       }
 
       const ended = deps.now();
-      // No silent turn (agent.md, Runtime): the owner waits, the turn is not done, and it said nothing.
+      // No silent turn (agent.md, Runtime). `silent` holds when the caller said the owner waits on this
+      // turn (`mustReply`: no code reply follows it unless it ends done), the turn ran without an
+      // unexpected error, it ended by the agent's own end_turn with the done rule false (a done turn
+      // has stop 'done'), and its tools sent the owner nothing. A limit or a failure hands off below.
       const silent = failed === null && options.mustReply === true && stop === 'end_turn' && turn.messagesSent === 0;
       if (silent) {
         log.warn('agent turn ended silent', { businessId, agent: agentName, agentTurnId: turnId });
