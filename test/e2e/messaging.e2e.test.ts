@@ -160,6 +160,9 @@ e2eTest('two web instances hand one burst over exactly once (T2, durable bursts)
             bursts.push(burst);
             await new Promise((r) => setTimeout(r, 50));
             await messaging.sendText(burst.businessId, { to: burst.from, text: ACK });
+            // The handler is slow to return after its ACK, as it is under load: the rows are marked
+            // processed only when it has returned, so the ACK is seen before the mark.
+            await new Promise((r) => setTimeout(r, 1500));
           },
         },
       });
@@ -196,9 +199,15 @@ e2eTest('two web instances hand one burst over exactly once (T2, durable bursts)
   expect(bursts.map((b) => b.text)).toEqual(['השבוע יש מבצע על חלות\n2 ב-20 ש"ח\nרק ביום שישי']);
   await expect.poll(() => run.owner.received().length).toBe(1);
   expect(run.owner.received().map((m) => m.text)).toEqual([ACK]);
-  const inbound = await db.withBusiness('messaging', businessId, (tx) =>
-    tx.select().from(schema.message).where(eq(schema.message.direction, 'inbound')),
-  );
+  const inboundRows = () =>
+    db.withBusiness('messaging', businessId, (tx) => tx.select().from(schema.message).where(eq(schema.message.direction, 'inbound')));
+  // The ACK is sent inside the handler, and the rows are marked processed only when the handler has
+  // returned (messaging.ts, processBurst), so the ACK is seen before the mark: wait for the mark itself.
+  await expect.poll(async () => (await inboundRows()).filter((m) => m.processedAt !== null).length, { timeout: 5000 }).toBe(3);
+  const inbound = await inboundRows();
   expect(inbound).toHaveLength(3);
   expect(inbound.every((m) => m.processedAt !== null)).toBe(true);
+  // Still exactly one burst and one ACK once the rows are marked (no second handover followed).
+  expect(bursts).toHaveLength(1);
+  expect(run.owner.received().map((m) => m.text)).toEqual([ACK]);
 });
