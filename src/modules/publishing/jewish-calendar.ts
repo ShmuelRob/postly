@@ -184,3 +184,16 @@ export function restPeriods(first: Date, last: Date, c: City): { candleLighting:
   }
   return periods;
 }
+
+/**
+ * Whether the week from `weekStart` (a Sunday, as a UTC midnight) to the next Saturday holds a yom
+ * tov day that this calendar knows. The holiday badge needs it, so "חג שמח" never goes out in an
+ * ordinary week (agent.md, Badge element).
+ */
+export function holidayInWeek(weekStart: Date): boolean {
+  const first = weekStart.getTime();
+  const last = first + 6 * 86_400_000;
+  // The Hebrew year of the week is the civil year plus 3760 or 3761; check both and the next.
+  const year = weekStart.getUTCFullYear() + 3760;
+  return [year - 1, year, year + 1].some((y) => yomTovDays(y).some(({ date }) => date.getTime() >= first && date.getTime() <= last));
+}
