@@ -4,7 +4,7 @@ business_number = "+15550000001"
 alert_email     = "REPLACE_WITH_ALERT_EMAIL"
 # Who may open the sandbox and the console; never allUsers. Both open in a browser or on a phone with
 # Google sign-in (Cloud Run's built-in IAP; cloud_run_iap is on by default) once the project has its
-# OAuth client. That is one manual step in the Cloud console, before the apply (docs/deployment.md,
+# OAuth client. That is one manual step in the Cloud console, once postly-dev-sandbox exists (docs/deployment.md,
 # "Browser sign-in on dev", step 1): Cloud Run > postly-dev-sandbox > Security > tick Identity-Aware
 # Proxy (IAP) > Save > Edit policy > Configure in IAP > Configure consent screen (External, then add
 # yourself as a test user) > Auto generate credentials > Save. Then apply and open the outputs
@@ -13,3 +13,9 @@ sandbox_invokers = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # Different lists per service (both default to sandbox_invokers):
 # console_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # sandbox_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
+# Real Gemini on dev, with WhatsApp, publishing and payments still simulated, and every agent flow on
+# (docs/deployment.md, "Real Gemini and the agent flows on dev"). models = "simulator" switches back.
+models      = "vertex"
+agent_flows = ["onboarding", "weekly", "drafts"]
+# The monthly Vertex AI budget alert (USD 50 on dev, model_budget_usd): Billing > Account management.
+# billing_account = "REPLACE_WITH_BILLING_ACCOUNT_ID"

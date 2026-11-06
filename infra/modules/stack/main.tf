@@ -205,9 +205,8 @@ locals {
     DB_POOL_MAX      = tostring(local.pool_max)
     }, local.simulated ? {
     SIMULATOR_STORE = "postgres"
-    POSTLY_MODELS   = "simulator"
     SANDBOX_URL     = local.sandbox_url
-  } : {})
+  } : {}, local.model_env) # POSTLY_MODELS, VERTEX_*, POSTLY_AGENT_FLOWS: models.tf
   app_secret_env = merge(
     { for secret, env in local.login_secrets : env => module.secrets.ids[secret] },
     # The processes refuse to start in dev, stage or prod without it (src/config.ts).

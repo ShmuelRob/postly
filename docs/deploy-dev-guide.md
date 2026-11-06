@@ -232,7 +232,7 @@ returns `{"ok":true}`. That is all a browser on the web URL shows: dev has no pu
 
 1. Put your account in `terraform.tfvars`: `sandbox_invokers = ["user:<your-google-account>@gmail.com"]`. It is also who may open the console and the sandbox in a browser (`console_members` and `sandbox_members` default to it).
 2. Once, in the Cloud console, make the project's OAuth client: Cloud Run → `postly-dev-sandbox` → **Security** → tick **Identity-Aware Proxy (IAP)** → **Save** → **Edit policy** → **Configure in IAP** → **Configure consent screen** (Audience **External**, then add your Gmail under Audience → Test users) → **Auto generate credentials** → **Save**. This is the one step Terraform cannot do ([why](deployment.md#browser-sign-in-on-dev)).
-3. `terraform -chdir=infra/environments/dev plan -out=dev.tfplan`, review it, and `terraform -chdir=infra/environments/dev apply dev.tfplan`.
+3. Delete any old `sandbox_iap_client_id`, `console_iap_client_id` or `console_domain` lines from `terraform.tfvars`. `terraform -chdir=infra/environments/dev plan -out=dev.tfplan`, review it (if the console's load balancer or the sandbox's `google_iap_settings` were applied before, the plan destroys them; that is expected), and `terraform -chdir=infra/environments/dev apply dev.tfplan`.
 4. Open the outputs and sign in with that account:
 
    ```powershell

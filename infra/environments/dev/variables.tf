@@ -62,3 +62,28 @@ variable "app_metric_alerts" {
   type        = bool
   default     = false
 }
+variable "models" {
+  description = "\"simulator\" (the word-rule model, the default) or \"vertex\" (real Gemini; WhatsApp, publishing and payments stay simulated). docs/deployment.md."
+  type        = string
+  default     = "simulator"
+}
+variable "vertex_location" {
+  description = "The Vertex AI region for Gemini (Vertex serves no Gemini from me-west1)."
+  type        = string
+  default     = "europe-west4"
+}
+variable "agent_flows" {
+  description = "The flows that run on the agent for every business: any of onboarding, weekly, drafts, or [\"none\"]. Empty leaves the switch as it is."
+  type        = list(string)
+  default     = []
+}
+variable "billing_account" {
+  description = "The billing account id for the monthly Vertex AI budget alert; null creates none."
+  type        = string
+  default     = null
+}
+variable "model_budget_usd" {
+  description = "The monthly Vertex AI budget on dev, in USD: twice the stack's 25 default, as the owner approved."
+  type        = number
+  default     = 50
+}

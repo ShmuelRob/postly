@@ -9,3 +9,6 @@ export {
   type ModelLayerDeps,
   type RunOptions,
 } from './model-layer.js';
+
+// The Vertex AI adapter, for the composition (agent.md, Running on dev).
+export { adcTransport, type MediaFetcher, realModelsRefused, VertexModelProvider, type VertexRequestBody, type VertexResponseBody, type VertexTransport } from './adapters/vertex.js';

@@ -4,6 +4,8 @@ import { createDatabase, type DatabaseUrls } from './db/index.js';
 import { PAYMENT_WEBHOOK_PATH } from './modules/billing/index.js';
 import { createDesignRenderer } from './modules/design/index.js';
 import { WEBHOOK_PATH } from './modules/messaging/index.js';
+import { VertexModelProvider, type VertexTransport } from './modules/model-layer/index.js';
+import { type AgentFlows, applyAgentFlows } from './agent-flows.js';
 import { buildServer } from './server.js';
 import { conversationalModelSimulator } from './simulators/conversational/index.js';
 import { MessagingSimulator, PaymentSimulator, PersistentSimulator, PublishingSimulator, type SimulatorStore } from './simulators/index.js';
@@ -89,18 +91,53 @@ export interface SimulatedAppOptions extends SimulatedWorldOptions {
   databaseUrls: DatabaseUrls;
   /** Connections per database login (DB_POOL_MAX, docs/security.md D7); createDatabase's default otherwise. */
   poolMax?: number;
-  /** Defaults to the conversational model simulator (POSTLY_MODELS=simulator). */
+  /** Defaults to `vertex` when given, else the conversational model simulator (POSTLY_MODELS=simulator). */
   models?: Record<string, ModelProvider>;
+  /** POSTLY_MODELS=vertex (agent.md, Running on dev): real Gemini, the other providers simulated. */
+  vertex?: VertexModelsOptions;
+  /** POSTLY_AGENT_FLOWS: written into system_control.agent_flows before the app starts (web only). */
+  agentFlows?: AgentFlows;
   burstQuietMs?: number;
   /** The durable burst wake (T2): pg-boss in web and worker; tests may leave it out. */
   burstWake?: AppOptions['burstWake'];
   logger?: AppOptions['logger'];
 }
 
+export interface VertexModelsOptions {
+  project: string;
+  location: string;
+  /** Tests inject a fake; deployed, the adapter builds the real one (refused under NODE_ENV=test and CI). */
+  transport?: VertexTransport;
+}
+
+/**
+ * The model providers of the simulated composition, by the name model_task_config uses (`google`):
+ * Gemini through Vertex AI when `vertex` is given, the word-rule model simulator otherwise. The Vertex
+ * adapter reads the photos and voice notes it sends from the simulator store, where dev keeps them.
+ */
+export function simulatedModels(options: { vertex?: VertexModelsOptions }, media: { read(ref: string): Promise<{ mimeType: string; data: Uint8Array } | undefined> }): Record<string, ModelProvider> {
+  if (!options.vertex) return { google: conversationalModelSimulator() };
+  const { project, location, transport } = options.vertex;
+  return {
+    google: new VertexModelProvider({
+      project,
+      location,
+      ...(transport ? { transport } : {}),
+      fetchMedia: async (url) => {
+        const file = await media.read(url);
+        if (!file) throw new Error(`no stored file at ${url}`);
+        return { mimeType: file.mimeType, data: Buffer.from(file.data) };
+      },
+    }),
+  };
+}
+
 /** The app on the simulated world: what main.ts runs as web or worker in simulated mode. */
 export async function createSimulatedApp(options: SimulatedAppOptions) {
   const world = simulatedWorld(options);
+  const models = options.models ?? simulatedModels(options, world.media);
   const db = createDatabase(options.databaseUrls, options.poolMax ? { max: options.poolMax } : {});
+  if (options.agentFlows) await applyAgentFlows(db, options.agentFlows);
   if (!(await world.media.read(SAMPLE_PHOTO_PATH))) {
     await world.media.put(SAMPLE_PHOTO_PATH, placeholderPng(1080, 1080, [246, 232, 210], [150, 82, 40]), 'image/png');
   }
@@ -119,7 +156,7 @@ export async function createSimulatedApp(options: SimulatedAppOptions) {
     providers: {
       messaging: world.messaging.provider,
       publishing: world.publishing.provider,
-      models: options.models ?? { google: conversationalModelSimulator() },
+      models,
       payment: world.payment.provider,
     },
     design,
