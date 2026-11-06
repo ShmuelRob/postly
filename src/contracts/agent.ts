@@ -154,7 +154,8 @@ const RecordFact = z.object({
 const RequestPhoto = z
   .object({
     tool: z.literal('request_photo'),
-    purpose: z.enum(['logo', 'business', 'post']),
+    /** `week`: a photo for this week's update, before any post exists (WP-93, agent.md). */
+    purpose: z.enum(['logo', 'business', 'week', 'post']),
     postId: Uuid.optional(),
     text: text.max(600),
   })

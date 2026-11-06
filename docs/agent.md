@@ -97,6 +97,8 @@ A hand-off from a limit always sends the owner one fixed code line (H6: a person
 
 The workflow module routes a burst or a code event to the agent module (`agent.runTurn(businessId, trigger)`); the agent module never imports workflow. The state machine events a tool needs (for example `DRAFT_READY` inside `create_draft`) reach the tools as callbacks injected when the app is wired (`createAgent({ events, messaging, content, design, ... })`), the same way flows get their providers today. So the dependency runs workflow → agent only, and dependency-cruiser keeps it that way.
 
+**Implementation note (WP-93, 2026-11-06).** Until WP-92, WP-93 and WP-94 have all landed, each flow creates its own agent instance in its workflow file (`workflow/weekly.ts` for the weekly agent) with the events its tools need, and a package adds an event to `AgentEvents` by a module augmentation in its own tool file (`planStored` in `tools/plan.ts`). The turn lock is in the database, so several instances are safe. Once the three packages are in, one `createAgent` in `app.ts` with every event replaces the per-flow instances (a cleanup the manager schedules).
+
 ### Context
 
 The agent sees only what its task needs, all from one business (`withBusiness`):
@@ -174,10 +176,10 @@ Asks the owner for a photo.
 
 | Field | Rule |
 | --- | --- |
-| `purpose` | `logo`, `business` (onboarding), or `post` (with `postId`) |
+| `purpose` | `logo`, `business` (onboarding), `week` (the weekly update, before any post exists; added 2026-11-06 by WP-93), or `post` (with `postId`, and only `post` names a post) |
 | `text` | As `ask_owner.text` |
 
-Code sends the request (window rules as `ask_owner`) and stores the open question `photo_request` with the purpose; the next image from the owner answers it (for `logo`, code sets `brand.logoAssetId`). At most two photo requests per post. It can't touch: the media library beyond linking the answering photo.
+Code sends the request (window rules as `ask_owner`) and stores the open question `photo_request` with the purpose; the next image from the owner answers it (for `logo`, code sets `brand.logoAssetId`; for `week`, the photo joins `weekly_update.media_asset_ids`, so `plan_posts` may use it). At most two photo requests per post. It can't touch: the media library beyond linking the answering photo.
 
 ### `record_decline`
 
