@@ -7,7 +7,10 @@ import type { IapPublicKey } from '../../../src/modules/console/index.js';
  * does (ES256, a `kid` header) with a key pair made per test run.
  */
 
+/** The audience IAP on a load balancer's backend service signs (stage and prod). */
 export const TEST_IAP_AUDIENCE = '/projects/123456789012/global/backendServices/4567890123456789';
+/** The audience Cloud Run's built-in IAP signs for a service (dev's console). */
+export const TEST_CLOUD_RUN_IAP_AUDIENCE = '/projects/123456789012/locations/me-west1/services/postly-dev-console';
 export const TEST_IAP_ISSUER = 'https://cloud.google.com/iap';
 
 export interface AssertionOptions {

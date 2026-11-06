@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Phone } from './contracts/common.js';
 import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
-import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
+import { IAP_AUDIENCE_FORMS, IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
 
 export { PROCESS_LOGINS };
 import { SIMULATOR_WEBHOOK_SECRET } from './simulators/index.js';
@@ -36,9 +36,9 @@ const Env = z.object({
   DB_POOL_MAX: z.coerce.number().int().min(1).max(10).default(3),
   /** Console sign-in (docs/security.md, "Console exposure"): IAP when deployed, the dev bypass locally. */
   CONSOLE_AUTH: z.enum(['iap', 'dev-bypass'], { error: 'CONSOLE_AUTH must be iap or dev-bypass' }).optional(),
-  /** From Terraform: the console backend service the IAP assertion must name. */
-  CONSOLE_IAP_AUDIENCE: z.string().regex(IAP_AUDIENCE_PATTERN, 'CONSOLE_IAP_AUDIENCE must be /projects/<number>/global/backendServices/<id>').optional(),
-  /** From Terraform: the console's domain; any other Host is refused. */
+  /** From Terraform: the console backend service (load balancer) or Cloud Run service (built-in IAP) the IAP assertion must name. */
+  CONSOLE_IAP_AUDIENCE: z.string().regex(IAP_AUDIENCE_PATTERN, `CONSOLE_IAP_AUDIENCE must be ${IAP_AUDIENCE_FORMS}`).optional(),
+  /** From Terraform: the console's domain, or its run.app host with built-in IAP; any other Host is refused. */
   CONSOLE_HOST: z.string().min(1).optional(),
   CONSOLE_DEV_ACTOR: z.string().min(1).default('local-dev'),
 });

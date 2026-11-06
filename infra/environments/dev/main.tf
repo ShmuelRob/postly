@@ -42,10 +42,10 @@ module "postly" {
   business_number   = var.business_number
   github_repository = var.github_repository
   alert_email       = var.alert_email
-  # Console sign-in (docs/deployment.md, Console sign-in: one-time steps).
-  console_iap_client_id = var.console_iap_client_id
-  console_domain        = var.console_domain
-  console_members       = var.console_members
+  # Browser sign-in on dev (docs/deployment.md): Cloud Run's built-in IAP on the console and the
+  # sandbox, no load balancer. Both lists default to sandbox_invokers.
+  cloud_run_iap   = var.cloud_run_iap
+  console_members = var.console_members != null ? var.console_members : var.sandbox_invokers
   # Sizes: docs/deployment.md, Sizing (same in every environment).
   sql_tier                  = "db-custom-2-7680"
   sql_high_availability     = false
@@ -56,9 +56,9 @@ module "postly" {
   sql_retained_backups      = 3
   log_retention_days        = 7
   # Simulated mode (WP-51): the stack runs dev on the simulators; the sandbox has no public invoker.
-  sandbox_enabled       = true
-  sandbox_invokers      = var.sandbox_invokers
-  sandbox_iap_client_id = var.sandbox_iap_client_id
+  sandbox_enabled  = true
+  sandbox_invokers = var.sandbox_invokers
+  sandbox_members  = var.sandbox_members
 }
 
 module "github" {
@@ -77,3 +77,4 @@ module "github" {
 
 output "postly" { value = module.postly }
 output "sandbox_url" { value = module.postly.sandbox_url }
+output "console_url" { value = module.postly.console_url }

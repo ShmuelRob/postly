@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { createTestIap, TEST_IAP_AUDIENCE } from '../../../test/e2e/harness/iap.js';
+import { createTestIap, TEST_CLOUD_RUN_IAP_AUDIENCE, TEST_IAP_AUDIENCE } from '../../../test/e2e/harness/iap.js';
 import { createIapVerifier, IapAssertionError, IAP_ISSUER } from './iap.js';
 
 // The console checks IAP's signed header itself (docs/security.md, "Console exposure"): signature,
@@ -120,7 +120,35 @@ describe('IAP assertion', () => {
     expect(fetchKeys).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses an audience that is not a backend service path', () => {
-    expect(() => createIapVerifier({ audience: 'postly-console', fetchKeys: async () => [] })).toThrow(/audience/);
+  it('accepts a token Cloud Run’s built-in IAP signed for the console service (dev)', async () => {
+    const verifier = createIapVerifier({ audience: TEST_CLOUD_RUN_IAP_AUDIENCE, fetchKeys: async () => iap.keys });
+    const token = iap.assertion('dana@postly.test', { claims: { aud: TEST_CLOUD_RUN_IAP_AUDIENCE } });
+    expect((await verifier.verify(token)).email).toBe('dana@postly.test');
+  });
+
+  it('refuses a token Cloud Run’s IAP signed for another service or region (the sandbox)', async () => {
+    const verifier = createIapVerifier({ audience: TEST_CLOUD_RUN_IAP_AUDIENCE, fetchKeys: async () => iap.keys });
+    for (const aud of [
+      '/projects/123456789012/locations/me-west1/services/postly-dev-sandbox',
+      '/projects/123456789012/locations/europe-west1/services/postly-dev-console',
+      '/projects/999999999999/locations/me-west1/services/postly-dev-console',
+      TEST_IAP_AUDIENCE,
+    ]) {
+      expect(await refusal(verifier.verify(iap.assertion(undefined, { claims: { aud } }))), aud).toBe('audience');
+    }
+  });
+
+  it('refuses an audience that is neither a backend service nor a Cloud Run service path', () => {
+    for (const audience of [
+      'postly-console',
+      '/projects/1/global/backendServices/abc',
+      '/projects/x/locations/me-west1/services/postly-dev-console',
+      '/projects/1/locations/me-west1/services/',
+      '/projects/1/locations/me-west1/services/Postly',
+      '/projects/1/locations/me-west1/services/postly-dev-console/extra',
+      '/projects/1/apps/postly-dev',
+    ]) {
+      expect(() => createIapVerifier({ audience, fetchKeys: async () => [] }), audience).toThrow(/audience/);
+    }
   });
 });

@@ -21,7 +21,7 @@ gcloud run services describe postly-ENV-web --region REGION --project PROJECT
 gcloud run revisions list --service postly-ENV-web --region REGION --project PROJECT
 ```
 
-**The console and the pause flags.** The deployed console is reached only through its load balancer with IAP sign-in ([security.md](security.md#console-exposure)): open the Terraform output `console_url` and sign in with a Google account listed in `console_members`. Every action is recorded with that account's email. If the environment has no `console_iap_client_id` yet, the deployed console is unreachable; ask the human ([deployment.md](deployment.md#console-sign-in-one-time-steps)).
+**The console and the pause flags.** The deployed console is reached only through IAP sign-in ([security.md](security.md#console-exposure)): its load balancer in stage and prod, Cloud Run's built-in IAP on dev. Open the Terraform output `console_url` and sign in with a Google account listed in `console_members`. Every action is recorded with that account's email. If a stage or prod environment has no `console_iap_client_id` yet, or dev's project has no OAuth client yet, the deployed console is unreachable; ask the human ([deployment.md](deployment.md#console-sign-in-one-time-steps), [Browser sign-in on dev](deployment.md#browser-sign-in-on-dev)).
 
 - **Pause all publishing:** `POST /console/api/system/pause` with `{"reason": "<why>"}` (the signed-in email is recorded as `paused_by`), or the pause control on the console home page. Resume with the same control. The flag is the `system_control` row (`publishing_paused`, `paused_reason`, `paused_at`, `paused_by`).
 - **Pause one business:** `POST /console/api/businesses/<id>/pause`; resume with `/resume` (needs a verified channel connection).

@@ -2,12 +2,14 @@
 project_id      = "REPLACE_WITH_PROJECT_ID"
 business_number = "+15550000001"
 alert_email     = "REPLACE_WITH_ALERT_EMAIL"
-# Who may open the sandbox (browser with IAP, or gcloud run services proxy); never allUsers.
-sandbox_invokers = ["user:REPLACE_WITH_YOUR_EMAIL"]
-# Open the sandbox in a browser or on a phone (output sandbox_url), free: the OAuth client from the
-# console's one-time steps 1 to 4, its secret in postly-dev-console-iap-client-secret. See docs/deployment.md.
-# sandbox_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
-# Console sign-in through IAP (optional; about 18 USD a month once set). See docs/deployment.md.
-# console_iap_client_id = "REPLACE_WITH_OAUTH_CLIENT_ID.apps.googleusercontent.com"
-# console_members       = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
-# console_domain        = "console.REPLACE_WITH_YOUR_DOMAIN"
+# Who may open the sandbox and the console; never allUsers. Both open in a browser or on a phone with
+# Google sign-in (Cloud Run's built-in IAP; cloud_run_iap is on by default) once the project has its
+# OAuth client. That is one manual step in the Cloud console, before the apply (docs/deployment.md,
+# "Browser sign-in on dev", step 1): Cloud Run > postly-dev-sandbox > Security > tick Identity-Aware
+# Proxy (IAP) > Save > Edit policy > Configure in IAP > Configure consent screen (External, then add
+# yourself as a test user) > Auto generate credentials > Save. Then apply and open the outputs
+# console_url and sandbox_url.
+sandbox_invokers = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
+# Different lists per service (both default to sandbox_invokers):
+# console_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
+# sandbox_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]

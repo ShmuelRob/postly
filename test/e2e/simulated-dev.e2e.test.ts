@@ -248,11 +248,25 @@ e2eTest('a new sign-up from the number in the middle of onboarding starts an emp
   await expect.poll(lastReply, timeout).toContain(copy.questions.location);
   expect((await messages()).length).toBeGreaterThanOrEqual(4);
 
-  // They press "new sign-up from this number" in the sandbox UI.
-  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  // On a phone, the earlier conversation is still there when they open the sandbox (dev keeps its
+  // state), and "new sign-up from this number" sits in the header, on screen without scrolling.
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await page.goto(mineUi.url);
   await expect.poll(() => page.getByTestId('chat').getByTestId('bubble-to_owner').count(), timeout).toBeGreaterThan(0);
-  await page.getByTestId('sign-up').click();
+  const signUp = page.locator('header').getByTestId('sign-up');
+  const box = await signUp.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await shot(page, record, 'phone-before-sign-up', 'The sandbox on a phone: the earlier conversation, and the new sign-up button in the header');
+  // It asks first, since the chat empties; dismissing changes nothing.
+  page.once('dialog', (dialog) => void dialog.dismiss());
+  await signUp.click();
+  expect((await mine.state()).business.id).toBe(before);
+  page.once('dialog', (dialog) => void dialog.accept());
+  await signUp.click();
   await expect.poll(async () => (await mine.state()).business.id, timeout).not.toBe(before);
   await expect.poll(() => page.getByTestId('chat').locator('.bubble').count(), timeout).toBe(0);
   await shot(page, record, 'after-sign-up', 'The sandbox right after a new sign-up from the number: an empty chat');

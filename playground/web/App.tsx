@@ -64,6 +64,19 @@ export function App() {
         <span className="tag">{state?.mode === 'sandbox' ? 'ארגז חול dev · סימולטורים בלבד' : 'מגרש משחקים · סימולטורים בלבד'}</span>
         {!state && <span className="tag">מפעיל את מסד הנתונים…</span>}
         {state && error && <span className="error">{error}</span>}
+        {state?.mode === 'sandbox' && (
+          // In the header, so it is on screen on a phone too; the earlier chat stays until it is pressed.
+          <button
+            type="button"
+            className="sign-up"
+            data-testid="sign-up"
+            onClick={() => {
+              if (window.confirm('להתחיל הרשמה חדשה מהמספר הזה? השיחה הנוכחית והפיד יתרוקנו.')) call('/api/sign-up');
+            }}
+          >
+            הרשמה חדשה מהמספר הזה
+          </button>
+        )}
       </header>
       <Chat messages={state?.messages ?? []} ready={!!state} onSend={act} />
       <Feed feed={state?.feed} />
@@ -71,7 +84,6 @@ export function App() {
         state={state}
         onPublishDue={() => call('/api/publish-due')}
         onConnect={() => call('/api/connect')}
-        onSignUp={() => call('/api/sign-up')}
       />
     </div>
   );
@@ -184,12 +196,10 @@ function StatePanel({
   state,
   onConnect,
   onPublishDue,
-  onSignUp,
 }: {
   state: PlaygroundState | null;
   onConnect: () => void;
   onPublishDue: () => void;
-  onSignUp: () => void;
 }) {
   if (!state) {
     return (
@@ -238,11 +248,6 @@ function StatePanel({
           </li>
         ))}
       </ul>
-      {state.mode === 'sandbox' && (
-        <button type="button" className="connect" data-testid="sign-up" onClick={onSignUp}>
-          הרשמה חדשה מהמספר הזה
-        </button>
-      )}
       {state.payment && (
         <>
           <h3>תשלום</h3>

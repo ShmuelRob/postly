@@ -106,13 +106,22 @@ variable "sandbox_url" {
   type        = string
   default     = null
 }
-variable "sandbox_iap_client_id" {
-  description = "The project's OAuth client id, made by hand (docs/deployment.md, \"The sandbox\"). Set: the sandbox opens in a browser through Cloud Run's built-in IAP. Null: the proxy only."
-  type        = string
+variable "sandbox_members" {
+  description = "Who passes the sandbox's IAP sign-in in a browser; null uses sandbox_invokers. Never allUsers."
+  type        = list(string)
   default     = null
   validation {
-    condition     = var.sandbox_iap_client_id == null || var.sandbox_enabled
-    error_message = "sandbox_iap_client_id needs sandbox_enabled (dev only)."
+    condition     = alltrue([for m in coalesce(var.sandbox_members, []) : !contains(["allUsers", "allAuthenticatedUsers"], m)])
+    error_message = "The sandbox must not be public: list people or groups, never allUsers or allAuthenticatedUsers."
+  }
+}
+variable "cloud_run_iap" {
+  description = "Sign-in through Cloud Run's built-in IAP on the console and the sandbox, with no load balancer (docs/deployment.md, \"Browser sign-in on dev\"). Dev only; stage and prod use the load balancer."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.cloud_run_iap || (var.env_name == "dev" && var.console_iap_client_id == null)
+    error_message = "cloud_run_iap is for dev only, and not together with console_iap_client_id (IAP cannot guard both the load balancer and the service)."
   }
 }
 variable "alert_email" {
@@ -138,6 +147,10 @@ variable "console_members" {
   description = "Who passes IAP to the console: user:<email>, group:<email> or domain:<domain>. Empty lets nobody in."
   type        = list(string)
   default     = []
+  validation {
+    condition     = alltrue([for m in var.console_members : !contains(["allUsers", "allAuthenticatedUsers"], m)])
+    error_message = "The console must not be public: list people or groups, never allUsers or allAuthenticatedUsers."
+  }
 }
 
 data "google_project" "this" {
@@ -148,12 +161,13 @@ data "google_project" "this" {
 locals {
   prefix = "postly-${var.env_name}"
   # The sandbox's browser path (docs/deployment.md "The sandbox", docs/security.md "Sandbox exposure").
-  sandbox_iap = var.sandbox_enabled && var.sandbox_iap_client_id != null
+  sandbox_iap     = var.sandbox_enabled && var.cloud_run_iap
+  sandbox_members = var.sandbox_members != null ? var.sandbox_members : var.sandbox_invokers
+  # IAP calls an IAP-guarded service as this agent (load balancer or Cloud Run's built-in IAP).
+  iap_service_agent = "service-${data.google_project.this.number}@gcp-sa-iap.iam.gserviceaccount.com"
   # Cloud Run's deterministic URL, computed so that SANDBOX_URL (in app_env, which the sandbox also
   # reads) does not depend on the sandbox service itself.
   sandbox_url = coalesce(var.sandbox_url, local.sandbox_iap ? "https://${local.prefix}-sandbox-${data.google_project.this.number}.${var.region}.run.app" : "http://localhost:8081")
-  # gcloud's own OAuth client: the identity token `gcloud run services proxy` sends has it as audience.
-  gcloud_oauth_client = "32555940559.apps.googleusercontent.com"
   # Simulated mode (WP-51, docs/deployment.md): dev runs on the simulators with their state in Postgres;
   # stage and prod are set to vendors, which refuses to start until WP-41.
   simulated = var.env_name == "dev"
@@ -366,7 +380,7 @@ module "worker" {
 
 # The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
 # allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy` and, with
-# sandbox_iap_client_id, in a browser through Cloud Run's built-in IAP. Runs as the web account: it
+# cloud_run_iap, in a browser through Cloud Run's built-in IAP. Runs as the web account: it
 # needs the same login passwords and the webhook secret.
 module "sandbox" {
   count                = var.sandbox_enabled ? 1 : 0
@@ -389,20 +403,27 @@ module "sandbox" {
 }
 
 # The console (docs/security.md, "Console exposure"): its own service, because ingress is per service
-# and web must stay public. Ingress internal and load balancer, no allUsers invoker: team members come
-# in through the load balancer with IAP (console_ingress). Its own account reads only
-# its own logins' passwords (D9).
+# and web must stay public. No allUsers invoker; only IAP's service agent may invoke it. Stage and
+# prod: ingress internal and load balancer, team members come in through the load balancer with IAP
+# (console_ingress). Dev with cloud_run_iap: Cloud Run's built-in IAP on the service and its run.app
+# URL, no load balancer. Its own account reads only its own logins' passwords (D9).
 locals {
-  console_enabled = var.console_iap_client_id != null
-  console_env = merge(
-    local.app_env,
-    { CONSOLE_AUTH = "iap" },
-    local.console_enabled ? { CONSOLE_IAP_AUDIENCE = module.console_ingress[0].audience, CONSOLE_HOST = module.console_ingress[0].domain } : {},
-  )
+  console_lb      = var.console_iap_client_id != null
+  console_enabled = local.console_lb || var.cloud_run_iap
+  # Cloud Run's deterministic URL, and the audience its built-in IAP signs for the service.
+  console_run_app_host = "${local.prefix}-console-${data.google_project.this.number}.${var.region}.run.app"
+  console_iap_env = var.cloud_run_iap ? {
+    CONSOLE_IAP_AUDIENCE = "/projects/${data.google_project.this.number}/locations/${var.region}/services/${local.prefix}-console"
+    CONSOLE_HOST         = local.console_run_app_host
+    } : local.console_lb ? {
+    CONSOLE_IAP_AUDIENCE = module.console_ingress[0].audience
+    CONSOLE_HOST         = module.console_ingress[0].domain
+  } : {}
+  console_env = merge(local.app_env, { CONSOLE_AUTH = "iap" }, local.console_iap_env)
 }
 
 module "console_ingress" {
-  count                  = local.console_enabled ? 1 : 0
+  count                  = local.console_lb ? 1 : 0
   depends_on             = [google_project_service.this]
   source                 = "../console_ingress"
   project_id             = var.project_id
@@ -423,7 +444,7 @@ resource "google_cloud_run_v2_service_iam_member" "console_iap_invoker" {
   location = var.region
   name     = module.console.name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:${module.console_ingress[0].iap_service_agent}"
+  member   = "serviceAccount:${local.iap_service_agent}"
   # The module's name output is only a string; wait for the service itself.
   depends_on = [module.console]
 }
@@ -442,7 +463,8 @@ module "console" {
   secret_env           = local.console_secret_env
   public               = false
   max_instances        = local.console_max_instances
-  ingress              = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress              = var.cloud_run_iap ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  iap_enabled          = var.cloud_run_iap
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
@@ -456,10 +478,21 @@ resource "google_cloud_run_v2_service_iam_member" "sandbox" {
   member   = each.value
 }
 
+# Dev's console behind Cloud Run's built-in IAP: only console_members pass, on this service only.
+resource "google_iap_web_cloud_run_service_iam_member" "console" {
+  for_each               = var.cloud_run_iap ? toset(var.console_members) : toset([])
+  project                = var.project_id
+  location               = var.region
+  cloud_run_service_name = module.console.name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = each.value
+  depends_on             = [module.console]
+}
+
 # Browser path (docs/security.md, "Sandbox exposure"): IAP on the service itself, no load balancer.
-# Only sandbox_invokers pass IAP, on this service only; IAP calls the service as its service agent.
+# Only sandbox_members pass IAP, on this service only; IAP calls the service as its service agent.
 resource "google_iap_web_cloud_run_service_iam_member" "sandbox" {
-  for_each               = local.sandbox_iap ? toset(var.sandbox_invokers) : toset([])
+  for_each               = local.sandbox_iap ? toset(local.sandbox_members) : toset([])
   project                = var.project_id
   location               = var.region
   cloud_run_service_name = module.sandbox[0].name
@@ -474,31 +507,14 @@ resource "google_cloud_run_v2_service_iam_member" "sandbox_iap_invoker" {
   location   = var.region
   name       = module.sandbox[0].name
   role       = "roles/run.invoker"
-  member     = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  member     = "serviceAccount:${local.iap_service_agent}"
   depends_on = [module.sandbox]
 }
 
-# Google's managed OAuth client admits only users inside a Workspace organization, so IAP uses the
-# project's own client (External consent screen, made by hand like the console's). gcloud's client is
-# a programmatic client, so the proxy's identity token passes IAP too.
-data "google_secret_manager_secret_version" "sandbox_iap_client_secret" {
-  count   = local.sandbox_iap ? 1 : 0
-  project = var.project_id
-  secret  = module.secrets.ids["console-iap-client-secret"]
-}
-
-resource "google_iap_settings" "sandbox" {
-  count      = local.sandbox_iap ? 1 : 0
-  name       = "projects/${data.google_project.this.number}/iap_web/cloud_run-${var.region}/services/${module.sandbox[0].name}"
-  depends_on = [module.sandbox]
-  access_settings {
-    oauth_settings {
-      client_id            = var.sandbox_iap_client_id
-      client_secret        = data.google_secret_manager_secret_version.sandbox_iap_client_secret[0].secret_data
-      programmatic_clients = [local.gcloud_oauth_client]
-    }
-  }
-}
+# No google_iap_settings here: Google's managed OAuth client admits only users inside an organization,
+# and OAuth clients cannot be made by API, so the human makes the project's own client once in the
+# Cloud console (docs/deployment.md, "Browser sign-in on dev"), which stores it in the project-level
+# IAP settings both services use. Its secret never enters Terraform or its state.
 
 module "migrate" {
   source          = "../cloud_run"
@@ -538,11 +554,11 @@ module "monitoring" {
 output "image_repository" { value = module.registry.repository_url }
 output "web_url" { value = module.web.uri }
 output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
-# Open it in a browser when sandbox_iap_client_id is set; else it is the proxy's local address.
+# Open it in a browser when cloud_run_iap is on; else it is the proxy's local address.
 output "sandbox_url" { value = var.sandbox_enabled ? local.sandbox_url : null }
 output "console_service" { value = module.console.name }
-output "console_url" { value = local.console_enabled ? module.console_ingress[0].url : null }
-output "console_ip" { value = local.console_enabled ? module.console_ingress[0].ip : null }
+output "console_url" { value = var.cloud_run_iap ? "https://${local.console_run_app_host}/console" : local.console_lb ? module.console_ingress[0].url : null }
+output "console_ip" { value = local.console_lb ? module.console_ingress[0].ip : null }
 output "sql_connection_name" { value = module.sql.connection_name }
 output "media_bucket" { value = module.storage.name }
 output "deploy_service_account" { value = module.accounts.emails.deploy }
