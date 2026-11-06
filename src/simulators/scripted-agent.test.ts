@@ -9,6 +9,7 @@ import {
   providerFailure,
   step,
   stepWith,
+  stepFrom,
 } from './scripted-agent.js';
 
 // The scripted agent (agent.md, Testing without paying for a model; WP-91): each agent_* task
@@ -90,6 +91,14 @@ describe('ModelSimulator: the scripted agent', () => {
     expect((await ask(sim, context('weekly', afterFact))).output).toEqual({ calls: [askEnd], confidence: 0.9 });
     expect((await ask(sim, context('weekly'))).output).toEqual({ calls: [call.endTurn()], confidence: 0.9 });
 
+    expect(sim.agentScriptProblems()).toEqual([]);
+  });
+
+  it('builds a stepFrom entry from the context it answers, such as a photo id the test cannot know', async () => {
+    const sim = new ModelSimulator();
+    sim.scriptAgent('weekly', [stepFrom((ctx) => ({ calls: [call.askOwner(ctx.persona.name + ', ' + ctx.messages.length)], confidence: 0.8 }))]);
+    expect((await ask(sim, context('weekly'))).output).toEqual({ calls: [call.askOwner('פוסטלי, 1')], confidence: 0.8 });
+    expect(sim.agentSteps[0]).toMatchObject({ turn: 1, step: 1, calls: [call.askOwner('פוסטלי, 1')] });
     expect(sim.agentScriptProblems()).toEqual([]);
   });
 

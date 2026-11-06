@@ -38,6 +38,8 @@ export class ScriptedAgentError extends Error {
 /** One entry of a scripted turn: a valid step, an invalid raw output, or a provider failure. */
 export type ScriptEntry =
   | { kind: 'step'; step: AgentStep }
+  /** A step built from the context it answers, for ids the test cannot know in advance (a photo the owner sends). */
+  | { kind: 'from'; build: (context: AgentContext) => AgentStep }
   | { kind: 'invalid'; output: unknown }
   | { kind: 'error'; error: Error };
 
@@ -89,6 +91,11 @@ export function step(...calls: AgentToolCall[]): ScriptEntry {
 /** A step with its own confidence, for the low-confidence limit. */
 export function stepWith(confidence: number, ...calls: AgentToolCall[]): ScriptEntry {
   return { kind: 'step', step: AgentStep.parse({ calls, confidence }) };
+}
+
+/** A step built from the context of the call it answers; checked against `AgentStep` when it is served. */
+export function stepFrom(build: (context: AgentContext) => AgentStep): ScriptEntry {
+  return { kind: 'from', build };
 }
 
 /** Raw output that fails the task schema, for the model layer's validation and retry. */
@@ -209,7 +216,8 @@ export class ScriptedAgent {
     }
 
     const turn = state.turns[state.turn];
-    const entry = turn?.[state.next];
+    const scripted = turn?.[state.next];
+    const entry: ScriptEntry | undefined = scripted?.kind === 'from' ? { kind: 'step', step: AgentStep.parse(scripted.build(parsed.data)) } : scripted;
     if (!entry) {
       return this.fail(
         turn
