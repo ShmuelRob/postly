@@ -1,6 +1,6 @@
 import { afterAll, expect, inject, test } from 'vitest';
 import { createDatabase } from '../../src/db/index.js';
-import { holdSharedDatabaseLock } from '../db/shared-lock.js';
+import { holdSharedDatabaseLock, setLockHeldByHook } from '../db/shared-lock.js';
 import { createH5World } from '../h5/world.js';
 import { MessagingSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 
@@ -21,6 +21,18 @@ test('a second holder waits until the first releases, and then gets the lock', a
   await first();
   const release = await second;
   await release();
+});
+
+test('while the e2e hook holds the lock for a test, a world built in it gets the lock at once', async () => {
+  const hook = await holdSharedDatabaseLock(db);
+  setLockHeldByHook(true);
+  try {
+    const inner = await Promise.race([holdSharedDatabaseLock(db).then((release) => release().then(() => 'held')), new Promise((r) => setTimeout(() => r('waiting'), 400))]);
+    expect(inner).toBe('held');
+  } finally {
+    setLockHeldByHook(false);
+    await hook();
+  }
 });
 
 test('an H5 world holds the same lock, so a holder waits for the world to close', async () => {

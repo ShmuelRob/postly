@@ -10,11 +10,22 @@ import type { createDatabase } from '../../src/db/index.js';
  */
 export const SHARED_DATABASE_LOCK = 330_033;
 
+let heldByHook = false;
+
+/**
+ * The e2e setup hook (test/e2e/harness/shared-lock-hook.ts) holds the lock around a whole test and says so here, so
+ * a world built inside the test, which asks for the lock itself, does not wait for the hook that is running it.
+ */
+export function setLockHeldByHook(held: boolean): void {
+  heldByHook = held;
+}
+
 /**
  * Waits for the lock and holds it, on one connection of `db`'s pool, until the returned function is
  * called. The lock is a transaction-level one, so it is also released if the connection dies.
  */
 export async function holdSharedDatabaseLock(db: ReturnType<typeof createDatabase>): Promise<() => Promise<void>> {
+  if (heldByHook) return async () => {};
   let release!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));
   let locked!: () => void;
