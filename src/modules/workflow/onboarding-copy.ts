@@ -9,9 +9,13 @@ import type { BusinessProfileDraft } from '../../contracts/business-profile.js';
 
 export const PROVISIONAL = true;
 
-export const intro =
-  'שלום! אני Postly 👋\n' +
-  'אני מנהל בשבילכם את האינסטגרם והפייסבוק של העסק, ישירות מכאן בוואטסאפ: פעם בשבוע אתם שולחים לי מה חדש, ואני מכין פוסטים מעוצבים לאישורכם. שום דבר לא עולה בלי האישור שלכם.\n' +
+/**
+ * The intro, in the persona's voice: her name (agent.md, A1: Postly, פוסטלי in Hebrew, or the
+ * business's override) and feminine Hebrew (A2).
+ */
+export const intro = (name: string) =>
+  `שלום! אני ${name}, סוכנת הסושיאל מבוססת ה-AI שלכם 👋\n` +
+  'אני מנהלת בשבילכם את האינסטגרם והפייסבוק של העסק, ישירות מכאן בוואטסאפ: פעם בשבוע אתם שולחים לי מה חדש, ואני מכינה פוסטים מעוצבים לאישורכם. שום דבר לא עולה בלי האישור שלכם.\n' +
   'ההיכרות לוקחת בערך 10 דקות. אפשר לענות בכתב או בהודעה קולית.';
 
 export const questions = {
@@ -23,7 +27,7 @@ export const questions = {
 
 export const reask = (question: string) => `לא הצלחתי להבין עד הסוף, אפשר לפרט? ${question}`;
 
-export const handoff = 'אני מעביר את השיחה לנציג מהצוות שלנו, שיחזור אליכם בהקדם.';
+export const handoff = 'אני מעבירה את השיחה לנציג מהצוות שלנו, שיחזור אליכם בהקדם.';
 
 export const askLogo = "מעולה, הפרופיל כמעט מוכן! יש לכם לוגו? שלחו אותו כתמונה, או כתבו 'אין'.";
 export const logoSaved = 'קיבלתי את הלוגו, תודה.';

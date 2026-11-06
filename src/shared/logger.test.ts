@@ -114,6 +114,19 @@ describe('no customer content or secret in a log line', () => {
     expect(parsed()[0]).toMatchObject({ publicationId: id, attempt: 3, error: 'HTTP 503 after 3 tries' });
   });
 
+  it('keeps a UUID whose digit groups look like a phone number, as a field, a label, and inside text', () => {
+    capture();
+    // "1-02987394" spans two groups: nine digits, which the phone rule alone would redact.
+    const id = '845b451e-58c8-426a-bda1-02987394c2a6';
+    log.warn('agent global budget reached', { businessId: id, agentTurnId: id, error: `turn ${id} stopped` });
+    const [line] = parsed();
+    expect(line).toMatchObject({ agentTurnId: id, error: `turn ${id} stopped` });
+    expect(line!['logging.googleapis.com/labels']).toMatchObject({ businessId: id });
+    // A phone right next to a UUID is still redacted.
+    log.error('send failed', { error: `${id} to +972 50-123-4567` });
+    expect(parsed()[1]!.error).toBe(`${id} to [redacted]`);
+  });
+
   it('never logs objects or arrays, and cuts long strings', () => {
     capture();
     log.error('x', { error: 'a'.repeat(2000), detail: { text: CUSTOMER_TEXT } as never, list: [CUSTOMER_TEXT] as never });

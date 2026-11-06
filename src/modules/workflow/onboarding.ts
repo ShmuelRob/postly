@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { DEFAULT_AGENT_NAME, personaName } from '../../contracts/agent.js';
 import { BusinessProfile, BusinessProfileDraft, missingRequiredProfileFields } from '../../contracts/business-profile.js';
 import { type Network, VISUAL_STYLES } from '../../contracts/common.js';
 
@@ -9,6 +10,7 @@ import { OpenQuestion } from '../../contracts/open-question.js';
 import type { SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import type { Agent, TurnResult } from '../agent/index.js';
 import * as copy from './onboarding-copy.js';
 import type { Workflow } from './workflow.js';
 
@@ -51,6 +53,12 @@ export interface OnboardingDeps {
    */
   sendPaymentLink?(businessId: string): Promise<unknown>;
   logger?: { error(message: string, detail?: unknown): void };
+  /**
+   * The onboarding agent (WP-92, agent.md). When its flow is on for the business (agent_flows), the
+   * agent asks the profile questions, gathers the brand assets and applies profile corrections;
+   * code still decides when each step is done and runs every other step.
+   */
+  agent?: Pick<Agent, 'runTurn' | 'flowEnabled'>;
 }
 
 export interface Onboarding {
@@ -58,6 +66,8 @@ export interface Onboarding {
   createBusiness(input: { approverPhone: string; name?: string }): Promise<string>;
   /** Runs the current onboarding step for one inbound burst. */
   handle(burst: OnboardingBurst): Promise<void>;
+  /** The agent sent a question or photo request expecting an answer: store it as the open question. */
+  agentAsked(businessId: string, question: { key: string; askedFields: string[] }): Promise<void>;
 }
 
 /** The profile questions in order, each with the fields it asks for. */
@@ -105,7 +115,11 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
       const [state] = await tx.select().from(schema.conversationState).where(eq(schema.conversationState.businessId, businessId));
       if (!business || !state) throw new Error(`Business ${businessId} has no onboarding state`);
       const question = state.openQuestion ? OpenQuestion.parse(state.openQuestion) : null;
-      return { business, step: state.step, question, draft: BusinessProfileDraft.parse(business.profile) };
+      const draft = BusinessProfileDraft.parse(business.profile);
+      const [control] = await tx.select({ agentName: schema.systemControl.agentName }).from(schema.systemControl);
+      const names = (control?.agentName ?? DEFAULT_AGENT_NAME) as Partial<typeof DEFAULT_AGENT_NAME>;
+      const persona = personaName(draft, draft.languages?.[0] ?? 'he', names);
+      return { business, step: state.step, question, draft, persona };
     });
   }
 
@@ -262,16 +276,95 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     return handOff(burst, 'activation guard failed after the channel test');
   }
 
+  // The agent path (WP-92, agent.md, How it fits the state machines).
+
+  const burstTrigger = (burst: OnboardingBurst) => ({ kind: 'burst' as const, messageIds: (burst.messages as { id?: string }[]).flatMap((m) => (m.id ? [m.id] : [])) });
+  const eventTrigger = (name: string) => ({ kind: 'event' as const, name });
+
+  /** profile_questions with the agent: once the agent is done, code applies PROFILE_FIELDS_COMPLETE and the agent asks for the logo. */
+  async function afterProfileTurn(burst: OnboardingBurst, result: TurnResult) {
+    if (result.stopReason !== 'done') return;
+    const done = await event(burst.businessId, 'PROFILE_FIELDS_COMPLETE', async (tx) => {
+      const [row] = await tx.select({ profile: schema.business.profile }).from(schema.business).where(eq(schema.business.id, burst.businessId));
+      const left = missingFromQuestions(BusinessProfileDraft.parse(row?.profile ?? {}));
+      return left.length === 0 ? null : `missing profile fields: ${left.join(', ')}`;
+    });
+    if (!done.ok) return;
+    await setQuestion(burst.businessId, null);
+    return afterBrandTurn(burst, await deps.agent!.runTurn(burst.businessId, 'onboarding', eventTrigger('brand_assets')));
+  }
+
+  /** brand_assets with the agent: once the agent is done, code applies BRAND_ASSETS_DONE and sends the style samples. */
+  async function afterBrandTurn(burst: OnboardingBurst, result: TurnResult) {
+    if (result.stopReason !== 'done') return;
+    const done = await event(burst.businessId, 'BRAND_ASSETS_DONE');
+    if (!done.ok) return;
+    const { draft, question } = await load(burst.businessId);
+    return sendSamples(burst, draft, question);
+  }
+
+  /** brand_assets: an image answers the open photo request; code sets the logo (agent.md, request_photo). */
+  async function storeAssetAnswer(burst: OnboardingBurst, draft: BusinessProfileDraft, question: OpenQuestion | null) {
+    const images = imagesIn(burst);
+    if (images.length === 0) return;
+    let photos = images;
+    if (question?.key === 'photo_request:logo' && !draft.brand?.logoAssetId) {
+      const [logo, ...rest] = images;
+      photos = rest;
+      await saveDraft(burst.businessId, BusinessProfileDraft.parse({ ...draft, brand: { colors: draft.brand?.colors ?? [], logoAssetId: logo } }));
+    }
+    if (photos.length > 0) {
+      await setQuestion(burst.businessId, {
+        key: question?.key ?? 'photo_request:business',
+        askedFields: [],
+        attempts: question?.attempts ?? 1,
+        photoAssetIds: [...(question?.photoAssetIds ?? []), ...photos],
+      });
+    }
+  }
+
+  async function agentStep(burst: OnboardingBurst, step: string, draft: BusinessProfileDraft, question: OpenQuestion | null): Promise<boolean> {
+    const agent = deps.agent;
+    if (!agent || !(await agent.flowEnabled(burst.businessId, 'onboarding'))) return false;
+    const { businessId } = burst;
+    switch (step) {
+      case 'profile_questions':
+        await afterProfileTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst)));
+        return true;
+      case 'brand_assets':
+        await storeAssetAnswer(burst, draft, question);
+        await afterBrandTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst)));
+        return true;
+      case 'profile_review': {
+        if (isOneOf(await ownerText(burst, draft), copy.APPROVAL_WORDS)) return false;
+        const result = await agent.runTurn(businessId, 'onboarding', burstTrigger(burst));
+        if (result.stopReason === 'done') {
+          await event(businessId, 'PROFILE_CORRECTED');
+          await reply(burst, copy.summary((await load(businessId)).draft));
+        } else if (result.stopReason === 'end_turn') {
+          await reply(burst, copy.correctionUnclear);
+        }
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
   async function step(burst: OnboardingBurst) {
-    const { business, step, question, draft } = await load(burst.businessId);
+    const { business, step, question, draft, persona } = await load(burst.businessId);
     if (business.status !== 'onboarding') return;
     const { businessId } = burst;
+    if (step !== 'intro' && (await agentStep(burst, step, draft, question))) return;
 
     switch (step) {
       case 'intro': {
         const sent = await event(businessId, 'INTRO_SENT');
         if (!sent.ok) return;
-        await reply(burst, copy.intro);
+        await reply(burst, copy.intro(persona));
+        if (deps.agent && (await deps.agent.flowEnabled(businessId, 'onboarding'))) {
+          return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent')));
+        }
         return askNextProfileQuestion(burst, draft, null);
       }
 
@@ -367,6 +460,16 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         await tx.insert(schema.conversationState).values({ businessId: id, step: 'intro' });
       });
       return id;
+    },
+
+    async agentAsked(businessId, { key, askedFields }) {
+      const { question } = await load(businessId);
+      await setQuestion(businessId, {
+        key,
+        askedFields,
+        attempts: question?.key === key ? question.attempts + 1 : 1,
+        photoAssetIds: question?.photoAssetIds ?? [],
+      });
     },
 
     async handle(burst) {
