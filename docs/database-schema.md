@@ -387,6 +387,7 @@ The agent's declines and the questions it already asked are read back from these
 ### Other changes with the agent
 
 - **`model_run.agent_turn_id`** (WP-90): uuid, nullable, the turn a model call belonged to. A plain value, not a foreign key: the console joins on it, and both rows belong to the same business by RLS.
+- **`media_asset.review`** (WP-94): jsonb, nullable; the `image_review` notes of a photo, written once by the workflow role (`UPDATE (review)` only). The workflow role also reads `preference_rule`, `post_version` and `media_asset` for the agent's context (grant matrix above).
 - **`post_version.design_spec`** (WP-90): jsonb, nullable (`DesignSpec`; null for versions drafted before the agent). Immutable like the rest of the row; not part of `content_hash`.
 - **`business.agent_flows`** (WP-90): jsonb, nullable; a per-business override of which flows run on the agent (`{ onboarding?, weekly?, drafts? }` booleans).
 - **`business.profile.persona`**: inside the existing profile jsonb, no column (WP-89).

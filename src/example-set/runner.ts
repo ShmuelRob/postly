@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { NETWORKS, type Network, VISUAL_STYLES } from '../contracts/common.js';
 
 type VisualStyle = (typeof VISUAL_STYLES)[number];
+import { BADGE_KINDS, type BadgeKind, stickerText } from '../contracts/design-spec.js';
 import type { RenderRequest, TemplateRenderer } from '../contracts/providers/renderer.js';
 import type { AssetLoader, BusinessRenderContext, FileStore } from '../modules/design/index.js';
 import { type ExampleEntry, loadExampleSet } from './loader.js';
@@ -33,6 +34,8 @@ export interface GalleryCell {
   style: VisualStyle;
   overlayText: string;
   format: RenderRequest['format'];
+  /** Set on a cover rendered with this badge kind (the badge cells, WP-94). */
+  badge?: BadgeKind;
   images: GalleryImage[];
   /** Style-rule failures; empty when the render passes. */
   failures: string[];
@@ -59,16 +62,25 @@ const photoUrl = (entryId: string, index: number) => `${ASSET_ORIGIN}/${entryId}
 /**
  * The renders for one entry and style: the first overlay text on the whole post
  * (a carousel when the entry has several photos), and each other overlay text on a
- * single cover.
+ * single cover. Then one single cover per badge kind, so the human sees every badge in every style.
  */
 function requestsFor(entry: ExampleEntry, style: VisualStyle): RenderRequest[] {
   const base = { style, brandColors: entry.profile.brand.colors, networks: [...NETWORKS] };
   const urls = entry.photos.map((_, i) => photoUrl(entry.id, i));
-  return entry.expected.overlayTexts.map((overlayText, i) =>
+  const covers = entry.expected.overlayTexts.map((overlayText, i) =>
     i === 0 && urls.length > 1
       ? { ...base, format: 'carousel' as const, photoUrls: urls, overlayText }
       : { ...base, format: 'single' as const, photoUrls: [urls[0]!], overlayText },
   );
+  const language = entry.profile.languages[0] ?? 'he';
+  const badges = BADGE_KINDS.map((kind) => ({
+    ...base,
+    format: 'single' as const,
+    photoUrls: [urls[0]!],
+    overlayText: entry.expected.overlayTexts[0]!,
+    badge: { kind, text: kind === 'discount' ? '-15%' : kind === 'price' ? '₪29.90' : stickerText(kind, language) },
+  }));
+  return [...covers, ...badges];
 }
 
 /** Checks a render against the style rules the gallery can see from outside the engine. */
@@ -125,6 +137,7 @@ export async function buildGallery(deps: GalleryDeps): Promise<GalleryResult> {
             style,
             overlayText: request.overlayText,
             format: request.format,
+            ...(request.badge ? { badge: request.badge.kind } : {}),
             images: [],
             failures: [],
           };
@@ -165,7 +178,7 @@ function renderCell(cell: GalleryCell): string {
     .join('');
   const failures = cell.failures.map((f) => `<li>${escape(f)}</li>`).join('');
   return `<div class="cell ${verdict}" data-style="${cell.style}">
-  <div class="verdict">${verdict.toUpperCase()} · ${cell.format}</div>
+  <div class="verdict">${verdict.toUpperCase()} · ${cell.format}${cell.badge ? ` · badge ${cell.badge}` : ''}</div>
   <p class="overlay" dir="auto">${escape(cell.overlayText)}</p>
   <div class="images">${images}</div>${failures ? `<ul class="failures">${failures}</ul>` : ''}
 </div>`;

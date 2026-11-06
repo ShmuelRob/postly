@@ -787,7 +787,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       } catch (error) {
         // The notes are help for the agent, not a requirement: without them it drafts from the photo ids.
         if (!isModelFailure(error)) throw error;
-        log.warn('image review failed', { businessId, mediaAssetId: row.id });
+        log.warn('image review failed', { businessId, mediaAssetId: row.id, error: String(error) });
       }
     }
   }
