@@ -217,6 +217,8 @@ export const mediaAsset = pgTable(
     height: integer('height'),
     sha256: text('sha256').notNull(),
     retainUntil: tz('retain_until'),
+    /** The image_review notes (agent.md, Photos the agent sees); null until the photo was reviewed. */
+    review: jsonb('review'),
     createdAt: createdAt(),
   },
   (t) => [tenantIsolation(t.businessId)],

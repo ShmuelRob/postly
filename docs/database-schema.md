@@ -55,11 +55,11 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `channel_connection` |  | S |  |  |  | SIU |  |  | S |  |  | S | S U(-id, -business_id) |  |
 | `conversation_state` | SU | SIU |  |  |  |  |  |  |  |  |  |  | SI U(-business_id) |  |
 | `message` | SIU | S | S |  | S |  |  |  |  |  | SI |  | S |  |
-| `media_asset` | SI |  | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
-| `preference_rule` |  |  | S |  |  |  |  |  | SIUD |  |  |  | S |  |
+| `media_asset` | SI | S U(review) | S | SI |  | S |  |  | SIUD | S |  |  | S |  |
+| `preference_rule` |  | S | S |  |  |  |  |  | SIUD |  |  |  | S |  |
 | `weekly_update` |  | SIU | SU |  |  |  |  |  |  |  |  | S | S |  |
 | `post` |  | SIU | SU | S | S U(status, updated_at) | SU |  |  | S |  |  | S | S U(-id, -business_id) |  |
-| `post_version` |  |  | SI | S | S | S |  |  | S |  |  |  | S |  |
+| `post_version` |  | S | SI | S | S | S |  |  | S |  |  |  | S |  |
 | `approval` |  |  |  |  | SI U(invalidated_at) | S |  |  |  |  |  |  | S |  |
 | `publication` |  |  |  |  |  | SIU |  |  | S |  |  | S | SI U(-id, -business_id) |  |
 | `subscription` |  |  |  |  |  |  |  | SIU |  |  |  | S | S |  |
@@ -209,6 +209,7 @@ Every inbound and outbound WhatsApp message, for deduplication, the 24-hour wind
 | `width`, `height` | integer | Null for voice |
 | `sha256` | text | |
 | `retain_until` | timestamptz | Per the media retention policy |
+| `review` | jsonb | The `image_review` notes (WP-94, [agent.md](agent.md#photos-the-agent-sees)): `usable`, `score`, `issues`, `description`, and the suggested `crop` (`x`, `y`, `w`, `h`), `rotateDeg`, `brightness`, `contrast`. Null until the drafts flow first needs the photo. Written once by the workflow role (`U(review)`, nothing else on the table), read into the agent's context |
 
 ### `preference_rule`
 
