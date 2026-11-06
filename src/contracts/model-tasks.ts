@@ -3,7 +3,7 @@ import { BusinessProfileDraft } from './business-profile.js';
 import { AgentContext, AgentStep } from './agent.js';
 import { Caption, ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost } from './content.js';
 import { ContentType, Language, Network, POST_FORMATS, Uuid } from './common.js';
-import { RotateDeg, ToneAdjust } from './design-spec.js';
+import { EditCrop, RotateDeg, ToneAdjust } from './design-spec.js';
 
 export { Caption, ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost };
 import { CONVERSATION_STEP_VALUES } from './state-machines/index.js';
@@ -120,10 +120,9 @@ const ImageReviewOutput = z.object({
   usable: z.boolean(),
   score: unit,
   issues: z.array(text),
-  crop: z
-    .object({ x: unit, y: unit, width: unit, height: unit })
-    .refine((c) => c.x + c.width <= 1 && c.y + c.height <= 1, 'Crop must stay inside the image')
-    .optional(),
+  // The same rectangle as a DesignSpec crop (x, y, w, h in 0..1, inside the image), so a suggestion
+  // goes into a spec unchanged; the design engine uses it as the cover focus.
+  crop: EditCrop.optional(),
   // Version 2 (agent.md, Photos the agent sees): what the photo shows, for the agent, and suggested
   // edits within the photo edit ranges. Optional, so version 1 outputs stay valid.
   description: z.string().trim().min(1).max(200).optional(),

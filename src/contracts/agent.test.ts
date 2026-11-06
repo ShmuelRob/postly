@@ -112,6 +112,8 @@ describe('AgentStep', () => {
 
   it('converts to a JSON schema without oneOf, for the model layer', () => {
     expect(JSON.stringify(z.toJSONSchema(AgentStep))).not.toContain('oneOf');
+    // A field the model fills has a real type: no bare `{}` ("any") schema anywhere in a step.
+    expect(JSON.stringify(z.toJSONSchema(AgentStep))).not.toMatch(/"value":\{\}/);
   });
 });
 

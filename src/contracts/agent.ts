@@ -127,11 +127,18 @@ export function profileFieldValueSchema(field: AgentProfileField): z.ZodType {
   return unwrapOptional((schema as z.ZodObject<z.ZodRawShape>).shape[sub] as z.ZodType);
 }
 
+// A profile value as JSON, three levels deep (a scalar, a list or object of scalars, or a list or
+// object of those: a schedule, the tone, the location). `z.unknown()` would be `{}` in the model's
+// JSON Schema, which tells it nothing; the field's own schema is still the check (below).
+const Scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const Level1 = z.union([Scalar, z.array(Scalar), z.record(z.string(), Scalar)]);
+const ProfileValue = z.union([Scalar, z.array(Level1), z.record(z.string(), Level1)]);
+
 const SetProfileField = z
   .object({
     tool: z.literal('set_profile_field'),
     field: z.enum(AGENT_PROFILE_FIELDS),
-    value: z.unknown(),
+    value: ProfileValue,
     sourceQuote: text.optional(),
   })
   .superRefine((call, ctx) => {

@@ -119,7 +119,7 @@ export const call = {
     expects: options.expects ?? 'answer',
     ...(options.fields ? { fields: options.fields } : {}),
   }),
-  setProfileField: (field: Fields<'set_profile_field'>['field'], value: unknown, sourceQuote?: string): Of<'set_profile_field'> => ({
+  setProfileField: (field: Fields<'set_profile_field'>['field'], value: Fields<'set_profile_field'>['value'], sourceQuote?: string): Of<'set_profile_field'> => ({
     tool: 'set_profile_field',
     field,
     value,
