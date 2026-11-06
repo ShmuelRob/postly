@@ -76,6 +76,15 @@ export interface AppOptions {
   burstWake?: BurstWake;
   now?: () => Date;
   logger?: WorkflowLogger;
+  /**
+   * The one-shot onboarding, weekly and drafts flows instead of the agents (agent.md, A9). Kept for the
+   * existing end-to-end and H5 tests and the local playground, which drive those flows; the one-shot
+   * code is dead in every deployed environment and goes with A9's cleanup. Default `true`, so the tests
+   * written for the one-shot flows keep composing them unchanged. main.ts, the only deployed entry point,
+   * always passes `false`, and no env variable, config field or Terraform value reaches this option
+   * (src/agents-always-on.test.ts).
+   */
+  oneShotFlows?: boolean;
 }
 
 export interface App {
@@ -148,8 +157,9 @@ export function createApp(options: AppOptions): App {
     ...(options.now ? { now: options.now } : {}),
   });
   const model = createModelLayer({ db, providers: providers.models, resolveMediaUrl: (b, a) => messaging.mediaUrl(b, a) });
-  // The hybrid agent (agent.md): its flows are off until agent_flows turns them on. Each flow
-  // stores the questions its agent asks; the weekly and drafts flows add theirs (WP-93, WP-94).
+  // The hybrid agent (agent.md): onboarding, weekly and drafts always run on it, except where a test
+  // composes the one-shot flows (`oneShotFlows`). Each flow stores the questions its agent asks.
+  const oneShot = options.oneShotFlows ?? true;
   const agent = createAgent({
     db,
     models: model,
@@ -341,7 +351,7 @@ export function createApp(options: AppOptions): App {
   onboarding = createOnboarding({
     db,
     workflow,
-    agent,
+    ...(oneShot ? {} : { agent }),
     messaging,
     model,
     mediaUrl: (b, a) => messaging.mediaUrl(b, a),
@@ -358,7 +368,7 @@ export function createApp(options: AppOptions): App {
   drafts = createDrafts({
     db,
     workflow,
-    agent,
+    ...(oneShot ? {} : { agent }),
     holidayInWeek,
     messaging,
     model,
@@ -377,6 +387,7 @@ export function createApp(options: AppOptions): App {
     model,
     afterPlan: (businessId, weekId) => drafts!.draftWeek(businessId, weekId),
     ...(options.now ? { now: options.now } : {}),
+    oneShot,
   });
 
   return {

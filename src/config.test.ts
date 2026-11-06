@@ -19,6 +19,7 @@ const dev: Record<string, string> = {
   MESSAGING_WEBHOOK_SECRET: 's3cret-from-manager',
   SIMULATOR_STORE: 'postgres',
   DB_PASSWORD_APP_SIMULATOR: 'test-only',
+  VERTEX_PROJECT: 'postly-dev-test',
 };
 const without = (env: Record<string, string>, name: string) => Object.fromEntries(Object.entries(env).filter(([k]) => k !== name));
 
@@ -97,22 +98,23 @@ describe('process configuration', () => {
       expect(() => loadConfig(without(dev, 'DB_PASSWORD_APP_SIMULATOR'))).toThrow('DB_PASSWORD_APP_SIMULATOR');
     });
 
-    it('chooses the model provider separately: the simulator by default', () => {
-      expect(loadConfig(dev).models).toBe('simulator');
-      expect(loadConfig(dev).vertex).toBeUndefined();
-      expect(loadConfig({ ...dev, POSTLY_MODELS: 'simulator' }).models).toBe('simulator');
-      expect(() => loadConfig({ ...dev, POSTLY_MODELS: 'openai' })).toThrow('POSTLY_MODELS');
+    it('runs local and test on the model simulator, with no switch that changes it', () => {
+      expect(loadConfig(base).models).toBe('simulator');
+      expect(loadConfig(base).vertex).toBeUndefined();
+      // POSTLY_MODELS is gone (agent.md, Running on dev): setting it changes nothing.
+      expect(loadConfig({ ...base, POSTLY_MODELS: 'vertex', VERTEX_PROJECT: 'p' }).models).toBe('simulator');
     });
   });
 
-  // agent.md, Running on dev: real Gemini on dev, with the other providers simulated.
-  describe('Vertex AI on dev (POSTLY_MODELS=vertex)', () => {
-    const vertex = { ...dev, POSTLY_MODELS: 'vertex', VERTEX_PROJECT: 'postly-dev-test', VERTEX_LOCATION: 'eu' };
+  // agent.md, Running on dev: every deployed environment runs on real Gemini, with no switch.
+  describe('Vertex AI in every deployed environment', () => {
+    const vertex = { ...dev, VERTEX_LOCATION: 'eu' };
 
-    it('runs dev on Vertex with the project and location from the environment', () => {
+    it('runs dev on Vertex with the project and location from the environment, and POSTLY_MODELS cannot turn it off', () => {
       const config = loadConfig(vertex);
       expect(config.models).toBe('vertex');
       expect(config.vertex).toEqual({ project: 'postly-dev-test', location: 'eu' });
+      expect(loadConfig({ ...vertex, POSTLY_MODELS: 'simulator' }).models).toBe('vertex');
     });
 
     it('defaults the location to the EU multi-region (Gemini 3.5 Flash-Lite is not served from single regions)', () => {
@@ -132,33 +134,16 @@ describe('process configuration', () => {
       expect(() => loadConfig(without(vertex, 'VERTEX_PROJECT'))).toThrow('VERTEX_PROJECT');
     });
 
-    it('is refused in tests and CI, whatever else is set', () => {
+    it('refuses to start a deployed environment in tests and CI, so no test reaches a paid model', () => {
       expect(() => loadConfig({ ...vertex, NODE_ENV: 'test' })).toThrow('refused in tests and CI');
       expect(() => loadConfig({ ...vertex, CI: 'true' })).toThrow('refused in tests and CI');
-      expect(() => loadConfig({ ...vertex, POSTLY_ENV: 'test', SIMULATOR_STORE: 'memory' })).toThrow('refused in tests and CI');
+      expect(loadConfig({ ...vertex, POSTLY_ENV: 'test', SIMULATOR_STORE: 'memory' }).models).toBe('simulator');
     });
   });
 
-  // agent.md, Running on dev: which flows run on the agent, per environment.
-  describe('agent flows (POSTLY_AGENT_FLOWS)', () => {
-    it('leaves the switch alone when unset', () => {
-      expect(loadConfig(dev).agentFlows).toBeUndefined();
-    });
-
-    it('turns on exactly the listed flows and the others off', () => {
-      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'onboarding,weekly,drafts' }).agentFlows).toEqual({ onboarding: true, weekly: true, drafts: true });
-      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: ' weekly , onboarding ' }).agentFlows).toEqual({ onboarding: true, weekly: true, drafts: false });
-    });
-
-    it('turns every flow off with none', () => {
-      expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none' }).agentFlows).toEqual({ onboarding: false, weekly: false, drafts: false });
-    });
-
-    it('refuses an unknown flow, an empty value, or none mixed with flows', () => {
-      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'onboarding,captions' })).toThrow('POSTLY_AGENT_FLOWS');
-      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: '' })).toThrow('POSTLY_AGENT_FLOWS');
-      expect(() => loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none,drafts' })).toThrow('POSTLY_AGENT_FLOWS');
-    });
+  // agent.md, Running on dev: the agents always run; there is no flow switch to read.
+  it('reads no agent flow switch', () => {
+    expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none' })).not.toHaveProperty('agentFlows');
   });
 
   describe('webhook secret', () => {

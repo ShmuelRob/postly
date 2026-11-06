@@ -1,6 +1,6 @@
 /**
- * Onboarding through the agent (WP-92; PRD, How the agent works; agent.md). With the onboarding
- * flow switched on for the business, the onboarding agent asks the profile questions in its own
+ * Onboarding through the agent (WP-92; PRD, How the agent works; agent.md). Onboarding always runs
+ * on the agent (outside the one-shot test compositions): the onboarding agent asks the profile questions in its own
  * words, follows up on a vague answer, asks "anything else?", asks for the logo and photos, and
  * applies a correction; code decides when each step is done and runs the rest (style samples,
  * summary, approval by text, channel connection, activation, payment link). The agent is the scripted
@@ -142,6 +142,7 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   const app: AppFactory = ({ messaging: messagingProvider, publishing, model, design: recordedDesign }) => {
     const postly = createApp({
       db,
+      oneShotFlows: false,
       providers: { messaging: messagingProvider, publishing, models: { google: model }, payment: paymentSim },
       design: recordedDesign!,
       media: storage,
@@ -167,9 +168,8 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   const run = await e2e.start({ providers, app, ownerPhone: OWNER, businessPhone: BUSINESS_PHONE, readMedia: storage.read });
   record = (turn) => run.recordAgentTurn(turn);
 
-  // Sign-up creates the business; the team switches the onboarding agent on for it.
+  // Sign-up creates the business; onboarding runs on the agent, as in every deployed composition.
   const businessId = await onboarding!.createBusiness({ approverPhone: OWNER });
-  await db.withBusiness('workflow', businessId, (tx) => tx.update(schema.business).set({ agentFlows: { onboarding: true } }).where(eq(schema.business.id, businessId)));
   const said = () => run.owner.received().map((m) => m.text);
   const lastSaid = () => said().at(-1);
 
