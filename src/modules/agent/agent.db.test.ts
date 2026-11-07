@@ -168,11 +168,51 @@ describe('a turn', () => {
     expect(contextOf(1).input.toolResults).toEqual([{ tool: 'ask_owner', result: expect.objectContaining({ status: 'refused', reason: 'window_closed' }) }]);
   });
 
-  it('a refused call changes nothing and skips the rest of its step', async () => {
+  it('a refused call changes nothing and skips the rest of its step, returning each skipped call to the agent', async () => {
     sim.script('agent_weekly', step([decline('ציטוט שלא נשלח'), ask('עוד משהו?', 'anything_else', 'none')]), step([END]));
     await agentWith().runTurn(businessId, 'weekly', trigger);
     expect(sent).toEqual([]);
-    expect(contextOf(1).input.toolResults).toEqual([{ tool: 'record_decline', result: expect.objectContaining({ reason: 'quote_not_found' }) }]);
+    expect(contextOf(1).input.toolResults).toEqual([
+      { tool: 'record_decline', result: expect.objectContaining({ reason: 'quote_not_found' }) },
+      { tool: 'ask_owner', result: expect.objectContaining({ status: 'refused', reason: 'skipped' }) },
+    ]);
+  });
+
+  // agent.md, Runtime and Array limits: no limit per step; the turn's maxToolCalls bounds the calls.
+  it('runs a step of six calls, in order', async () => {
+    sim.script('agent_weekly', step([decline(), decline(), decline(), decline(), decline(), END]));
+    const result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    expect(result).toMatchObject({ status: 'done', stopReason: 'end_turn' });
+    const turn = await turnRow(result.turnId!);
+    const calls = (turn.steps as { calls: { call: { tool: string }; result: { status: string } | null }[] }[])[0]!.calls;
+    expect(calls.map((c) => [c.call.tool, c.result?.status])).toEqual([...Array(5).fill(['record_decline', 'ok']), ['end_turn', 'ok']]);
+  });
+
+  it('never drops a call silently: what a step does not run is recorded as skipped and logged by tool name', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    let result: Awaited<ReturnType<ReturnType<typeof agentWith>['runTurn']>>;
+    try {
+      // The question waits for the owner, so the turn ends there; the two declines after it are not run.
+      sim.script('agent_weekly', step([ask('עד מתי המבצע של 15%?'), decline(), decline('עוד ציטוט')]));
+      result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    } finally {
+      setLogSink(undefined);
+    }
+    expect(result).toMatchObject({ stopReason: 'waiting_for_owner' });
+    const turn = await turnRow(result.turnId!);
+    const calls = (turn.steps as { calls: { call: { tool: string }; result: { status: string; reason?: string } | null }[] }[])[0]!.calls;
+    expect(calls.map((c) => [c.call.tool, c.result?.status, c.result?.reason])).toEqual([
+      ['ask_owner', 'ok', undefined],
+      ['record_decline', 'refused', 'skipped'],
+      ['record_decline', 'refused', 'skipped'],
+    ]);
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    // The turn's tool-call count is what ran.
+    expect(parsed.find((l) => l.message === 'agent turn ended')).toMatchObject({ toolCalls: 1 });
+    const skipped = parsed.filter((l) => l.message === 'agent calls skipped');
+    expect(skipped).toEqual([expect.objectContaining({ agentTurnId: result.turnId, skipped: 2, tools: 'record_decline,record_decline', after: 'waiting_for_owner' })]);
+    expect(lines.join('\n')).not.toContain('עוד ציטוט');
   });
 
   it('refuses a tool the agent may not use, and one whose package has not landed', async () => {

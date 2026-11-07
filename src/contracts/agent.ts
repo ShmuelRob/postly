@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { BusinessProfileDraft } from './business-profile.js';
 import { ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost } from './content.js';
 import { Language, Network, PostFormat, Timestamp, Uuid } from './common.js';
-import { DesignSpec, PhotoEdit } from './design-spec.js';
+import { DesignPhoto, DesignSpec, PhotoEdit } from './design-spec.js';
 import { OpenQuestion } from './open-question.js';
 import { CONVERSATION_STEP_VALUES, POST_STATES } from './state-machines/index.js';
 
@@ -141,9 +141,9 @@ const SetProfileField = z
     value: ProfileValue,
     sourceQuote: text.optional(),
   })
+  // The value's shape for its field is checked by the tool, not here (agent.md, set_profile_field): a
+  // wrong value is a refusal the agent can fix in its next step, never an invalid model output.
   .superRefine((call, ctx) => {
-    if (!profileFieldValueSchema(call.field).safeParse(call.value).success)
-      ctx.addIssue({ code: 'custom', path: ['value'], message: `Invalid value for ${call.field}` });
     if (QUOTED_PROFILE_FIELDS.includes(call.field) && !call.sourceQuote)
       ctx.addIssue({ code: 'custom', path: ['sourceQuote'], message: `${call.field} needs the owner's words` });
   });
@@ -190,8 +190,11 @@ const PlanPosts = z
   .object({
     tool: z.literal('plan_posts'),
     mode: z.enum(['initial', 'revise']),
-    /** Never above 7 a week (agent.md, plan_posts). */
-    posts: z.array(PlanPostsItem).min(1).max(7),
+    /**
+     * Never above 7 a week (agent.md, plan_posts): checked by the plan tool (`plan_invalid`), not here, so
+     * an overlong plan is a refusal the agent can fix, never an invalid model output (Array limits).
+     */
+    posts: z.array(PlanPostsItem).min(1),
     /** Required in code when the plan departs from the profile. */
     ownerQuote: text.optional(),
   })
@@ -204,12 +207,18 @@ const PlanPosts = z
       ctx.addIssue({ code: 'custom', path: ['posts'], message: 'A revised plan names the posts it changes' });
   });
 
+/**
+ * A draft design as the agent sends it: a `DesignSpec` whose photo count (1, or 2 to 10) is checked by
+ * the drafts tools (`invalid_input`), not here (agent.md, Array limits). What is stored is a `DesignSpec`.
+ */
+const AgentDesign = DesignSpec.extend({ photos: z.array(DesignPhoto).min(1) });
+
 const CreateDraft = z.object({
   tool: z.literal('create_draft'),
   postId: Uuid,
   captions: ChannelCaptions,
   usedFactIds: z.array(factId),
-  design: DesignSpec,
+  design: AgentDesign,
 });
 
 const ApplyChange = z
@@ -219,7 +228,7 @@ const ApplyChange = z
     /** Verbatim in the owner's latest burst: the fix the owner asked for. */
     ownerQuote: text,
     captions: ChannelCaptions.optional(),
-    design: DesignSpec.optional(),
+    design: AgentDesign.optional(),
     networks: z.array(Network).min(1).optional(),
     rule: z.object({ text, scope: z.enum(PREFERENCE_SCOPES) }).optional(),
   })
@@ -264,7 +273,8 @@ export type AgentToolCall = z.infer<typeof AgentToolCall>;
 
 /** The output of every agent task: the tool calls to run in order, and a confidence. */
 export const AgentStep = z.object({
-  calls: z.array(AgentToolCall).min(1).max(4),
+  /** No upper limit (agent.md, Runtime): the turn's maxToolCalls bounds them, and a count never makes an output invalid. */
+  calls: z.array(AgentToolCall).min(1),
   confidence: z.number().min(0).max(1),
 });
 export type AgentStep = z.infer<typeof AgentStep>;
@@ -285,6 +295,8 @@ export const AGENT_TOOL_REFUSAL_REASONS = [
   'window_closed',
   'question_limit',
   'photo_request_limit',
+  /** A call the step did not run (after a refusal, a call that ended the turn, or maxToolCalls). */
+  'skipped',
 ] as const;
 
 /** A refusal changes nothing; its reason and detail go back to the agent. */

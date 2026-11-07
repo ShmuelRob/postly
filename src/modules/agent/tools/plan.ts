@@ -56,6 +56,8 @@ export const planTools: ToolHandlers = {
     if (call.mode === 'initial') {
       // Only the weekly agent plans a week, while its update is being gathered.
       if (ctx.agent !== 'weekly' || week.status !== 'received') return refused('not_allowed', 'an initial plan is made once, while the update is being gathered');
+      // Never above 7 a week, justified or not: the schema no longer bounds the list (agent.md, Array limits).
+      if (call.posts.length > MAX_POSTS_PER_WEEK) return invalid(`at most ${MAX_POSTS_PER_WEEK} posts a week`);
       if (call.posts.length !== profile.postsPerWeek && !justified) {
         return invalid(`${call.posts.length} posts planned, but the profile has ${profile.postsPerWeek} a week and the owner did not ask for another number`);
       }

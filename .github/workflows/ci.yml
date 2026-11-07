@@ -19,7 +19,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Typecheck, markdown links and module boundary rules.
+  # Is this PR in the docs-only lane (scripts/lane.ts, docs/implementation-plan.md#change-size-lanes)? Then
+  # the test jobs are skipped. Outside a PR (inside Deploy) nothing is docs-only and every job runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.lane.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - id: lane
+        run: |
+          if [ "${{ github.event_name }}" != 'pull_request' ]; then echo docs_only=false >> "$GITHUB_OUTPUT"; exit 0; fi
+          node scripts/lane.ts --base "${{ github.event.pull_request.base.sha }}" --github-output "$GITHUB_OUTPUT"
+
+  # Typecheck, conflict markers, markdown links, module boundary rules, the review-queue files and the
+  # migration snapshot chain. Always runs.
   static:
     runs-on: ubuntu-latest
     steps:
@@ -33,8 +52,13 @@ jobs:
       - run: npm run lint:conflicts
       - run: npm run lint:links
       - run: npm run lint:boundaries
+      - run: npm run lint:review-queue
+      # The migration snapshot chain (implementation-plan.md, Lanes, "Migrations: one in flight").
+      - run: npm run db:check
 
   tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -84,10 +108,15 @@ jobs:
           path: reports/e2e/
           if-no-files-found: ignore
 
-  # The required status check: passes only when every job above passed.
+  # The required status check: passes only when changes and static passed and the tests passed, or were
+  # skipped because changes said docs-only. Tests skipped for any other reason (changes failed, the run was
+  # cancelled) fail it, so a PR can never skip its tests into a pass.
   check:
     if: always()
-    needs: [static, tests]
+    needs: [changes, static, tests]
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.static.result }}" = success && test "${{ needs.tests.result }}" = success
+      - run: |
+          test "${{ needs.changes.result }}" = success
+          test "${{ needs.static.result }}" = success
+          test "${{ needs.tests.result }}" = success || { test "${{ needs.tests.result }}" = skipped && test "${{ needs.changes.outputs.docs_only }}" = true; }
