@@ -6,6 +6,7 @@ import { IAP_HEADER, IapAssertionError, type IapVerifier } from './iap.js';
 import { log } from '../../shared/logger.js';
 import { renderConsolePage } from './page.js';
 import { loadPageData } from './page-data.js';
+import { lastDays } from './insights.js';
 
 export const CONSOLE_PATH = '/console';
 
@@ -68,6 +69,9 @@ function withNote(reason: string | undefined, by: string | undefined, actor: str
 }
 
 const Id = z.object({ id: z.uuid() });
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** Both or neither: without them the Insights range is the last 30 days. */
+const InsightsQuery = z.object({ from: Day.optional(), to: Day.optional() }).refine((q) => (q.from === undefined) === (q.to === undefined), 'from and to go together');
 const PauseBody = z.object({ by: z.string().min(1).optional(), reason: z.string().optional() });
 /** D2 (docs/security.md): the business name, typed by the team member, confirms a cancellation. */
 const CancelBody = z.object({ confirmName: z.string().trim().min(1) });
@@ -201,6 +205,12 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
 
       scope.get('/api/businesses', (_q, reply) => run(reply, () => c.businesses()));
       scope.get('/api/overview', (_q, reply) => run(reply, () => c.overview()));
+      scope.get('/api/insights', (q, reply) =>
+        run(reply, () => {
+          const { from, to } = InsightsQuery.parse(q.query);
+          return c.insights(from && to ? { from, to } : lastDays(30));
+        }),
+      );
       scope.get('/api/business-rows', (_q, reply) => run(reply, () => c.businessRows()));
       scope.get('/api/businesses/:id', (q, reply) => run(reply, () => c.business(id(q.params))));
       scope.get('/api/businesses/:id/posts', (q, reply) => run(reply, () => c.posts(id(q.params))));
