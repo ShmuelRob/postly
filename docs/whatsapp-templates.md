@@ -40,7 +40,7 @@ Variables are named in code (`{{businessName}}`). Meta uses positional placehold
 **subscription_cancelled**
 > המנוי שלך ל-Postly בוטל, והחיבור לרשתות החברתיות נותק. הנתונים של העסק נשמרים, ואפשר לבקש מאיתנו למחוק אותם. אם זו טעות או שתרצו שנמחק את הנתונים, כתבו לנו כאן.
 
-Changed 2026-11-07 (cancellation keeps the data; H6, review queue item 76): the body no longer promises deletion and the `deleteAfter` variable is gone. If the old body was already submitted to Meta, the template must be edited and approved again before it is used (removing a variable changes its structure); otherwise submit this body.
+Changed 2026-11-07 (cancellation keeps the data; H6, review queue item 81): the body no longer promises deletion and the `deleteAfter` variable is gone. If the old body was already submitted to Meta, the template must be edited and approved again before it is used (removing a variable changes its structure); otherwise submit this body.
 
 **monthly_report**
 > הסיכום של Postly ל{{month}}: {{posts}} פוסטים פורסמו, חשיפה {{reach}}, מעורבות {{engagement}} (לייקים, תגובות ושיתופים).

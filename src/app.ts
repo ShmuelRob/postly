@@ -79,12 +79,11 @@ export interface AppOptions {
   now?: () => Date;
   logger?: WorkflowLogger;
   /**
-   * The one-shot onboarding, weekly and drafts flows instead of the agents (agent.md, A9). Kept for the
-   * existing end-to-end and H5 tests and the local playground, which drive those flows; the one-shot
-   * code is dead in every deployed environment and goes with A9's cleanup. Default `true`, so the tests
-   * written for the one-shot flows keep composing them unchanged. main.ts, the only deployed entry point,
-   * always passes `false`, and no env variable, config field or Terraform value reaches this option
-   * (src/agents-always-on.test.ts).
+   * The one-shot onboarding, weekly and drafts flows instead of the agents (agent.md, A9). Off by
+   * default: every composition runs the agents unless a test asks for the one-shot code, which is dead
+   * in every deployed environment and goes with A9's cleanup. Only tests set it to `true` (the existing
+   * end-to-end and H5 tests that drive those flows); no env variable, config field or Terraform value
+   * reaches it (src/agents-always-on.test.ts).
    */
   oneShotFlows?: boolean;
 }
@@ -163,7 +162,7 @@ export function createApp(options: AppOptions): App {
   const model = createModelLayer({ db, providers: providers.models, resolveMediaUrl: (b, a) => messaging.mediaUrl(b, a) });
   // The hybrid agent (agent.md): onboarding, weekly and drafts always run on it, except where a test
   // composes the one-shot flows (`oneShotFlows`). Each flow stores the questions its agent asks.
-  const oneShot = options.oneShotFlows ?? true;
+  const oneShot = options.oneShotFlows ?? false;
   const agent = createAgent({
     db,
     models: model,

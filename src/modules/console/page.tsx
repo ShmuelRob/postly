@@ -147,7 +147,9 @@ function TopBar({ data }: { data: ConsolePageData }) {
   const withItems = data.businesses.filter((b) => b.openItems > 0).length;
   const tabs: Array<[Tab, string, number, Tone]> = [
     ['overview', 'Overview', failures24h, 'bad'],
+    ['insights', 'Insights', 0, 'neutral'],
     ['manage', 'Manage', openItems, 'warn'],
+    ['businesses', 'Businesses', 0, 'neutral'],
     ['conversations', 'Conversations', withItems, 'warn'],
   ];
   return (
@@ -203,29 +205,30 @@ function barPath(x: number, base: number, w: number, h: number) {
   return `M${x},${base}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${base}Z`;
 }
 
-function CostBars({ days }: { days: Array<{ day: string; usd: number }> }) {
-  const W = 280, H = 76, top = 14, base = H - 1, gap = 4, n = Math.max(days.length, 1);
-  const bw = (W - gap * (n - 1)) / n;
-  const max = Math.max(...days.map((d) => d.usd), 1e-6);
-  const total = days.reduce((s, d) => s + d.usd, 0);
+/** One series of daily values as bars (dataviz: one hue, no legend, the title names it; values on hover and in a table). */
+function DayBars({ title, meta, days, format, testId, lastLabel = 'Today' }: { title: string; meta?: string; days: Array<{ day: string; value: number }>; format: (v: number) => string; testId?: string; lastLabel?: string }) {
+  const W = 280, H = 76, top = 14, base = H - 1, gap = days.length > 40 ? 1 : days.length > 20 ? 2 : 4, n = Math.max(days.length, 1);
+  const bw = Math.max((W - gap * (n - 1)) / n, 0.5);
+  const max = Math.max(...days.map((d) => d.value), 1e-6);
+  const total = days.reduce((s, d) => s + d.value, 0);
   return (
-    <figure className="box chart" data-testid="cost-chart">
+    <figure className="box chart" data-testid={testId}>
       <figcaption className="chart-h">
-        <h3>Model cost per day</h3>
-        <span className="meta">Last 14 days, {usd(total)} total</span>
+        <h3>{title}</h3>
+        {meta && <span className="meta">{meta}</span>}
       </figcaption>
-      <svg className="spark" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Model cost per day for 14 days, total ${usd(total)}, highest ${usd(max > 1e-6 ? max : 0)}`}>
+      <svg className="spark" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${title}: ${days.length} days, total ${format(total)}, highest ${format(max > 1e-6 ? max : 0)}`}>
         {days.map((d, i) => {
           const x = i * (bw + gap);
-          const h = d.usd > 0 ? Math.max(2, (d.usd / max) * (base - top)) : 0;
+          const h = d.value > 0 ? Math.max(2, (d.value / max) * (base - top)) : 0;
           const tx = Math.min(Math.max(x + bw / 2, 16), W - 16);
           return (
             <g key={d.day} className={i === n - 1 ? 'g last' : 'g'} tabIndex={0}>
-              <title>{`${d.day}: ${usd(d.usd)}`}</title>
+              <title>{`${d.day}: ${format(d.value)}`}</title>
               <rect className="hit" x={x - gap / 2} y={0} width={bw + gap} height={H} />
               {h > 0 ? <path className="bar" d={barPath(x, base, bw, h)} /> : <rect className="bar zero" x={x} y={base - 1} width={bw} height={1} />}
               <text className="tip" x={tx} y={Math.max(base - h - 4, 9)} textAnchor="middle">
-                {usd(d.usd)}
+                {format(d.value)}
               </text>
             </g>
           );
@@ -234,7 +237,7 @@ function CostBars({ days }: { days: Array<{ day: string; usd: number }> }) {
       </svg>
       <div className="chart-axis">
         <span>{days[0]?.day.slice(5)}</span>
-        <span>Today</span>
+        <span>{lastLabel}</span>
       </div>
       <details className="chart-table">
         <summary>Show values</summary>
@@ -243,7 +246,7 @@ function CostBars({ days }: { days: Array<{ day: string; usd: number }> }) {
             {days.map((d) => (
               <tr key={d.day}>
                 <td>{d.day}</td>
-                <td>{usd(d.usd)}</td>
+                <td>{format(d.value)}</td>
               </tr>
             ))}
           </tbody>
@@ -251,6 +254,11 @@ function CostBars({ days }: { days: Array<{ day: string; usd: number }> }) {
       </details>
     </figure>
   );
+}
+
+function CostBars({ days }: { days: Array<{ day: string; usd: number }> }) {
+  const total = days.reduce((s, d) => s + d.usd, 0);
+  return <DayBars title="Model cost per day" meta={`Last 14 days, ${usd(total)} total`} days={days.map((d) => ({ day: d.day, value: d.usd }))} format={usd} testId="cost-chart" />;
 }
 
 function StatTile({ label, value, unit, tone, sub, children, link, testId }: { label: string; value: ReactNode; unit?: string; tone?: Tone | undefined; sub?: ReactNode; children?: ReactNode; link?: string; testId?: string }) {
@@ -518,6 +526,9 @@ function BusinessesTable({ businesses, now }: { businesses: BusinessRow[]; now: 
               <th>Status</th>
               <th>Step</th>
               <th>Last message</th>
+              <th>Joined</th>
+              <th className="r">Published</th>
+              <th className="r">Model cost</th>
               <th className="r">Actions</th>
             </tr>
           </thead>
@@ -544,6 +555,15 @@ function BusinessesTable({ businesses, now }: { businesses: BusinessRow[]; now: 
                 <td data-label="Step">{b.step ? humanize(b.step) : <span className="muted">none</span>}</td>
                 <td data-label="Last message" className="nowrap">
                   <When d={b.lastMessage?.createdAt} now={now} />
+                </td>
+                <td data-label="Joined" className="nowrap">
+                  {time(b.createdAt).slice(0, 10)}
+                </td>
+                <td data-label="Published" className="r">
+                  {b.published}
+                </td>
+                <td data-label="Model cost" className="r">
+                  {usd(b.spendUsd)}
                 </td>
                 <td className="actions">
                   <BusinessActions b={b} />
@@ -895,9 +915,6 @@ function ManageTab({ data, names, now }: { data: ConsolePageData; names: Map<str
             <ReviewQueue items={items} names={names} query={query} now={now} />
             </div>
           </Section>
-          <Section title="Businesses" meta={`${data.businesses.length}`}>
-            <BusinessesTable businesses={data.businesses} now={now} />
-          </Section>
         </div>
         <div>
           <GlobalControls data={data} />
@@ -908,6 +925,253 @@ function ManageTab({ data, names, now }: { data: ConsolePageData; names: Map<str
           <AgentLimits rows={m.agentConfigs} now={now} />
           <ModelTasks rows={m.modelTasks} now={now} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- businesses ----------
+
+function BusinessesTab({ data, now }: { data: ConsolePageData; now: number }) {
+  const { query } = data;
+  const list = data.businesses.filter((b) => listFilter(b, query.kind) && matches(b.name, query.q));
+  const countOf = (k: string) => data.businesses.filter((b) => listFilter(b, k)).length;
+  return (
+    <div data-testid="businesses-tab">
+      <div className="page-h">
+        <h1>Businesses</h1>
+        <span className="muted">{data.businesses.length} in all. Open one to see its conversation and client panel.</span>
+      </div>
+      <form className="list-h box" method="get" action="/console" style={{ marginBottom: 8 }}>
+        <input type="hidden" name="tab" value="businesses" />
+        {query.kind && <input type="hidden" name="kind" value={query.kind} />}
+        <label className="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-4-4" />
+          </svg>
+          <span className="sr">Search businesses</span>
+          <input className="in" type="search" name="q" defaultValue={query.q} placeholder="Search by name" />
+        </label>
+        <nav className="chips" aria-label="Filter businesses">
+          {LIST_FILTERS.filter((k) => k === 'all' || countOf(k) > 0).map((k) => (
+            <a key={k} className="chip" aria-current={(query.kind ?? 'all') === k ? 'true' : undefined} href={href({ tab: 'businesses', q: query.q, kind: k === 'all' ? undefined : k })}>
+              {humanize(k)} <span className="n">{countOf(k)}</span>
+            </a>
+          ))}
+        </nav>
+      </form>
+      {list.length === 0 && data.businesses.length > 0 ? (
+        <div className="box">
+          <Empty title="No businesses match" text="Clear the search or pick another filter." />
+        </div>
+      ) : (
+        <BusinessesTable businesses={list} now={now} />
+      )}
+    </div>
+  );
+}
+
+// ---------- insights ----------
+
+const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+const pct = (v: number | null) => (v === null ? 'n/a' : `${Math.round(v * 100)}%`);
+const num = (v: number) => v.toLocaleString('en-US');
+function duration(minutes: number | null): string {
+  if (minutes === null) return 'n/a';
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  if (minutes < 1440) return `${(minutes / 60).toFixed(1)} h`;
+  return `${(minutes / 1440).toFixed(1)} d`;
+}
+
+/** Horizontal bars, one row per category: one hue, or the row's status tone when the rows are states. */
+function HBars({ rows, testId }: { rows: Array<{ label: string; n: number; tone?: Tone; href?: string }>; testId?: string }) {
+  const max = Math.max(...rows.map((r) => r.n), 1);
+  const total = rows.reduce((s, r) => s + r.n, 0);
+  return (
+    <ul className="hbars" data-testid={testId}>
+      {rows.map((r) => (
+        <li key={r.label} className="hbar" data-tone={r.tone}>
+          <span className="lbl">{r.href ? <a href={r.href}>{r.label}</a> : r.label}</span>
+          <span className="track" title={`${r.label}: ${r.n}${total ? ` (${Math.round((r.n / total) * 100)}%)` : ''}`}>
+            <i className={r.n === 0 ? 'fill zero' : 'fill'} style={{ width: `${(r.n / max) * 100}%` }} />
+          </span>
+          <span className="v">{num(r.n)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RangeForm({ data }: { data: ConsolePageData }) {
+  const { query } = data;
+  const insights = data.insights!;
+  const custom = Boolean(query.from && query.to) && !insights.rangeError;
+  const preset = custom ? undefined : (query.range ?? '30d');
+  return (
+    <form className="range box" method="get" action="/console" data-testid="insights-range">
+      <input type="hidden" name="tab" value="insights" />
+      <nav className="chips" aria-label="Date range">
+        {(['7d', '30d', '90d'] as const).map((r) => (
+          <a key={r} className="chip" aria-current={preset === r ? 'true' : undefined} href={href({ tab: 'insights', range: r })}>
+            Last {r.replace('d', ' days')}
+          </a>
+        ))}
+      </nav>
+      <label className="field">
+        <span>From</span>
+        <input className="in cell" type="date" name="from" defaultValue={insights.data.range.from} required />
+      </label>
+      <label className="field">
+        <span>To</span>
+        <input className="in cell" type="date" name="to" defaultValue={insights.data.range.to} required />
+      </label>
+      <button className="btn sm" type="submit">
+        Apply
+      </button>
+      {insights.rangeError && (
+        <span className="form-errors" role="alert">
+          That range was refused ({insights.rangeError}); showing the last 30 days.
+        </span>
+      )}
+    </form>
+  );
+}
+
+type WeeklyKey = 'done' | 'reminded' | 'awaiting' | 'skipped' | 'noRow';
+const WEEKLY_ROWS: Array<[WeeklyKey, string, Tone]> = [
+  ['done', 'Sent their update', 'good'],
+  ['reminded', 'Reminded, no reply yet', 'warn'],
+  ['awaiting', 'Not reminded yet', 'info'],
+  ['skipped', 'Skipped the week', 'neutral'],
+  ['noRow', 'No week started', 'neutral'],
+];
+
+function InsightsTab({ data }: { data: ConsolePageData }) {
+  const i = data.insights!.data;
+  const span = `${i.range.from} to ${i.range.to}, ${days(i.range.days)}`;
+  return (
+    <div className="stack" data-testid="insights">
+      <div className="page-h">
+        <h1>Insights</h1>
+        <span className="muted">Across every business. Days are UTC; the funnel, statuses and the weekly update are as of now.</span>
+      </div>
+      <RangeForm data={data} />
+      <section className="tiles" aria-label={`Totals, ${span}`}>
+        <StatTile label="New businesses" value={num(i.newBusinesses.total)} sub={`in ${days(i.range.days)}`} testId="insights-tile-new" />
+        <StatTile label="Messages" value={num(i.messages.inbound + i.messages.outbound)} sub={`${num(i.messages.inbound)} from owners, ${num(i.messages.outbound)} sent; ${i.messages.businessesWriting} businesses wrote`} />
+        <StatTile label="Posts published" value={num(i.posts.published)} sub={`${num(i.posts.drafted)} drafted, ${num(i.posts.approved)} approved`} />
+        <StatTile label="Approval rate" value={pct(i.approval.rate)} sub={`${i.approval.approved} of ${i.approval.versioned} drafts; median ${duration(i.approval.medianMinutes)}, p90 ${duration(i.approval.p90Minutes)}`} />
+        <StatTile label="Agent hand-offs" value={num(i.agent.handedOff)} tone={i.agent.handOffRate !== null && i.agent.handOffRate > 0.2 ? 'warn' : undefined} sub={`${pct(i.agent.handOffRate)} of ${num(i.agent.turns)} turns`} />
+        <StatTile label="Model cost" value={usd(i.cost.totalUsd)} sub={i.cost.perBusinessUsd === null ? 'No spend' : `${usd(i.cost.perBusinessUsd)} per business that spent`} />
+      </section>
+      <div className="grid-ov">
+        <DayBars title="New businesses per day" meta={`${num(i.newBusinesses.total)} in ${days(i.range.days)}`} days={i.newBusinesses.perDay.map((d) => ({ day: d.day, value: d.n }))} format={num} testId="insights-new-businesses" lastLabel={i.range.to.slice(5)} />
+        <DayBars title="Model cost per day" meta={`${usd(i.cost.totalUsd)} in ${days(i.range.days)}`} days={i.cost.perDay.map((d) => ({ day: d.day, value: d.usd }))} format={usd} testId="insights-cost" lastLabel={i.range.to.slice(5)} />
+        <section>
+          <div className="sect-h">
+            <h2>Onboarding funnel</h2>
+            <span className="meta">onboarding businesses by step, now</span>
+          </div>
+          <div className="box" data-testid="insights-funnel">
+            <HBars rows={i.funnel.onboarding.map((f) => ({ label: humanize(f.step), n: f.n }))} />
+            <div className="sub-h" style={{ padding: '0 14px' }}>
+              Active businesses by conversation state
+            </div>
+            <HBars rows={i.funnel.conversation.map((f) => ({ label: humanize(f.step), n: f.n }))} />
+          </div>
+        </section>
+        <section>
+          <div className="sect-h">
+            <h2>This week's update</h2>
+            <span className="meta">
+              week of {i.weekly.weekStart}, {i.weekly.active} active businesses
+            </span>
+          </div>
+          <div className="box" data-testid="insights-weekly">
+            <HBars rows={WEEKLY_ROWS.map(([k, label, tone]) => ({ label, n: i.weekly[k], tone }))} />
+          </div>
+          <div className="sect-h" style={{ marginTop: 16 }}>
+            <h2>Businesses by status</h2>
+            <span className="meta">now</span>
+          </div>
+          <div className="box">
+            <HBars rows={Object.entries(i.statuses).map(([k, n]) => ({ label: humanize(k), n, tone: toneOf(k), href: href({ tab: 'businesses', kind: k }) }))} />
+          </div>
+        </section>
+        <section>
+          <div className="sect-h">
+            <h2>Posts by network</h2>
+            <span className="meta">publications in the range</span>
+          </div>
+          <div className="box">
+            {i.posts.byNetwork.length === 0 ? (
+              <Empty title="No publications in this range" />
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Network</th>
+                    <th className="r">Scheduled</th>
+                    <th className="r">Published</th>
+                    <th className="r">Failed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {i.posts.byNetwork.map((n) => (
+                    <tr key={n.network}>
+                      <td className="name">{n.network}</td>
+                      <td className="r">{num(n.scheduled)}</td>
+                      <td className="r">{num(n.published)}</td>
+                      <td className="r">{n.failed > 0 ? <Badge value="failed" label={String(n.failed)} /> : 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="sect-h" style={{ marginTop: 16 }}>
+            <h2>New businesses per week</h2>
+            <span className="meta">business weeks: Sunday 00:00 in each business's timezone</span>
+          </div>
+          <div className="box">
+            <HBars rows={i.newBusinesses.perWeek.map((w) => ({ label: w.weekStart, n: w.n }))} />
+          </div>
+        </section>
+        <section>
+          <div className="sect-h">
+            <h2>Busiest conversations</h2>
+            <span className="meta">messages in the range, top 20</span>
+          </div>
+          <div className="box">
+            {i.messages.top.length === 0 ? (
+              <Empty title="No messages in this range" />
+            ) : (
+              <table className="tbl" data-testid="insights-top">
+                <thead>
+                  <tr>
+                    <th>Business</th>
+                    <th className="r">From owner</th>
+                    <th className="r">Sent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {i.messages.top.map((t) => (
+                    <tr key={t.businessId}>
+                      <td className="name">
+                        <a dir="auto" href={href({ tab: 'conversations', business: t.businessId })}>
+                          {t.name}
+                        </a>
+                      </td>
+                      <td className="r">{num(t.inbound)}</td>
+                      <td className="r">{num(t.outbound)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -1530,6 +1794,10 @@ function ConsolePage({ data, now }: { data: ConsolePageData; now: number }) {
             <RunView data={data} names={names} />
           ) : data.query.tab === 'manage' ? (
             <ManageTab data={data} names={names} now={now} />
+          ) : data.query.tab === 'insights' && data.insights ? (
+            <InsightsTab data={data} />
+          ) : data.query.tab === 'businesses' ? (
+            <BusinessesTab data={data} now={now} />
           ) : convoTab ? (
             <ConversationsTab data={data} names={names} now={now} />
           ) : (

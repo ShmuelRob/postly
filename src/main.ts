@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { loadConfig } from './config.js';
-import { createPgBossQueue, createPostgresSimulatorStore, provisionDatabase } from './db/index.js';
+import { createPgBossQueue, createPostgresSimulatorStore, createSendOnlyQueue, provisionDatabase } from './db/index.js';
 import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
 import { ConsoleActionError, createConsole, createIapVerifier, type ConsoleAuth } from './modules/console/index.js';
@@ -8,7 +8,7 @@ import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
-import { log, setLogLabels } from './shared/logger.js';
+import { asError, log, setLogLabels } from './shared/logger.js';
 import { startTelemetry } from './shared/telemetry-gcp.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
@@ -45,8 +45,14 @@ async function main(command: string | undefined) {
   log.info('database pools', { poolMax: config.dbPoolMax, maxConnections: config.maxConnections });
   // Simulated mode (docs/deployment.md, "Simulated mode"): config allows it only in local, test and dev.
   const store = config.simulators.store === 'postgres' ? createPostgresSimulatorStore(config.simulators.storeUrl) : new MemorySimulatorStore();
-  // Both processes connect to pg-boss: the web process sends and runs the inbound-burst job (T2).
-  const queue = await createPgBossQueue({ connectionString: config.jobsUrl, observeDepth: command === 'worker' });
+  // Web and worker connect to pg-boss at start: the web process sends and runs the inbound-burst job
+  // (T2), the worker runs every other job. The console runs no job and sends none in practice (no
+  // inbound message reaches it), so its pg-boss starts only on a first send, without supervision or
+  // cron (2026-11-06: its idle pg-boss timers timed out on a CPU-throttled, scale-to-zero service).
+  const queue =
+    command === 'console'
+      ? createSendOnlyQueue(() => createPgBossQueue({ connectionString: config.jobsUrl, sendOnly: true }))
+      : await createPgBossQueue({ connectionString: config.jobsUrl, observeDepth: command === 'worker' });
   const { app, world, db, close } = await createSimulatedApp({
     store,
     burstWake: jobBurstWake(queue),
@@ -94,7 +100,7 @@ async function main(command: string | undefined) {
       ...(deployed ? { trustProxyHops: 1 } : {}),
       ...(c.auth === 'iap' && c.host ? { allowedHosts: [c.host] } : {}),
     });
-    stops.push(() => server.close());
+    stops.push(() => server.close(), () => queue.stop());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
     await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, archive: app.archive, monthlyReport: app.monthlyReport, ...(app.billingHold ? { billingHold: app.billingHold } : {}) });
@@ -117,6 +123,6 @@ async function main(command: string | undefined) {
 }
 
 main(process.argv[2]).catch((error: unknown) => {
-  log.error('startup failed', { error: String(error) });
+  log.error('startup failed', { error: asError(error) });
   process.exit(1);
 });

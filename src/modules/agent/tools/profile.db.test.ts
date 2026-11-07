@@ -77,6 +77,32 @@ describe('set_profile_field', () => {
     expect((await profile()).profile).toEqual({ approverPhone: expect.any(String) });
   });
 
+  // agent.md, set_profile_field (2026-11-07): a value of the wrong shape is a refusal with the field and its
+  // expected shape, so the next step can fix it; on dev it was an invalid output three times, then a hand-off.
+  it('refuses a value of the wrong shape with the expected shape, and the next step fixes it', async () => {
+    await newBusiness('onboarding', 'אנחנו מוכרים ספרים וקפה');
+    sim.scriptAgent('onboarding', [
+      step(call.setProfileField('mainProducts', ['ספרים', '   '], 'ספרים וקפה')),
+      step(call.setProfileField('mainProducts', ['ספרים', 'קפה'], 'ספרים וקפה'), call.endTurn()),
+    ]);
+    const result = await agent().runTurn(businessId, 'onboarding', trigger);
+    const results = await turnResults(result.turnId!);
+    expect(results.map((r) => r.reason ?? r.status)).toEqual(['invalid_input', 'ok', 'ok']);
+    const detail = (results[0] as { detail?: string }).detail!;
+    expect(detail).toBe('mainProducts must match {"minItems":1,"type":"array","items":{"type":"string","minLength":1}}');
+    // The refusal names the field and its shape, never the value.
+    expect(detail).not.toContain('ספרים');
+    expect((await profile()).profile).toMatchObject({ mainProducts: ['ספרים', 'קפה'] });
+  });
+
+  it('takes a single string for a list field as a one-item list, without splitting it', async () => {
+    await newBusiness('onboarding', 'אנחנו מוכרים ספרים, קפה');
+    sim.scriptAgent('onboarding', [step(call.setProfileField('mainProducts', 'ספרים, קפה' as never, 'ספרים, קפה'), call.endTurn())]);
+    const result = await agent().runTurn(businessId, 'onboarding', trigger);
+    expect((await turnResults(result.turnId!)).map((r) => r.status)).toEqual(['ok', 'ok']);
+    expect((await profile()).profile).toMatchObject({ mainProducts: ['ספרים, קפה'] });
+  });
+
   it('matches whole numbers only: "2" is not inside "20"', async () => {
     await newBusiness('onboarding', 'פתוחים עד 20:00');
     sim.scriptAgent('onboarding', [step(call.setProfileField('location.hours', 'א-ה 2-20', 'פתוחים עד 20:00')), step(call.endTurn())]);

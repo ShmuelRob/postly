@@ -95,9 +95,8 @@ export interface SimulatedAppOptions extends SimulatedWorldOptions {
   /** Deployed (agent.md, Running on dev): real Gemini through Vertex AI, the other providers simulated. */
   vertex?: VertexModelsOptions;
   /**
-   * The one-shot flows instead of the agents (AppOptions.oneShotFlows; agent.md, A9), default `true` for
-   * the tests that drive them. main.ts always passes `false`, and no env variable, config field or
-   * Terraform value reaches this option (src/agents-always-on.test.ts).
+   * The one-shot flows instead of the agents (AppOptions.oneShotFlows; agent.md, A9). Off by default, as
+   * main.ts and the dev sandbox compose it; only tests set `true` (src/agents-always-on.test.ts).
    */
   oneShotFlows?: boolean;
   burstQuietMs?: number;
@@ -169,8 +168,8 @@ export async function createSimulatedApp(options: SimulatedAppOptions) {
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.burstWake ? { burstWake: options.burstWake } : {}),
     ...(options.now ? { now: options.now } : {}),
-    // main.ts, the only deployed entry point, always passes false: the agents run (agent.md).
-    oneShotFlows: options.oneShotFlows ?? true,
+    // Off unless a test asks: main.ts and the dev sandbox run the agents (agent.md).
+    oneShotFlows: options.oneShotFlows ?? false,
   });
   return {
     app,

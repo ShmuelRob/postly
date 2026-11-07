@@ -96,6 +96,8 @@ async function setup() {
   const app: AppFactory = ({ messaging, publishing, model, design: recorded }) => {
     ref.postly = createApp({
       db,
+      // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging, publishing, models: { google: model } },
       design: recorded!,
       media: storage,

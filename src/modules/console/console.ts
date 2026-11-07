@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-or
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import type { EventResult, Workflow } from '../workflow/index.js';
+import { parseRange, readInsights } from './insights.js';
 import { AGENT_NAMES } from '../../contracts/agent.js';
 import { BusinessProfile, BusinessProfileDraft } from '../../contracts/business-profile.js';
 import { MODEL_TASK_NAMES } from '../../contracts/model-tasks.js';
@@ -16,6 +17,8 @@ import type {
   ModelRunSummary,
   ModelTaskPatch,
   ModelTaskRow,
+  Insights,
+  InsightsRange,
   Overview,
   PostDetail,
   SystemSettings,
@@ -78,6 +81,8 @@ export interface ConsoleService {
   setPrice(input: { plan?: string; amountAgorot: number; by: string; reason?: string }): Promise<PlanPriceRow>;
 
   // The redesigned console's read models (views.ts; technical-design.md, "Console (Phase 1)").
+  /** The Insights tab for a range of UTC days (views.ts, Insights); 400 `invalid_range` when `to` is before `from` or it spans over 366 days. */
+  insights(range: InsightsRange, now?: Date): Promise<Insights>;
   /** The Overview tab. `now` defaults to the current time. */
   overview(now?: Date): Promise<Overview>;
   /** Every business with its conversation state, open item count and newest message, newest business first. */
@@ -259,6 +264,20 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
       .from(m)
       .where(businessId ? eq(m.businessId, businessId) : isNotNull(m.businessId))
       .orderBy(m.businessId, desc(m.createdAt), desc(m.seq));
+    const p = schema.publication;
+    const published = await tx
+      .select({ businessId: p.businessId, n: sql<number>`count(*)::int` })
+      .from(p)
+      .where(and(eq(p.status, 'published'), businessId ? eq(p.businessId, businessId) : undefined))
+      .groupBy(p.businessId);
+    const r = schema.modelRun;
+    const spend = await tx
+      .select({ businessId: r.businessId, usd: sql<string | null>`sum(${r.costUsd})` })
+      .from(r)
+      .where(businessId ? eq(r.businessId, businessId) : isNotNull(r.businessId))
+      .groupBy(r.businessId);
+    const publishedOf = new Map(published.map((x) => [x.businessId, x.n]));
+    const spendOf = new Map(spend.map((x) => [x.businessId, Number(x.usd ?? 0)]));
     const itemsOf = new Map(items.map((r) => [r.businessId, Number(r.n)]));
     const lastOf = new Map(last.map(({ businessId: id, ...rest }) => [id, rest]));
     return rows.map((r) => {
@@ -272,6 +291,8 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
         openQuestion: q && typeof q.key === 'string' ? q.key : null,
         lastInboundAt: r.lastInboundAt,
         openItems: itemsOf.get(r.id) ?? 0,
+        published: publishedOf.get(r.id) ?? 0,
+        spendUsd: spendOf.get(r.id) ?? 0,
         lastMessage: lastOf.get(r.id) ?? null,
         createdAt: r.createdAt,
       };
@@ -418,6 +439,12 @@ export function createConsole(db: Database, workflow: Workflow): ConsoleService 
         tx.insert(schema.planPrice).values({ plan, amountAgorot, currency: 'ILS', changedBy: by, reason: reason ?? null }).returning(),
       );
       return row!;
+    },
+
+    async insights(range, now = new Date()) {
+      const bounds = parseRange(range);
+      if (!bounds) throw new ConsoleActionError(400, 'invalid_range', 'from and to are UTC days (YYYY-MM-DD), to not before from, at most 366 days');
+      return sys((tx) => readInsights(tx, range, bounds, now));
     },
 
     async overview(now = new Date()) {
