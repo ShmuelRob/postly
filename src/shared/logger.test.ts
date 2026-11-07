@@ -325,6 +325,8 @@ describe('correlation and log level', () => {
       setLogLevel(undefined);
     }
     expect(parsed().map((l) => l.message)).toEqual(['shown', 'warned', 'failed', 'debugged']);
+  });
+});
 
 // Review of PR #136: a Drizzle query error's message is "Failed query: <sql>\nparams: <params>", and the
 // params hold what the query wrote (a message body, a caption). Only the SQL and the parameter count
