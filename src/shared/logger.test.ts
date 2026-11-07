@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asError, log, setLogLabels, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { addLogContext, asError, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
 
@@ -40,10 +40,12 @@ describe('logger format', () => {
 
   it('maps every level to a Cloud Logging severity', () => {
     capture();
+    setLogLevel('debug');
     log.debug('a');
     log.info('b');
     log.warn('c');
     log.error('d');
+    setLogLevel(undefined);
     expect(parsed().map((l) => l.severity)).toEqual(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
   });
 
@@ -272,5 +274,49 @@ describe('error serialization', () => {
     const text = lines.join('\n');
     for (const secret of FORBIDDEN) expect(text).not.toContain(secret);
     expect(text).not.toContain(PASSWORD);
+  });
+});
+
+// docs/observability.md, "Following one message": the correlation ids, and LOG_LEVEL.
+describe('correlation and log level', () => {
+  it('carries correlationId and agentTurnId as labels', () => {
+    capture();
+    withLogContext({ businessId: 'b1', correlationId: 'm1', agentTurnId: 't1' }, () => log.info('agent tool call'));
+    const [line] = parsed();
+    expect(line!['logging.googleapis.com/labels']).toMatchObject({ businessId: 'b1', correlationId: 'm1', agentTurnId: 't1' });
+    expect(line).not.toHaveProperty('correlationId');
+  });
+
+  it('addLogContext adds ids to the current scope only', async () => {
+    capture();
+    await withLogContext({ businessId: 'b1' }, async () => {
+      addLogContext({ agentTurnId: 't1' });
+      await Promise.resolve();
+      log.info('inside');
+    });
+    log.info('outside');
+    addLogContext({ agentTurnId: 'nowhere' });
+    log.info('no scope');
+    const [inside, outside, none] = parsed().map((l) => l['logging.googleapis.com/labels'] as Record<string, string> | undefined);
+    expect(inside).toMatchObject({ businessId: 'b1', agentTurnId: 't1' });
+    expect(outside?.agentTurnId).toBeUndefined();
+    expect(none?.agentTurnId).toBeUndefined();
+  });
+
+  it('writes nothing below the log level; info by default', () => {
+    capture();
+    try {
+      log.debug('hidden by default');
+      log.info('shown');
+      setLogLevel('warn');
+      log.info('hidden');
+      log.warn('warned');
+      log.error('failed');
+      setLogLevel('debug');
+      log.debug('debugged');
+    } finally {
+      setLogLevel(undefined);
+    }
+    expect(parsed().map((l) => l.message)).toEqual(['shown', 'warned', 'failed', 'debugged']);
   });
 });

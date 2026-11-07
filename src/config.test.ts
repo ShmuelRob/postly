@@ -227,3 +227,17 @@ describe('BUSINESS_NUMBER', () => {
     expect(loadConfig({ ...base, BUSINESS_NUMBER: '+15550000001' }).businessNumber).toBe('+15550000001');
   });
 });
+
+// docs/observability.md, "Log level": LOG_LEVEL, debug only where no customer runs.
+describe('LOG_LEVEL', () => {
+  it('defaults to info and accepts debug, info, warn and error', () => {
+    expect(loadConfig(base).logLevel).toBe('info');
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) expect(loadConfig({ ...base, LOG_LEVEL: level }).logLevel).toBe(level);
+    expect(loadConfig({ ...dev, LOG_LEVEL: 'debug' }).logLevel).toBe('debug');
+    expect(() => loadConfig({ ...base, LOG_LEVEL: 'verbose' })).toThrow(/LOG_LEVEL/);
+  });
+
+  it('refuses debug in stage and prod, at startup', () => {
+    for (const env of ['stage', 'prod']) expect(() => loadConfig({ ...dev, POSTLY_ENV: env, LOG_LEVEL: 'debug' })).toThrow(/LOG_LEVEL=debug is allowed only in local, test and dev/);
+  });
+});

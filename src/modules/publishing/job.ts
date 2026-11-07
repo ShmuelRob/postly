@@ -234,25 +234,42 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     }
   }
 
-  /** One run, in a span and counted by outcome and network (docs/observability.md, Metrics and Tracing). */
+  /**
+   * One run, in a span, counted by outcome and network, and logged as one `publication attempt` line
+   * (docs/observability.md, Metrics, Tracing and "Following one message"). Logging only: the run is unchanged.
+   */
   async function runPublication(publicationId: string): Promise<PublishOutcome> {
-    const seen: { network?: Network } = {};
+    const seen: { network?: Network; postId?: string; businessId?: string } = {};
+    const started = performance.now();
     return withSpan('publication run', { publicationId }, async (span) => {
       let outcome: PublishOutcome['outcome'] = 'failed';
+      let reason: string | undefined;
       try {
         const result = await runPublicationOnce(publicationId, seen);
         outcome = result.outcome;
+        if ('reason' in result && typeof result.reason === 'string') reason = result.reason;
         return result;
       } finally {
         span.set({ outcome, network: seen.network });
         metrics.count('postly.publications.count', { outcome, network: seen.network ?? 'none' });
+        const severity = outcome === 'failed' ? log.error : outcome === 'retry_pending' ? log.warn : log.info;
+        severity('publication attempt', {
+          businessId: seen.businessId,
+          publicationId,
+          postId: seen.postId,
+          network: seen.network,
+          outcome,
+          ...(reason ? { reason } : {}),
+          durationMs: Math.round(performance.now() - started),
+        });
       }
     });
   }
 
-  async function runPublicationOnce(publicationId: string, seen: { network?: Network }): Promise<PublishOutcome> {
+  async function runPublicationOnce(publicationId: string, seen: { network?: Network; postId?: string; businessId?: string }): Promise<PublishOutcome> {
     const businessId = await businessOf(publicationId);
     if (!businessId) return { outcome: 'refused', reason: 'wrong_state' };
+    seen.businessId = businessId;
     const handoff = !(await deps.mayAutoReply(businessId));
     const started = await event(businessId, 'publication', publicationId, 'STARTED', (tx) => guard(tx, publicationId, handoff));
     if (!started.ok) {
@@ -268,6 +285,7 @@ export function createPublishingJob(deps: PublishingJobDeps): Publishing {
     try {
       const { pub, request } = await load(businessId, publicationId);
       seen.network = pub.network;
+      seen.postId = pub.postId;
       postId = pub.postId;
       // The post's first publication moves it to publishing; for later ones the post is already there.
       await event(businessId, 'post', pub.postId, 'PUBLISHING_STARTED');

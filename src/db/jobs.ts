@@ -9,17 +9,31 @@ import { currentMeter, metrics, withSpan } from '../shared/telemetry.js';
 
 export type JobHandler<T = unknown> = (data: T) => Promise<void>;
 
-/** One job run: its log context, its span, and its duration and failure metrics (docs/observability.md). */
-export async function runJob(name: string, jobId: string, run: () => Promise<void>): Promise<void> {
-  await withLogContext({ jobId, jobName: name }, () =>
+/** The `correlationId` a job's payload carries (the inbound-burst job), docs/observability.md "Following one message". */
+export function correlationOf(data: unknown): string | undefined {
+  const id = typeof data === 'object' && data !== null ? (data as { correlationId?: unknown }).correlationId : undefined;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * One job run: its log context (with the payload's correlationId), its span, its lifecycle lines
+ * (`job started`, `job ended`, `job failed`), and its duration and failure metrics (docs/observability.md).
+ */
+export async function runJob(name: string, jobId: string, run: () => Promise<void>, correlationId?: string): Promise<void> {
+  await withLogContext({ jobId, jobName: name, ...(correlationId ? { correlationId } : {}) }, () =>
     withSpan(`job ${name}`, { job: name, jobId }, async () => {
       const started = performance.now();
+      log.info('job started');
       try {
         await run();
+        const durationMs = Math.round(performance.now() - started);
         metrics.record('postly.jobs.duration', performance.now() - started, { job: name, outcome: 'ok' });
+        log.info('job ended', { durationMs });
       } catch (error) {
         metrics.record('postly.jobs.duration', performance.now() - started, { job: name, outcome: 'failed' });
         metrics.count('postly.jobs.failures.count', { job: name });
+        // pg-boss retries it within the queue's retry limit; the failure itself is logged where it is handled.
+        log.warn('job failed', { durationMs: Math.round(performance.now() - started), error: asError(error) });
         throw error;
       }
     }),
@@ -140,7 +154,7 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
       // The policy is fixed when the queue is created; a sender may have created it first.
       if (!(await boss.getQueue(name))) await boss.createQueue(name, opts?.policy ? { policy: opts.policy } : {});
       await boss.work(name, async (jobs) => {
-        for (const job of jobs) await runJob(name, job.id, () => handler(job.data as never));
+        for (const job of jobs) await runJob(name, job.id, () => handler(job.data as never), correlationOf(job.data));
       });
     },
     async send(name, data, opts) {
@@ -229,7 +243,7 @@ export function createMemoryQueue(): JobQueue & {
     async drain() {
       let ran = 0;
       for (let job = pending.shift(); job; job = pending.shift()) {
-        await runJob(job.name, `memory-${ran + 1}`, () => handlers.get(job.name)!(job.data as never));
+        await runJob(job.name, `memory-${ran + 1}`, () => handlers.get(job.name)!(job.data as never), correlationOf(job.data));
         ran++;
       }
       return ran;

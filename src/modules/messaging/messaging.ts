@@ -12,10 +12,8 @@ import {
 } from '../../contracts/providers/messaging.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { log, withLogContext } from '../../shared/logger.js';
+import { addLogContext, asError, log, withLogContext } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
-
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** technical-design.md, Operational defaults: a burst ends after 20 seconds without a new message. */
 export const DEFAULT_BURST_QUIET_MS = 20_000;
@@ -28,6 +26,8 @@ export const INBOUND_BURST_JOB = 'inbound-burst';
 export interface InboundBurstJob {
   businessId: string;
   from: string;
+  /** The message that asked for the wake-up, for the job's log lines (docs/observability.md, "Following one message"). */
+  correlationId?: string;
 }
 
 /**
@@ -36,7 +36,8 @@ export interface InboundBurstJob {
  * asks again).
  */
 export interface BurstWake {
-  request(businessId: string, from: string, at: Date): Promise<void>;
+  /** `correlationId`: the message that asks, carried into the job's log context. */
+  request(businessId: string, from: string, at: Date, correlationId?: string): Promise<void>;
 }
 
 /** The deployed wake-up: a pg-boss job on a `short` queue, keyed by business and sender. */
@@ -44,7 +45,8 @@ export function jobBurstWake(queue: {
   send(name: string, data: InboundBurstJob, options: { startAfter: Date; singletonKey: string }): Promise<void>;
 }): BurstWake {
   return {
-    request: (businessId, from, at) => queue.send(INBOUND_BURST_JOB, { businessId, from }, { startAfter: at, singletonKey: `${businessId}:${from}` }),
+    request: (businessId, from, at, correlationId) =>
+      queue.send(INBOUND_BURST_JOB, { businessId, from, ...(correlationId ? { correlationId } : {}) }, { startAfter: at, singletonKey: `${businessId}:${from}` }),
   };
 }
 
@@ -158,7 +160,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
   const quietMs = options.burstQuietMs ?? DEFAULT_BURST_QUIET_MS;
   const now = options.now ?? (() => new Date());
   const timers = options.timers ?? nodeTimers;
-  const onError = options.onError ?? ((error: unknown, burst: InboundBurst) => log.error('inbound burst failed', { businessId: burst.businessId, messageId: burst.messages[0]?.id, error: errorMessage(error) }));
+  const onError = options.onError ?? ((error: unknown, burst: InboundBurst) => log.error('inbound burst failed', { businessId: burst.businessId, messageId: burst.messages[0]?.id, correlationId: burst.messages[0]?.id, error: asError(error) }));
   /** Senders this instance received from; only `flushBursts` reads it, the bursts themselves are in `message`. */
   const senders = new Map<string, { businessId: string; from: string }>();
   /** The in-process wake-up: one timer per sender, like the job's singletonKey. */
@@ -269,13 +271,15 @@ export function createMessaging(options: MessagingOptions): Messaging {
       const step = await claim(businessId, from, force);
       if (step.kind === 'none') return delivered;
       if (step.kind === 'wait') {
+        log.debug('inbound burst waiting', { businessId, waitMs: step.at.getTime() - now().getTime() });
         await wake.request(businessId, from, step.at);
         return delivered;
       }
       const ids = step.burst.messages.map((x) => x.id);
       try {
         const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
-        await withLogContext(context, () => withSpan('inbound burst', context, () => handler.handleInbound(step.burst)));
+        // The burst's first message is its correlation id (docs/observability.md, "Following one message").
+        await withLogContext({ ...context, correlationId: context.messageId }, () => withSpan('inbound burst', context, () => handler.handleInbound(step.burst)));
       } catch (error) {
         // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
         await db.withBusiness('messaging', businessId, (tx) =>
@@ -315,10 +319,14 @@ export function createMessaging(options: MessagingOptions): Messaging {
 
   async function receive(input: InboundMessage): Promise<ReceiveOutcome> {
     const message = InboundMessage.parse(input);
-    const outcome = await receiveParsed(message);
-    // docs/observability.md, Metrics: once per provider message (a retried webhook is `duplicate`).
-    metrics.count('postly.messages.count', { direction: 'in', kind: message.content.kind, outcome });
-    return outcome;
+    // receiveParsed adds the business and the stored message's id; the line below reads them from here.
+    return withLogContext({}, async () => {
+      const outcome = await receiveParsed(message);
+      // docs/observability.md, Metrics: once per provider message (a retried webhook is `duplicate`).
+      metrics.count('postly.messages.count', { direction: 'in', kind: message.content.kind, outcome });
+      log.info('inbound message stored', { kind: message.content.kind, outcome });
+      return outcome;
+    });
   }
 
   async function receiveParsed(message: InboundMessage): Promise<ReceiveOutcome> {
@@ -352,6 +360,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
       return row;
     });
     if (!stored) return 'duplicate';
+    // From here on, this message's lines carry its id as the correlation id.
+    addLogContext({ businessId, messageId: stored.id, correlationId: stored.id });
 
     await storeMedia(businessId, stored.id, message.content);
     senders.set(key(businessId, message.from), { businessId, from: message.from });
@@ -361,7 +371,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
       await processBurst(businessId, message.from, true);
       return 'accepted';
     }
-    await wake.request(businessId, message.from, new Date(now().getTime() + quietMs));
+    log.debug('inbound burst wake requested', { delayMs: quietMs });
+    await wake.request(businessId, message.from, new Date(now().getTime() + quietMs), stored.id);
     return 'accepted';
   }
 
@@ -389,14 +400,21 @@ export function createMessaging(options: MessagingOptions): Messaging {
     throw new WindowClosedError(to, await lastInboundAt(businessId, to));
   }
 
-  /** One provider send, counted as `sent` or `failed` (docs/observability.md, Metrics). */
-  async function sent(kind: 'text' | 'buttons' | 'template', send: () => Promise<SendResult>): Promise<SendResult> {
+  /**
+   * One provider send, counted as `sent` or `failed` (docs/observability.md, Metrics) and logged as
+   * `outbound message sent` or `failed` with ids and the template name only, never the text.
+   */
+  async function sent(businessId: string, kind: 'text' | 'buttons' | 'template', send: () => Promise<SendResult>, template?: string): Promise<SendResult> {
+    const started = now().getTime();
+    const fields = { businessId, kind, ...(template ? { template } : {}) };
     try {
       const result = await send();
       metrics.count('postly.messages.count', { direction: 'out', kind, outcome: 'sent' });
+      log.info('outbound message sent', { ...fields, providerMessageId: result.providerMessageId, durationMs: now().getTime() - started });
       return result;
     } catch (error) {
       metrics.count('postly.messages.count', { direction: 'out', kind, outcome: 'failed' });
+      log.warn('outbound message failed', { ...fields, durationMs: now().getTime() - started, error: asError(error) });
       throw error;
     }
   }
@@ -456,15 +474,15 @@ export function createMessaging(options: MessagingOptions): Messaging {
     async sendText(businessId, request) {
       await requireOpenWindow(businessId, request.to);
       const payload = request.mediaUrl ? { mediaUrl: request.mediaUrl } : null;
-      return recordOutbound(businessId, 'text', request.to, request.text, payload, await sent('text', () => provider.sendText(request)));
+      return recordOutbound(businessId, 'text', request.to, request.text, payload, await sent(businessId, 'text', () => provider.sendText(request)));
     },
     async sendButtons(businessId, request) {
       await requireOpenWindow(businessId, request.to);
-      const result = await sent('buttons', () => provider.sendButtons(request));
+      const result = await sent(businessId, 'buttons', () => provider.sendButtons(request));
       return recordOutbound(businessId, 'buttons', request.to, request.text, { buttons: request.buttons, mediaUrl: request.mediaUrl }, result);
     },
     async sendTemplate(businessId, request) {
-      const result = await sent('template', () => provider.sendTemplate(request));
+      const result = await sent(businessId, 'template', () => provider.sendTemplate(request), request.templateName);
       return recordOutbound(businessId, 'template', request.to, null, { templateName: request.templateName, language: request.language, variables: request.variables }, result);
     },
     windowClosesAt,
@@ -505,7 +523,7 @@ export function createMessaging(options: MessagingOptions): Messaging {
     },
     startSweep(everyMs = quietMs) {
       const sweep = () => {
-        this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: errorMessage(error) }));
+        this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: asError(error) }));
       };
       sweep();
       const timer = setInterval(sweep, everyMs);

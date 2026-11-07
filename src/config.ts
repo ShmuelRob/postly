@@ -50,6 +50,8 @@ const Env = z.object({
   /** From Terraform: the console's domain, or its run.app host with built-in IAP; any other Host is refused. */
   CONSOLE_HOST: z.string().min(1).optional(),
   CONSOLE_DEV_ACTOR: z.string().min(1).default('local-dev'),
+  /** The lowest severity logged (docs/observability.md, "Log level"); debug only in local, test and dev. */
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error'], { error: 'LOG_LEVEL must be debug, info, warn or error' }).default('info'),
 });
 
 export type ConsoleConfig = { auth: 'iap'; iapAudience?: string; host?: string } | { auth: 'dev-bypass'; devActor: string };
@@ -72,6 +74,7 @@ export interface Config {
   models: 'simulator' | 'vertex';
   /** With models `vertex`: where Gemini is called. */
   vertex?: { project: string; location: string };
+  logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
 /** The environments where the simulators may answer (docs/deployment.md, "Simulated mode"). */
@@ -95,6 +98,10 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
   // The model is chosen by the environment, not by a switch (agent.md, Running on dev): every deployed
   // environment runs on Vertex AI; local runs and tests run on the model simulator.
   const models: Config['models'] = envName === 'local' || envName === 'test' ? 'simulator' : 'vertex';
+  // Debug lines name more steps; they stay where no customer runs (docs/observability.md, "Log level").
+  if (parsed.data.LOG_LEVEL === 'debug' && (envName === 'stage' || envName === 'prod')) {
+    throw new Error(`LOG_LEVEL=debug is allowed only in local, test and dev; refusing to start in ${envName}`);
+  }
   // First of all: the console's dev bypass never runs in stage or prod (docs/security.md, "Console exposure").
   if (parsed.data.CONSOLE_AUTH === 'dev-bypass' && (envName === 'stage' || envName === 'prod')) {
     throw new Error(`CONSOLE_AUTH=dev-bypass is for local runs and tests only; refusing to start in ${envName}`);
@@ -132,6 +139,7 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
   if (missing.length) throw new Error(`missing database passwords: ${missing.join(', ')}`);
   const passwordFor = (login: string) => env[passwordVar(login)]!;
   return {
+    logLevel: parsed.data.LOG_LEVEL,
     env: parsed.data.POSTLY_ENV,
     webhookSecret: secret || SIMULATOR_WEBHOOK_SECRET,
     databaseUrls: databaseUrls(parsed.data.DATABASE_URL, passwordFor, logins),

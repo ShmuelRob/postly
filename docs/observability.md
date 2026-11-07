@@ -14,7 +14,7 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 | `message` | A fixed, short English description of the event (`publication run failed`), never built from data |
 | `time` | ISO 8601 |
 | `logging.googleapis.com/trace` | `projects/<GOOGLE_CLOUD_PROJECT>/traces/<trace id>`, when the request carried `X-Cloud-Trace-Context` (or `traceparent`) and the project is known |
-| `logging.googleapis.com/labels` | The correlation ids of the current context: `requestId`, `businessId`, `messageId`, `jobId`, `jobName`, and `process` (`web`, `worker`, `console`, `migrate`) |
+| `logging.googleapis.com/labels` | The correlation ids of the current context: `requestId`, `businessId`, `messageId`, `correlationId`, `agentTurnId`, `jobId`, `jobName`, and `process` (`web`, `worker`, `console`, `migrate`, `sandbox`) |
 | other keys | The fields the call passed (ids, counts, status, a reason, the error text) |
 
 **Correlation ids.** An `AsyncLocalStorage` context carries the ids, so a log line deep in a module gets them without passing them along. `withLogContext(fields, fn)` adds fields for everything `fn` runs, nested contexts add to their parent. The web and console servers open a context per request (`requestId` from Fastify, the trace from the header), and so does the dev sandbox for its API routes (a random `requestId`); each pg-boss and in-memory job runs in a context with `jobId` and `jobName`; the inbound burst handler adds `businessId` and the `messageId` of the burst's first message. Explicit fields on a call win over the context.
@@ -32,6 +32,92 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 `src/shared/logger.test.ts` feeds customer text, phone numbers and secrets through every field and fails if any reaches a line. Error messages from vendors may still quote content in words the patterns do not catch, so error text is logged only at the boundary that handles the failure, cut short, and never with the request or response body.
 
 **Retention.** The `_Default` bucket keeps logs 7 days in `dev` and 30 in `stage` and `prod` ([deployment.md](deployment.md)).
+
+### Following one message (2026-11-07)
+
+The goal: from Logs Explorer alone, follow one owner message from the webhook to the reply, and see where and why it failed.
+
+**Correlation id.** One `correlationId` follows an inbound message through every process. It is the `message` row id of the stored inbound message; for a burst, it is the id of the burst's first message, which equals that burst's `messageId`. Messaging sets it when the webhook stores the message. It travels in the `inbound-burst` job payload (`InboundBurstJob.correlationId`), so the job's own lines carry it, and messaging sets it again when it claims the burst. Everything the handover runs inherits it from the log context: the workflow events, the agent turn, its model calls, its tool calls and the outbound sends. Each workflow event's audit row stores it too (`workflow_event.correlation_id`), unless the caller passes its own. A pg-boss or in-memory job whose payload has a string `correlationId` runs in a context with it. The logger puts `correlationId` and `agentTurnId` in `logging.googleapis.com/labels`, next to the other ids.
+
+**Trace.** A web request's lines carry its Cloud Trace id (`logging.googleapis.com/trace`), so Logs Explorer groups a request's lines under it. The id comes from the active span, or from Cloud Run's `traceparent` header. Each job run has its own span (`job <name>`) and so its own trace. The webhook request and the burst job are two traces; the `correlationId` joins them.
+
+**Context ids on every line.** Inside a scope, the context adds `businessId`, `messageId`, `correlationId`, `agentTurnId`, `jobId` and `jobName` to every line, error lines included. So an error line names the business, the message, the turn and the job, with no need to pass them. Publishing adds `postId` and `publicationId` explicitly on its lines.
+
+**Severity.**
+
+- `INFO` is an expected outcome, including a refusal the code meant to make: a stale tap, a refused tool call, a duplicate webhook.
+- `WARNING` is a recoverable problem: something failed and is retried or handled automatically, such as a failed send, a job pg-boss retries, or a publication attempt that failed below the limit.
+- `ERROR` needs a person: a failure that ends in the console, a hand-off after an error, or a bug.
+
+A workflow event rejected because a person handles the conversation (`handoff`) is `INFO`; any other rejection stays `WARNING`.
+
+**Log level.** `LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the lowest severity a process writes. `debug` is allowed only when `POSTLY_ENV` is `local`, `test` or `dev`; stage and prod refuse to start with it (`src/config.ts`). Debug lines add the steps between the lifecycle lines, such as a wake-up requested or a claim that waits for the quiet window.
+
+**Lifecycle lines.** These lines are `INFO` unless the table says otherwise, and carry ids, states, code words, counts and durations only, never content. The timing lines (`inbound burst handled`, `agent step`, `agent turn ended`, `model call`) have their own table and are not repeated here.
+
+| Line | Fields (besides the context ids) | Logged |
+| --- | --- | --- |
+| `inbound message stored` | `kind` (`text`, `voice`, `image`, `button_reply`), `outcome` (`accepted`, `duplicate`, `unknown_number`) | Once per provider message the webhook receives; `unknown_number` and `duplicate` carry no business |
+| `inbound burst wake requested` (`DEBUG`) | `delayMs` | Messaging asks for a wake-up one quiet window later |
+| `inbound burst waiting` (`DEBUG`) | `waitMs` | A claim finds the burst not quiet yet, or an earlier claim still open |
+| `workflow event applied` | `machine`, `id`, `event`, `source`, `fromState`, `toState` | Each applied event |
+| `workflow event rejected` (`WARNING`; `INFO` for `handoff`) | `machine`, `id`, `event`, `source`, `reason`, `fromState`, `detail` (a guard's code word) | Each rejected event |
+| `agent turn started` | `agent`, `trigger` (`burst` or `event:<name>`) | A turn took the lock and its row exists |
+| `agent tool call` | `agent`, `tool`, `outcome` (`ok`, `refused`, `error`), `reason` (the refusal's code word), `durationMs` | Each tool call the runtime runs. `error` is `WARNING`; the turn's own `agent turn failed` line is the `ERROR` |
+| `outbound message sent` | `kind` (`text`, `buttons`, `template`), `template` (the template name), `providerMessageId`, `durationMs` | A provider send returned |
+| `outbound message failed` (`WARNING`) | `kind`, `template`, `durationMs`, the error fields | A provider send threw; the caller decides what follows |
+| `job started` | `jobName`, `jobId` (labels) | A pg-boss or in-memory job handler starts |
+| `job ended` | `durationMs` | The handler returned |
+| `job failed` (`WARNING`) | `durationMs`, the error fields | The handler threw; pg-boss retries it within the queue's retry limit |
+| `publication attempt` | `publicationId`, `postId`, `network`, `outcome` (`published`, `already_published`, `retry_pending`, `failed`, `refused`, `deferred`), `reason` (a refusal or deferral code word), `durationMs` | Each publication run. `failed` is `ERROR`, `retry_pending` is `WARNING` |
+
+**Redaction still holds.** These lines pass through the same logger rules: content and secret field names are redacted, free strings are scrubbed, objects are dropped. `logger.test.ts` and each module's test check that no owner text, caption or phone reaches them.
+
+## How to debug a message
+
+Start from an id you know: the business id, or a message id or agent turn id. The console shows all three on the conversation. In Logs Explorer, pick the environment's project and paste one of these queries. `resource.type="cloud_run_revision"` covers web, worker, console and the sandbox.
+
+**Everything about one owner message,** from the webhook to the reply, in order:
+
+```
+resource.type="cloud_run_revision"
+labels.correlationId="<message id>"
+```
+
+The lines read: `inbound message stored`, `job started` (`inbound-burst`), `inbound burst handled`, `workflow event applied`, `agent turn started`, `model call` and `agent tool call`, `outbound message sent`, `agent turn ended`, `job ended`. A missing step is where it stopped; the line just before it is the last thing that worked.
+
+**One business:**
+
+```
+resource.type="cloud_run_revision"
+labels.businessId="<business id>"
+```
+
+**One agent turn,** with its steps, model calls and tool calls:
+
+```
+resource.type="cloud_run_revision"
+labels.agentTurnId="<turn id>"
+```
+
+**Failures in the last hour,** warnings included (set the time range to 1 hour):
+
+```
+resource.type="cloud_run_revision"
+resource.labels.service_name=~"^postly-ENV-"
+severity>=WARNING
+```
+
+**Why a tool call was refused:** `jsonPayload.message="agent tool call" AND jsonPayload.outcome!="ok"` gives the tool and the refusal code. **Where the time went:** the `durationMs` of each line, and `receivedToClaimMs` and `handlerMs` on `inbound burst handled`.
+
+The same queries work from the command line, for example:
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND labels.correlationId="<message id>"' --project PROJECT --freshness 1d --order asc --format 'table(timestamp, severity, resource.labels.service_name, jsonPayload.message)'
+```
+
+Logs carry ids, never what the owner wrote: to read the message itself, open the conversation in the console.
+
 
 ## Metrics (WP-48)
 
