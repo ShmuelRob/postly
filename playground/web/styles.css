@@ -25,6 +25,7 @@ section, aside { background: var(--panel); border-radius: 14px; overflow: hidden
 .bubble.from_owner { align-self: flex-start; background: var(--wa-out); }
 .bubble.to_owner { align-self: flex-end; background: var(--wa-in); }
 .bubble img { display: block; min-width: 120px; max-width: 220px; image-rendering: pixelated; border-radius: 6px; margin-bottom: 4px; }
+.bubble.typing { color: var(--muted); font-style: italic; padding-bottom: 7px; }
 .bubble audio { width: 220px; }
 .bubble time { position: absolute; bottom: 3px; inset-inline-end: 8px; font-size: 11px; color: var(--muted); }
 .buttons { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }

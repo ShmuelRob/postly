@@ -112,8 +112,10 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
     ],
     // Channels: every required field is set, so the closing question.
     [step(call.setProfileField('channels', ['instagram', 'facebook'])), step(call.askOwner(ASK.anythingElse, { topic: 'anything_else' }))],
-    // The answer to "anything else?": code now sees the profile questions done.
-    [step(call.askOwner(ASK.thanks, { topic: 'info', expects: 'none' }))],
+    // The answer to "anything else?": the agent only ends its turn, as the rule agent did on dev on
+    // 2026-11-06. Code still evaluates the done rule after end_turn (agent.md), so the owner is not
+    // left without a reply: the profile questions are done and brand assets start.
+    [step({ tool: 'end_turn' })],
     // brand_assets, started by code: the logo request.
     [step(call.requestPhoto('logo', ASK.logo))],
     // The logo arrived (code saved it): now the photos.
@@ -192,7 +194,7 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
 
   // 3. The closing question answered: code applies PROFILE_FIELDS_COMPLETE; the agent asks for the logo.
   await run.owner.sendsText(SAY.nothingElse);
-  expect(said().slice(-2)).toEqual([ASK.thanks, ASK.logo]);
+  expect(said().slice(-2)).toEqual([ASK.anythingElse, ASK.logo]);
 
   // 4. Brand assets: code stores the logo and the photo; then code sends the style samples.
   await run.owner.sendsImage(logo);
