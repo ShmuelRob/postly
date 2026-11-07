@@ -32,11 +32,21 @@ provider "github" {
   owner = split("/", var.github_repository)[0]
 }
 
+# The one image repository every environment uses (docs/deployment.md, CI): dev builds and pushes,
+# stage and prod deploy the same digest. It lives in dev's project; its lifecycle refuses a destroy.
+module "images" {
+  source     = "../../modules/artifact_registry"
+  project_id = var.project_id
+  region     = var.region
+  name       = "postly"
+}
+
 module "postly" {
   source            = "../../modules/stack"
   project_id        = var.project_id
   region            = var.region
   env_name          = "dev"
+  image_registry    = module.images.repository
   public_base_url   = var.public_base_url
   app_metric_alerts = var.app_metric_alerts
   business_number   = var.business_number
@@ -78,9 +88,12 @@ module "github" {
     GCP_REGION                     = var.region
     GCP_WORKLOAD_IDENTITY_PROVIDER = module.postly.workload_identity_provider
     GCP_DEPLOY_SERVICE_ACCOUNT     = module.postly.deploy_service_account
+    GCP_IMAGE_REPOSITORY           = module.postly.image_repository
   }
 }
 
 output "postly" { value = module.postly }
+# Stage's and prod's image_registry_project and image_registry_location are this repository's.
+output "image_registry" { value = module.images.repository }
 output "sandbox_url" { value = module.postly.sandbox_url }
 output "console_url" { value = module.postly.console_url }

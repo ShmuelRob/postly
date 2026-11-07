@@ -32,7 +32,7 @@ Two stand-ins replace the model, so free Hebrew works without a real model: `ser
 | --- | --- |
 | `server/playground.ts` | Builds the app in-process (`createApp`, the webhook server, the design engine, in-memory storage, simulators) and serves `/api/*` |
 | `server/views.ts` | The chat and feed views, shared with the sandbox |
-| `sandbox/` | The dev sandbox (WP-51): `sandbox.ts` (API), `main.ts` (the service in `Dockerfile.sandbox`), `ui.ts` (Vite, for tests), `vite.config.ts` (the UI build) |
+| `sandbox/` | The dev sandbox (WP-51): `sandbox.ts` (API), `main.ts` (the service in the `Dockerfile`'s `sandbox` target), `ui.ts` (Vite, for tests), `vite.config.ts` (the UI build) |
 | `server/seed.ts` | Scripted feed posts (the free-Hebrew model stand-ins moved to `src/simulators/conversational/`) |
 | `server/start.ts` | Starts Postgres and the playground for `npm run playground` |
 | `vite-plugin.ts`, `vite.config.ts`, `ui-server.ts` | Mounts the API on the Vite dev server; `ui-server.ts` serves an already-built playground for the e2e test |

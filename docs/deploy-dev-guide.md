@@ -116,7 +116,7 @@ terraform -chdir=infra/environments/dev init -backend-config="bucket=$PROJECT-tf
 **Pass 1: the image repository.**
 
 ```powershell
-terraform -chdir=infra/environments/dev plan -target "module.postly.module.registry" -out dev-1.tfplan
+terraform -chdir=infra/environments/dev plan -target "module.images" -out dev-1.tfplan
 terraform -chdir=infra/environments/dev apply dev-1.tfplan
 ```
 
@@ -124,10 +124,10 @@ Then build and push the image tagged `bootstrap` (Docker Desktop running):
 
 ```powershell
 gcloud auth configure-docker me-west1-docker.pkg.dev --quiet
-docker build -t "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly:bootstrap" .
-docker push "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly:bootstrap"
-docker build -f Dockerfile.sandbox -t "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly-sandbox:bootstrap" .
-docker push "me-west1-docker.pkg.dev/$PROJECT/postly-dev/postly-sandbox:bootstrap"
+docker build -t "me-west1-docker.pkg.dev/$PROJECT/postly/postly:bootstrap" .
+docker push "me-west1-docker.pkg.dev/$PROJECT/postly/postly:bootstrap"
+docker build --target sandbox -t "me-west1-docker.pkg.dev/$PROJECT/postly/postly-sandbox:bootstrap" .
+docker push "me-west1-docker.pkg.dev/$PROJECT/postly/postly-sandbox:bootstrap"
 ```
 
 Dev also runs the sandbox (WP-51), which has its own image, so both `postly:bootstrap` and `postly-sandbox:bootstrap` must exist before pass 3.
@@ -160,7 +160,7 @@ Read the plan before applying. 5 to 10 minutes. Terraform warns that `-target` w
 - **Cloud SQL** `postly-dev-…`: Postgres 17, private IP only, TLS only, backups and point-in-time recovery, no deletion protection.
 - **Secrets:** one per database login, the admin URL, the messaging webhook secret (all generated), and the vendor secrets (empty until WP-41).
 - **Service accounts** `postly-dev-web`, `-worker`, `-migrate`, `-deploy`, with the grants in [deployment.md](deployment.md#iam-least-privilege).
-- **Artifact Registry** `postly-dev`, the **media bucket**, **Cloud Run** services `postly-dev-web` (public), `postly-dev-worker` and `postly-dev-console` (internal only), and the job `postly-dev-migrate`.
+- **Artifact Registry** `postly` (the one image repository every environment shares; [deployment.md](deployment.md#images-build-once-deploy-everywhere)), the **media bucket**, **Cloud Run** services `postly-dev-web` (public), `postly-dev-worker` and `postly-dev-console` (internal only), and the job `postly-dev-migrate`.
 - **Workload Identity Federation** for the GitHub deploy workflow (no key file).
 - **Monitoring:** the uptime check and four alert policies (step 7), and the 7-day `_Default` log bucket.
 - **GitHub** (step 5).
@@ -195,7 +195,7 @@ gh workflow run Deploy --repo ShmuelRob/postly --ref dev -f image_tag=bootstrap
 gh run watch --repo ShmuelRob/postly
 ```
 
-What the job does: authenticates through Workload Identity Federation; on a push, builds the image and pushes it tagged with the commit SHA; **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/health`. About **15 to 20 minutes** for a push (CI and Infra first, then mostly the image build), 3 to 5 for a manual redeploy.
+What the run does: on a push, its `image` job builds the image and the sandbox image once, unless that tree was built before, checks them and tags them `tree-<key>` and with the commit SHA ([deployment.md](deployment.md#images-build-once-deploy-everywhere)); the deploy job authenticates through Workload Identity Federation, finds the image by digest, **runs the migration job** `postly-dev-migrate` and waits (a failed migration stops the run before any rollout, and the database stays on the previous migration); rolls out the worker, the console, then the web; and calls the web's `/health`. About **7 minutes** for a code push (the build runs alongside CI), about 3 for a docs-only push (nothing to build or roll out), 3 to 5 for a manual redeploy.
 
 ### 6a. Turn on the alerts on the app's own metrics
 

@@ -1,4 +1,4 @@
-# One Postly environment (docs/deployment.md): network, Artifact Registry, service accounts,
+# One Postly environment (docs/deployment.md): network, access to the shared Artifact Registry, service accounts,
 # Secret Manager secrets (names only), Cloud SQL, the media bucket, the web and worker services, the
 # migration job, and monitoring. Each environment in ../../environments calls this module once.
 
@@ -203,7 +203,7 @@ locals {
   # Vendor credentials for WP-41; the processes do not read them until the adapters exist.
   # Dev on the simulators has no vendor secrets; the simulators sign with messaging-webhook-secret.
   vendor_secrets = concat(["messaging-webhook-secret"], local.simulated ? [] : ["messaging-auth-token", "publishing-api-key", "payment-api-key", "payment-webhook-secret"])
-  image          = "${module.registry.repository_url}/postly:${var.image_tag}"
+  image          = "${local.image_repository_url}/postly:${var.image_tag}"
   app_env = merge({
     POSTLY_ENV       = var.env_name
     POSTLY_PROVIDERS = local.simulated ? "simulators" : "vendors"
@@ -232,14 +232,6 @@ locals {
 module "network" {
   depends_on = [google_project_service.this]
   source     = "../network"
-  project_id = var.project_id
-  region     = var.region
-  name       = local.prefix
-}
-
-module "registry" {
-  depends_on = [google_project_service.this]
-  source     = "../artifact_registry"
   project_id = var.project_id
   region     = var.region
   name       = local.prefix
@@ -307,24 +299,6 @@ resource "google_storage_bucket_iam_member" "media" {
   member   = "serviceAccount:${module.accounts.emails[each.key]}"
 }
 
-# Image pull for the runtime accounts, image push for the deploy account, on this repository only.
-resource "google_artifact_registry_repository_iam_member" "pull" {
-  for_each   = toset(["web", "worker", "console", "migrate"])
-  project    = var.project_id
-  location   = var.region
-  repository = module.registry.repository_id
-  role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${module.accounts.emails[each.key]}"
-}
-
-resource "google_artifact_registry_repository_iam_member" "push" {
-  project    = var.project_id
-  location   = var.region
-  repository = module.registry.repository_id
-  role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${module.accounts.emails.deploy}"
-}
-
 # Connection budget (docs/deployment.md, Sizing; docs/security.md, D7): per instance, pool_max per
 # database login the process uses (createDatabase) + pg-boss 10 (poolConnections in src/db/index.ts);
 # web and worker use every login, the console only console_logins (one instance); plus the migrate job
@@ -387,7 +361,7 @@ module "worker" {
   depends_on      = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }
 
-# The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
+# The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image target, deployed only to dev; no
 # allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy` and, with
 # cloud_run_iap, in a browser through Cloud Run's built-in IAP. Runs as the web account: it
 # needs the same login passwords and the webhook secret.
@@ -398,7 +372,7 @@ module "sandbox" {
   region               = var.region
   name                 = "${local.prefix}-sandbox"
   kind                 = "service"
-  image                = "${module.registry.repository_url}/postly-sandbox:${var.image_tag}"
+  image                = "${local.image_repository_url}/postly-sandbox:${var.image_tag}"
   command              = "sandbox"
   service_account      = module.accounts.emails.web
   subnetwork_id        = module.network.subnetwork_id
@@ -560,7 +534,7 @@ module "monitoring" {
   app_metric_alerts   = var.app_metric_alerts
 }
 
-output "image_repository" { value = module.registry.repository_url }
+output "image_repository" { value = local.image_repository_url }
 output "web_url" { value = module.web.uri }
 output "sandbox_service" { value = var.sandbox_enabled ? module.sandbox[0].name : null }
 # Open it in a browser when cloud_run_iap is on; else it is the proxy's local address.

@@ -1,13 +1,18 @@
-# Only what the Dockerfile copies goes into the build context.
+# Only what the Dockerfile's two targets copy goes into the build context. The product target
+# (`runtime`) never copies playground/ or test/; only the `sandbox` target does.
 **
 !package.json
 !package-lock.json
 !tsconfig.json
 !tsconfig.build.json
+!tsconfig.sandbox.json
 !src/**
 !assets/**
 !drizzle/**
-# Tests and fixtures never enter the image.
+!playground/**
+!test/e2e/harness/record.ts
+# Tests and fixtures never enter an image.
 src/**/*.test.ts
 src/**/*.test.tsx
 src/**/__snapshots__/**
+playground/**/*.test.ts
