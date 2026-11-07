@@ -99,8 +99,14 @@ export function adcTransport(env: NodeJS.ProcessEnv = process.env): VertexTransp
   const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   return async (url, body) => {
     const client = await auth.getClient();
-    const res = await client.request<VertexResponseBody>({ url, method: 'POST', data: body });
-    return res.data;
+    try {
+      const res = await client.request<VertexResponseBody>({ url, method: 'POST', data: body });
+      return res.data;
+    } catch (error) {
+      // gaxios' message alone ("Request contains an invalid argument.") says nothing; keep Vertex's details.
+      // No `cause`: the gaxios error holds the request (prompt and owner content), which must not travel on.
+      throw new Error(describeVertexError(error));
+    }
   };
 }
 
@@ -113,10 +119,54 @@ const fetchMediaOverHttp: MediaFetcher = async (url) => {
   };
 };
 
-/** Vertex AI takes a subset of JSON Schema; drop the keys it does not accept. */
-function forVertex(schema: Record<string, unknown>): Record<string, unknown> {
+/** Keywords whose value is a map from names (properties, definitions) to schemas: the names are data. */
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']);
+/** Keywords whose value is data, not a schema, so nothing inside them is a keyword. */
+const DATA_VALUES = new Set(['enum', 'const', 'default', 'examples', 'required']);
+
+/**
+ * Vertex AI takes a subset of JSON Schema in `responseJsonSchema` (contracts.md, the Google adapter):
+ * drop `$schema`, and `maxItems` at every depth, which Gemini 3.5 Flash-Lite answers with HTTP 400. Only
+ * the keyword goes, never a property or definition named `maxItems`; the model layer's Zod check still
+ * enforces the limit on the output. Returns a copy; the caller's schema is not changed.
+ */
+export function forVertex(schema: Record<string, unknown>): Record<string, unknown> {
   const { $schema: _ignored, ...rest } = schema;
-  return rest;
+  return trimSchema(rest) as Record<string, unknown>;
+}
+
+function trimSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(trimSchema);
+  if (node === null || typeof node !== 'object') return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'maxItems') continue;
+    if (DATA_VALUES.has(key)) out[key] = value;
+    else if (SCHEMA_MAPS.has(key) && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, trimSchema(sub)]));
+    } else out[key] = trimSchema(value);
+  }
+  return out;
+}
+
+const ERROR_TEXT_MAX = 1000;
+
+/**
+ * Why a Vertex call failed, for `model_run.error`: the HTTP status and Vertex's own error status,
+ * message and details from the response body. Never the request, so no prompt or owner content.
+ */
+export function describeVertexError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response;
+  const body = (response?.data as { error?: { status?: string; message?: string; details?: unknown } } | undefined)?.error;
+  if (!response?.status && !body) return message.slice(0, ERROR_TEXT_MAX);
+  const parts = [
+    `Vertex AI HTTP ${response?.status ?? '?'}`,
+    body?.status,
+    body?.message ?? message,
+    body?.details === undefined ? undefined : `details: ${JSON.stringify(body.details)}`,
+  ].filter((p): p is string => typeof p === 'string' && p.length > 0);
+  return parts.join(': ').slice(0, ERROR_TEXT_MAX);
 }
 
 export class VertexModelProvider implements ModelProvider {

@@ -22,8 +22,8 @@ export interface TestDatabase {
  */
 export async function startTestDatabase(options: { isolated?: boolean } = {}): Promise<TestDatabase> {
   let container: StartedPostgreSqlContainer | undefined;
-  // `isolated`: always a Postgres of its own, for a test that sets global state the other files must not
-  // see, such as the agent flow switch in system_control (agent.md, Running on dev). Needs Docker.
+  // `isolated`: always a Postgres of its own, for a test whose businesses or global state the other files
+  // must not see, such as the sandbox sign-up in sandbox-agent-flows.e2e.test.ts. Needs Docker.
   let url = options.isolated ? undefined : process.env.TEST_DATABASE_URL;
   if (!url) {
     container = await new PostgreSqlContainer('postgres:17-alpine').start();
