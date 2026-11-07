@@ -73,6 +73,7 @@ jobs:
           context: .
           target: sandbox
           push: false
+          load: true
           provenance: false
           tags: postly-sandbox:ci
           cache-from: |
@@ -80,7 +81,7 @@ jobs:
             type=gha,scope=postly
           cache-to: type=gha,mode=max,scope=postly-sandbox
       - name: Image checks (non-root, no test or playground code, local stack on the simulators)
-        run: scripts/check-image.sh postly:ci
+        run: scripts/check-image.sh postly:ci postly-sandbox:ci
         env:
           COMPOSE_BAKE: "false"
 
