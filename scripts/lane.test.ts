@@ -34,6 +34,14 @@ describe('classify (the docs-only lane)', () => {
     }
   });
 
+  it('refuses the source-of-truth docs: CLAUDE.md, PRD.md and its Hebrew mirror', () => {
+    for (const f of ['CLAUDE.md', 'PRD.md', 'docs/product-spec.he.md']) {
+      const r = classify([f], noReaders);
+      expect(r.docsOnly, f).toBe(false);
+      expect(r.blockers[0]?.reason).toMatch(/source-of-truth/);
+    }
+  });
+
   it('refuses the gate decisions: the old queue table and the review-queue directory', () => {
     for (const f of ['docs/human-review-queue.md', 'docs/human-review-queue.summary.he.md', 'docs/review-queue/pr-12.md', 'docs/review-queue/README.md']) {
       const r = classify([f], noReaders);

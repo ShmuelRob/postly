@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const ci = readFileSync('.github/workflows/ci.yml', 'utf8').replaceAll('\r', '');
-const job = (name: string) => {
-  const start = ci.indexOf(`\n  ${name}:\n`);
+const infra = readFileSync('.github/workflows/infra.yml', 'utf8').replaceAll('\r', '');
+const job = (name: string, file = ci) => {
+  const start = file.indexOf(`\n  ${name}:\n`);
   expect(start, `job ${name}`).toBeGreaterThan(-1);
-  const rest = ci.slice(start + 1);
+  const rest = file.slice(start + 1);
   const next = rest.slice(1).search(/\n {2}[a-z][\w-]*:\n/);
   return next === -1 ? rest : rest.slice(0, next + 1);
 };
@@ -37,5 +38,17 @@ describe('ci.yml path filter', () => {
     expect(check).toContain(
       `test "\${{ needs.tests.result }}" = success || { test "\${{ needs.tests.result }}" = skipped && test "\${{ needs.changes.outputs.docs_only }}" = true; }`,
     );
+  });
+});
+
+describe('infra.yml aggregate', () => {
+  it('infra-check needs every Infra job, always runs, and passes only on success or skipped', () => {
+    const check = job('infra-check', infra);
+    expect(check).toContain('if: always()');
+    expect(check).toMatch(/needs: \[changes, image, terraform\]/);
+    expect(check).toContain('test "${{ needs.changes.result }}" = success');
+    for (const j of ['image', 'terraform']) {
+      expect(check).toContain(`case "\${{ needs.${j}.result }}" in success|skipped) ;; *) exit 1 ;; esac`);
+    }
   });
 });
