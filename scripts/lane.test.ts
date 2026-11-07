@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { classify, docReaders } from './lane.js';
+import { classify, docReaders, FIXTURE_TESTS, repoTests } from './lane.js';
 
 const noReaders = new Map<string, string[]>();
 
@@ -66,13 +66,15 @@ describe('docReaders', () => {
     expect(readers.size).toBe(2);
   });
 
-  it('finds the docs the real test suite reads', () => {
+  it('finds the docs the real test suite reads, and not the fixtures of its own tests', () => {
     // This repository's tests read these docs today; the lane must keep sending them through the tests.
-    const files = spawnSync('git', ['ls-files', '*.test.ts'], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
-    const readers = docReaders(Object.fromEntries(files.map((f) => [f, readFileSync(f, 'utf8')])));
+    const readers = docReaders(repoTests());
     for (const doc of ['docs/observability.md', 'docs/implementation-plan.md', 'docs/database-schema.md']) {
       expect(readers.has(doc), doc).toBe(true);
     }
+    // docs/agent.md is a fixture here and in check-local.test.ts; no real test reads it.
+    expect(readers.has('docs/agent.md')).toBe(false);
+    for (const tests of readers.values()) for (const t of FIXTURE_TESTS) expect(tests).not.toContain(t);
   });
 });
 

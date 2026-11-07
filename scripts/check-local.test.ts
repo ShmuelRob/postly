@@ -14,7 +14,8 @@ describe('check:local steps', () => {
 
   it('runs the unit tests related to the changed code files that still exist', () => {
     const exists = (f: string) => f !== 'src/gone.ts';
-    const steps = localSteps({ files: ['src/a.ts', 'src/a.test.ts', 'src/gone.ts', 'docs/agent.md', 'infra/x.png'], readers: {} }, exists);
+    const files = ['src/a.ts', 'src/a.test.ts', 'src/gone.ts', 'docs/agent.md', 'infra/x.png', 'package.json', 'fixtures/x.json'];
+    const steps = localSteps({ files, readers: {} }, exists);
     const unit = steps.find((s) => s.name === 'unit (related)');
     expect(unit?.args).toEqual(['vitest', 'related', '--run', '--project', 'unit', '--passWithNoTests', 'src/a.ts', 'src/a.test.ts']);
   });

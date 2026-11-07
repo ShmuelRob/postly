@@ -20,7 +20,8 @@ interface Lane {
   readers: Record<string, string[]>;
 }
 
-const CODE = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|json)$/;
+// Modules only: given a non-module file such as package.json, `vitest related` runs the whole project.
+const CODE = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/;
 
 /** The steps for a set of changed files. `exists` filters out deleted files. */
 export function localSteps(lane: Lane, exists: (file: string) => boolean): Step[] {
@@ -52,8 +53,11 @@ if (import.meta.main) {
   const failed: string[] = [];
   for (const step of localSteps(lane, existsSync)) {
     console.log(`\n> ${step.name}`);
-    // shell: npm and npx are .cmd files on Windows.
-    const r = spawnSync(step.cmd, step.args, { stdio: 'inherit', shell: process.platform === 'win32' });
+    // npm and npx are .cmd files on Windows, which need a shell; the args are repo paths and fixed flags.
+    const r =
+      process.platform === 'win32'
+        ? spawnSync([step.cmd, ...step.args].join(' '), { stdio: 'inherit', shell: true })
+        : spawnSync(step.cmd, step.args, { stdio: 'inherit' });
     const missing = r.error !== undefined || (process.platform === 'win32' && r.status === 9009);
     if (step.optional && missing) {
       console.warn(`${step.name}: ${step.cmd} is not installed; run it before pushing, or CI's Infra check will fail.`);

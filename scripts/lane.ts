@@ -56,10 +56,16 @@ export function changedFiles(base: string) {
   ].sort();
 }
 
-function repoReaders() {
-  const tests = git('ls-files', '*.test.ts');
-  return docReaders(Object.fromEntries(tests.map((f) => [f, readFileSync(f, 'utf8')])));
+/** Tests of this script and of check:local, which name doc paths only as fixtures. */
+export const FIXTURE_TESTS = new Set(['scripts/lane.test.ts', 'scripts/check-local.test.ts']);
+
+/** Every tracked test file that may read a doc, with its text. */
+export function repoTests() {
+  const files = git('ls-files', '*.test.ts').filter((f) => !FIXTURE_TESTS.has(f));
+  return Object.fromEntries(files.map((f) => [f, readFileSync(f, 'utf8')]));
 }
+
+const repoReaders = () => docReaders(repoTests());
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
