@@ -54,6 +54,8 @@ const post = async (url: string, payload: unknown, headers: Record<string, strin
 const HEBREW = 'שלום, השבוע יש לנו חלות חדשות';
 let s: Seeded;
 let png: string;
+/** Assets whose stored type must never be served inline (stored XSS, security.md "Media in the console"). */
+const unsafe: Record<string, string> = {};
 
 beforeAll(async () => {
   s = await seed(db);
@@ -74,6 +76,13 @@ beforeAll(async () => {
   await db.withBusiness(inserter('media_asset'), s.id, (tx) =>
     tx.insert(schema.mediaAsset).values({ id: png, businessId: s.id, kind: 'rendered', source: 'render', storagePath: `renders/${png}.png`, mimeType: 'image/png', sha256: 'x' }),
   );
+  for (const mimeType of ['image/svg+xml', 'text/html', 'application/xhtml+xml', 'image/heic', 'image/png; charset=utf-8', 'IMAGE/SVG+XML']) {
+    const id = randomUUID();
+    unsafe[mimeType] = id;
+    await db.withBusiness(inserter('media_asset'), s.id, (tx) =>
+      tx.insert(schema.mediaAsset).values({ id, businessId: s.id, kind: 'photo', source: 'owner', storagePath: `owner/${id}`, mimeType, sha256: 'x' }),
+    );
+  }
 });
 
 describe('JSON reads', () => {
@@ -176,6 +185,26 @@ describe('media', () => {
     expect(res.res.headers['cache-control']).toBe('private, no-store');
     expect(new Uint8Array(res.res.rawPayload)).toEqual(PNG);
     expect(reads).toContain(`renders/${png}.png`);
+  });
+
+  it('sends nosniff and a sandbox policy with every media response', async () => {
+    for (const id of [png, ...Object.values(unsafe)]) {
+      const res = await get(`/console/media/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.res.headers['content-security-policy']).toBe('sandbox');
+      expect(res.res.headers['cache-control']).toBe('private, no-store');
+    }
+    expect((await get(`/console/media/${png}`)).res.headers['content-disposition']).toBeUndefined();
+  });
+
+  it('serves only raster image types inline; any other stored type downloads as octet-stream', async () => {
+    for (const [mimeType, id] of Object.entries(unsafe)) {
+      const res = await get(`/console/media/${id}`);
+      expect(res.type, mimeType).toMatch(/^application\/octet-stream/);
+      expect(res.res.headers['content-disposition'], mimeType).toMatch(/^attachment/);
+      expect(new Uint8Array(res.res.rawPayload)).toEqual(PNG);
+    }
   });
 
   it('answers 404 for an unknown asset, and when no media store is wired', async () => {

@@ -11,6 +11,12 @@ import { lastDays } from './insights.js';
 export const CONSOLE_PATH = '/console';
 
 /**
+ * The raster image types the console page shows inline (security.md, "Media in the console"). Exact
+ * matches only; any other stored type, SVG and HTML included, is sent as an octet-stream attachment.
+ */
+export const INLINE_MEDIA_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+/**
  * How the console knows who is acting (docs/security.md, "Console exposure"; D1, D4).
  * `iap` (deployed): every request needs a valid IAP assertion, and its email is the actor; without
  * a verifier (no audience configured) every console request is refused. `dev-bypass` (local runs
@@ -222,12 +228,17 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
         try {
           const asset = await c.mediaAsset(parsed.data.assetId);
           const bytes = await options.readMedia(asset.storagePath);
-          return reply
+          // The stored type comes from the provider or the owner's upload and is never trusted: an SVG
+          // or HTML file served inline would run script on the console's origin (stored XSS).
+          const inline = INLINE_MEDIA_TYPES.has(asset.mimeType);
+          reply
             .code(200)
             .header('cache-control', 'private, no-store')
             .header('x-content-type-options', 'nosniff')
-            .type(asset.mimeType)
-            .send(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+            .header('content-security-policy', 'sandbox')
+            .type(inline ? asset.mimeType : 'application/octet-stream');
+          if (!inline) reply.header('content-disposition', 'attachment');
+          return reply.send(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
         } catch (error) {
           if (error instanceof ConsoleActionError) return reply.code(error.status).send({ reason: error.reason });
           throw error;

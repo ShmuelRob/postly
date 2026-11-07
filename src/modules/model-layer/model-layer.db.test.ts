@@ -8,6 +8,7 @@ import type { ModelProvider } from '../../contracts/providers/model.js';
 import { ModelSimulator } from '../../simulators/model.js';
 import { createModelLayer, ModelTaskFailedError } from './index.js';
 import { memoryTelemetry } from '../../shared/telemetry-memory.js';
+import { setLogSink } from '../../shared/logger.js';
 
 // The model layer against the migrated database and the model simulator: seed rows, model_run per
 // attempt, retries within model_task_config.max_retries, and console routing (technical-design.md).
@@ -79,6 +80,29 @@ describe('model layer run', () => {
     expect(Number(runs[0]?.costUsd)).toBeGreaterThan(0);
     expect(runs[0]?.durationMs).toBeGreaterThanOrEqual(0);
     expect(await consoleOf(businessId)).toHaveLength(0);
+  });
+
+  // docs/observability.md, Timing lines: one `model call` line per attempt, with no input or output.
+  it('logs each attempt with its task, model, duration, attempt, outcome and token counts, and nothing of the input', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      sim.scriptInvalid('intent_detection', { intent: 'approve' });
+      sim.script('intent_detection', validIntent);
+      await layer().run(businessId, 'intent_detection', intent);
+    } finally {
+      setLogSink(undefined);
+    }
+    const calls = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.message === 'model call');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ task: 'intent_detection', provider: 'google', model: 'gemini-3.5-flash-lite', attempt: 1, outcome: 'invalid' });
+    expect(calls[1]).toMatchObject({ attempt: 2, outcome: 'valid' });
+    for (const call of calls) {
+      expect(call.durationMs).toEqual(expect.any(Number));
+      expect(call.inputTokens).toEqual(expect.any(Number));
+      expect(call.outputTokens).toEqual(expect.any(Number));
+    }
+    expect(lines.join('\n')).not.toContain(intent.text);
   });
 
   it('retries invalid output and returns the first valid one', async () => {
