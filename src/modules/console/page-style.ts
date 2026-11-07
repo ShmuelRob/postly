@@ -278,6 +278,20 @@ details>summary::-webkit-details-marker{display:none}
 .json pre{margin:0;padding:10px 12px;border-top:1px solid var(--line);overflow:auto;max-height:60vh;font:var(--fs-xs)/1.6 var(--mono);white-space:pre;tab-size:2;direction:ltr;unicode-bidi:isolate;color:var(--ink)}
 .json.err pre{color:var(--bad);white-space:pre-wrap;overflow-wrap:anywhere}
 
+/* insights: range form and horizontal bars (one hue; status tones only for states) */
+.range{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px;padding:12px 14px}
+.range .chips{flex:1 1 100%}
+.range .field{flex:0 1 170px}
+@media (min-width:720px){.range .chips{flex:0 1 auto;margin-right:auto}}
+.hbars{list-style:none;margin:0;padding:10px 14px 12px;display:grid;gap:6px}
+.hbar{display:grid;grid-template-columns:minmax(96px,38%) minmax(0,1fr) auto;align-items:center;gap:10px;font-size:var(--fs-sm)}
+.hbar .lbl{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbar .track{display:block;height:10px}
+.hbar .fill{display:block;height:100%;min-width:2px;background:var(--series);border-radius:0 4px 4px 0}
+.hbar .fill.zero{background:var(--line-strong);width:2px!important;border-radius:1px}
+.hbar[data-tone] .fill{background:var(--t-fg)}
+.hbar .v{min-width:32px;text-align:right;font-weight:600;color:var(--ink)}
+
 /* conversations: list | thread | panel */
 .is-convo .wrap{max-width:1680px}
 .convo{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
