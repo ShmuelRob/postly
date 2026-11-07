@@ -12,6 +12,40 @@ on:
   workflow_call:
     inputs:
       image:
+        description: Build and check the images here (false inside Deploy, whose image job does it)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# As in ci.yml: PR runs cancel older ones; a push's run (inside Deploy) is never cancelled.
+concurrency:
+  group: infra-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+      terraform: ${{ steps.diff.outputs.terraform }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo "image=${{ inputs.image }}" >> "$GITHUB_OUTPUT"; echo terraform=true >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # The same paths scripts/image-key.sh leaves out of the image key.
+          files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)
+          echo "$files"
+          echo "image=$(echo "$files" | grep -qvE '^(infra/|docs/|[^/]+\.md$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "terraform=$(echo "$files" | grep -qE '^(infra/|\.github/workflows/infra\.yml$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
