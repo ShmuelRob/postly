@@ -1,7 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { WindowClosedError } from '../../contracts/providers/messaging.js';
 import * as schema from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { asError, log } from '../../shared/logger.js';
 import { handOffLine } from './copy.js';
 import type { AgentDeps } from './types.js';
 
@@ -33,9 +33,16 @@ export async function handOff(
       .where(and(eq(t.businessId, businessId), isNull(t.handoffAt)));
     await tx.insert(schema.consoleItem).values({ businessId, kind: input.kind, referenceId: input.turnId, details: { ...input.details, agentTurnId: input.turnId } });
   });
+  // A turn that failed before its context was read has no number yet: the approver's, from the business.
+  const to =
+    input.approverPhone ||
+    (await deps.db.withBusiness('workflow', businessId, async (tx) => {
+      const [row] = await tx.select({ phone: schema.business.approverPhone }).from(schema.business).where(eq(schema.business.id, businessId));
+      return row?.phone ?? '';
+    }));
   try {
-    await deps.messaging.sendText(businessId, { to: input.approverPhone, text: handOffLine(input.personaName, input.language) });
+    await deps.messaging.sendText(businessId, { to, text: handOffLine(input.personaName, input.language) });
   } catch (error) {
-    if (!(error instanceof WindowClosedError)) log.error('agent hand-off line not sent', { businessId, error: String(error) });
+    if (!(error instanceof WindowClosedError)) log.error('agent hand-off line not sent', { businessId, error: asError(error) });
   }
 }

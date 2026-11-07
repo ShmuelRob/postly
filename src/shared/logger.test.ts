@@ -116,6 +116,12 @@ describe('no customer content or secret in a log line', () => {
     expect(parsed()[0]).toMatchObject({ publicationId: id, attempt: 3, error: 'HTTP 503 after 3 tries' });
   });
 
+  it('keeps a model call token count (a number under a key ending in Tokens), but never a string there', () => {
+    capture();
+    log.info('model call', { inputTokens: 1200, outputTokens: 80, thinkingTokens: 310, accessTokens: SECRETS[1]!, token: 5 });
+    expect(parsed()[0]).toMatchObject({ inputTokens: 1200, outputTokens: 80, thinkingTokens: 310, accessTokens: '[redacted]', token: '[redacted]' });
+  });
+
   it('keeps a UUID whose digit groups look like a phone number, as a field, a label, and inside text', () => {
     capture();
     // "1-02987394" spans two groups: nine digits, which the phone rule alone would redact.

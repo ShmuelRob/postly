@@ -5,6 +5,7 @@ import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTas
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
 import type { Database } from '../../db/index.js';
 import { consoleItem, modelRun, modelTaskConfig, promptTemplate } from '../../db/schema.js';
+import { log } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** Resolves a business's media asset to a URL the model provider can fetch (voice notes, photos). */
@@ -73,7 +74,11 @@ export class ModelTaskFailedError extends Error {
 
 type Config = typeof modelTaskConfig.$inferSelect;
 type Target = { provider: string; model: string };
-type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string };
+/** `invalidPaths`: the Zod issue paths of an invalid output, never its values (docs/observability.md). */
+type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string; invalidPaths?: string };
+
+const issuePaths = (error: z.ZodError) =>
+  [...new Set(error.issues.map((i) => (i.path.length ? i.path.map((p) => (typeof p === 'number' ? '#' : String(p))).join('.') : '(root)')))].join(',').slice(0, 200);
 
 const attemptOutcome = (a: Attempt) => (a.valid ? 'valid' : a.result ? 'invalid' : 'provider_error');
 
@@ -121,7 +126,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
     }
     const check = modelTasks[task].output.safeParse(result.output);
     if (check.success) return { result, output: check.data, valid: true };
-    return { result, valid: false, error: z.prettifyError(check.error) };
+    return { result, valid: false, error: z.prettifyError(check.error), invalidPaths: issuePaths(check.error) };
   }
 
   return {
@@ -193,6 +198,22 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         metrics.count('postly.model.calls.count', { task, outcome: attemptOutcome(outcome) });
         metrics.record('postly.model.latency', durationMs, { task, outcome: attemptOutcome(outcome) });
         if (outcome.result) metrics.count('postly.model.cost_usd', { task }, outcome.result.costUsd);
+        // docs/observability.md, Timing lines: where a reply's time goes, with no input or output. An
+        // invalid output or a provider error is retried, so it is a WARNING.
+        (outcome.valid ? log.info : log.warn)('model call', {
+          task,
+          provider: target.provider,
+          model: target.model,
+          promptVersion: config.activePromptVersion,
+          attempt: n,
+          outcome: attemptOutcome(outcome),
+          ...(outcome.invalidPaths ? { invalidPaths: outcome.invalidPaths } : {}),
+          durationMs,
+          inputTokens: outcome.result?.inputTokens,
+          outputTokens: outcome.result?.outputTokens,
+          thinkingTokens: outcome.result?.thinkingTokens,
+          ...(options.agentTurnId ? { agentTurnId: options.agentTurnId } : {}),
+        });
         const rows = await deps.db.withBusiness('model', businessId, (tx) =>
           tx
             .insert(modelRun)

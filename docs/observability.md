@@ -33,6 +33,20 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 
 **Retention.** The `_Default` bucket keeps logs 7 days in `dev` and 30 in `stage` and `prod` ([deployment.md](deployment.md)).
 
+### Timing lines
+
+Where a reply's time goes, at `INFO`, with ids, code words and numbers only (added 2026-11-07 after the slow dev sandbox):
+
+| Line | Fields | Logged |
+| --- | --- | --- |
+| `inbound burst handled` | `businessId`, `messageId` (the burst's first), `messageCount`, `quietMs`, `forced` (a button reply or a flush), `outcome` (`ok`, `failed`), `receivedToClaimMs` (the first message's receipt to the claim), `handlerMs` (the workflow's handling), `totalMs` | Once per burst messaging hands over |
+| `agent step` | `businessId`, `agent`, `agentTurnId`, `step` (1-based), `calls`, `tools` (the tool names, comma-separated), `modelMs` (the model call with its retries), `toolsMs` (running the calls) | After each step whose calls ran |
+| `agent turn ended` | `businessId`, `agent`, `agentTurnId`, `trigger` (`burst` or `event:<name>`), `status`, `stopReason`, `steps`, `toolCalls`, `durationMs`, `costUsd` | Once per turn that ran |
+| `agent turn ended silent` (`WARNING`) | `businessId`, `agent`, `agentTurnId` | A turn the owner waited on ended with nothing sent and not done, and hands off ([agent.md](agent.md#a-turn), "No silent turn") |
+| `model call` (`WARNING` when not `valid`: it is retried) | `task`, `provider`, `model`, `promptVersion`, `attempt`, `outcome` (`valid`, `invalid`, `provider_error`), `invalidPaths` (an invalid output's Zod issue paths, comma-separated, array indexes as `#`, never the values), `durationMs`, `inputTokens`, `outputTokens` (reasoning included), `thinkingTokens` (the reasoning part, when the provider reports it), and `agentTurnId` inside a turn | Once per model attempt (one per `model_run` row) |
+
+A key containing `token` names a secret by the rule above; the logger keeps a key ending in `Tokens` only when its value is a number (a count), so a token string under such a key is still redacted (`logger.test.ts`). The lines are tested in `messaging.db.test.ts`, `agent.db.test.ts` and `model-layer.db.test.ts`, each checking that no owner text reaches them.
+
 ### Following one message (2026-11-07)
 
 The goal: from Logs Explorer alone, follow one owner message from the webhook to the reply, and see where and why it failed.
@@ -53,7 +67,7 @@ A workflow event rejected because a person handles the conversation (`handoff`) 
 
 **Log level.** `LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the lowest severity a process writes. `debug` is allowed only when `POSTLY_ENV` is `local`, `test` or `dev`; stage and prod refuse to start with it (`src/config.ts`). Debug lines add the steps between the lifecycle lines, such as a wake-up requested or a claim that waits for the quiet window.
 
-**Lifecycle lines.** These lines are `INFO` unless the table says otherwise, and carry ids, states, code words, counts and durations only, never content. The timing lines (`inbound burst handled`, `agent step`, `agent turn ended`, `model call`) have their own table and are not repeated here.
+**Lifecycle lines.** These lines are `INFO` unless the table says otherwise, and carry ids, states, code words, counts and durations only, never content. The [timing lines](#timing-lines) (`inbound burst handled`, `agent step`, `agent turn ended`, `model call`) carry the correlation ids from the context too and are not repeated here.
 
 | Line | Fields (besides the context ids) | Logged |
 | --- | --- | --- |
@@ -108,7 +122,7 @@ resource.labels.service_name=~"^postly-ENV-"
 severity>=WARNING
 ```
 
-**Why a tool call was refused:** `jsonPayload.message="agent tool call" AND jsonPayload.outcome!="ok"` gives the tool and the refusal code. **Where the time went:** the `durationMs` of each line, and `receivedToClaimMs` and `handlerMs` on `inbound burst handled`.
+**Why a model output was refused:** `jsonPayload.message="model call" AND jsonPayload.outcome!="valid"` gives the task, the prompt version and `invalidPaths`; the full output is on the `model_run` row in the console. **Why a tool call was refused:** `jsonPayload.message="agent tool call" AND jsonPayload.outcome!="ok"` gives the tool and the refusal code. **Where the time went:** the `durationMs` of each line, and `receivedToClaimMs` and `handlerMs` on `inbound burst handled`.
 
 The same queries work from the command line, for example:
 

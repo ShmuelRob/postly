@@ -146,6 +146,23 @@ describe('process configuration', () => {
     expect(loadConfig({ ...dev, POSTLY_AGENT_FLOWS: 'none' })).not.toHaveProperty('agentFlows');
   });
 
+  // technical-design.md, Operational defaults: the burst quiet window per environment.
+  describe('burst quiet window (BURST_QUIET_MS)', () => {
+    it('defaults to 20 seconds', () => {
+      expect(loadConfig(dev).burstQuietMs).toBe(20_000);
+    });
+
+    it('takes a whole number of milliseconds from 500 to 60000', () => {
+      expect(loadConfig({ ...dev, BURST_QUIET_MS: '2000' }).burstQuietMs).toBe(2000);
+      expect(loadConfig({ ...dev, BURST_QUIET_MS: '500' }).burstQuietMs).toBe(500);
+      expect(loadConfig({ ...dev, BURST_QUIET_MS: '60000' }).burstQuietMs).toBe(60_000);
+    });
+
+    it('refuses a value outside that range or not a whole number', () => {
+      for (const v of ['0', '499', '60001', '2.5', 'fast']) expect(() => loadConfig({ ...dev, BURST_QUIET_MS: v })).toThrow('BURST_QUIET_MS');
+    });
+  });
+
   describe('webhook secret', () => {
     it('lets a local run use the public simulator secret', () => {
       expect(loadConfig(base).webhookSecret).toBe(SIMULATOR_WEBHOOK_SECRET);

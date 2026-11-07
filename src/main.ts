@@ -57,6 +57,7 @@ async function main(command: string | undefined) {
   const { app, world, db, close } = await createSimulatedApp({
     store,
     burstWake: jobBurstWake(queue),
+    burstQuietMs: config.burstQuietMs,
     databaseUrls: config.databaseUrls,
     poolMax: config.dbPoolMax,
     webhookSecret: config.webhookSecret,
@@ -68,7 +69,7 @@ async function main(command: string | undefined) {
     // The agents always run: onboarding, weekly and drafts, with no switch (agent.md, Running on dev).
     oneShotFlows: false,
   });
-  log.info('composition', { models: config.models, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}) });
+  log.info('composition', { models: config.models, burstQuietMs: config.burstQuietMs, ...(config.vertex ? { vertexLocation: config.vertex.location } : {}) });
 
   // Deployed processes sit behind Cloud Run's front end, one proxy hop (docs/security.md, D8).
   const deployed = config.env !== 'local' && config.env !== 'test';
