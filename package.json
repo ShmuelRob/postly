@@ -18,6 +18,7 @@
     "check": "npm run typecheck && npm run lint:conflicts && npm run lint:links && npm run lint:boundaries && npm run test",
     "gallery": "vitest run --config vitest.gallery.config.ts",
     "db:generate": "drizzle-kit generate",
+    "db:check": "drizzle-kit check",
     "playground": "vite --config playground/vite.config.ts"
   },
   "dependencies": {

@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Typecheck, markdown links and module boundary rules.
+  # Typecheck, markdown links, module boundary rules and the migration snapshot chain.
   static:
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +33,8 @@ jobs:
       - run: npm run lint:conflicts
       - run: npm run lint:links
       - run: npm run lint:boundaries
+      # The migration snapshot chain (implementation-plan.md, Lanes, "Migrations: one in flight").
+      - run: npm run db:check
 
   tests:
     runs-on: ubuntu-latest
