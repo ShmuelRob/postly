@@ -34,9 +34,10 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
  */
 // The insights count every business in the shared test database, so each test needs a week no other
 // test uses: a year of its own (a random start, then one year per call), never a random pick that two
-// tests can share. Future years, where Asia/Jerusalem follows today's rules (UTC+2 in January): before
-// the 1920s the tz data uses local mean time (about +2:21), which moves the week boundary.
-const FIRST_YEAR = 2300 + Math.floor(Math.random() * 500);
+// tests can share. Years from 1950 on, where Asia/Jerusalem is UTC+2 in every January (before the 1920s
+// the tz data uses local mean time, about +2:21, which moves the week boundary), and in the past, so these
+// rows never outrank other files' recent rows (console-views.db.test.ts dates its own in the 2090s).
+const FIRST_YEAR = 1950 + Math.floor(Math.random() * 40);
 let farWeeks = 0;
 
 function farWeek() {
