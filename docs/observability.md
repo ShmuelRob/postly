@@ -33,6 +33,20 @@ Logs, metrics, traces, dashboards and alerts for the web, worker and console pro
 
 **Retention.** The `_Default` bucket keeps logs 7 days in `dev` and 30 in `stage` and `prod` ([deployment.md](deployment.md)).
 
+### Timing lines
+
+Where a reply's time goes, at `INFO`, with ids, code words and numbers only (added 2026-11-07 after the slow dev sandbox):
+
+| Line | Fields | Logged |
+| --- | --- | --- |
+| `inbound burst handled` | `businessId`, `messageId` (the burst's first), `messageCount`, `quietMs`, `forced` (a button reply or a flush), `outcome` (`ok`, `failed`), `receivedToClaimMs` (the first message's receipt to the claim), `handlerMs` (the workflow's handling), `totalMs` | Once per burst messaging hands over |
+| `agent step` | `businessId`, `agent`, `agentTurnId`, `step` (1-based), `calls`, `tools` (the tool names, comma-separated), `modelMs` (the model call with its retries), `toolsMs` (running the calls) | After each step whose calls ran |
+| `agent turn ended` | `businessId`, `agent`, `agentTurnId`, `trigger` (`burst` or `event:<name>`), `status`, `stopReason`, `steps`, `toolCalls`, `durationMs`, `costUsd` | Once per turn that ran |
+| `agent turn ended silent` (`WARNING`) | `businessId`, `agent`, `agentTurnId` | A turn the owner waited on ended with nothing sent and not done, and hands off ([agent.md](agent.md#a-turn), "No silent turn") |
+| `model call` | `task`, `provider`, `model`, `attempt`, `outcome` (`valid`, `invalid`, `provider_error`), `durationMs`, `inputTokens`, `outputTokens` (reasoning included), `thinkingTokens` (the reasoning part, when the provider reports it), and `agentTurnId` inside a turn | Once per model attempt (one per `model_run` row) |
+
+A key containing `token` names a secret by the rule above; the logger keeps a key ending in `Tokens` only when its value is a number (a count), so a token string under such a key is still redacted (`logger.test.ts`). The lines are tested in `messaging.db.test.ts`, `agent.db.test.ts` and `model-layer.db.test.ts`, each checking that no owner text reaches them.
+
 ## Metrics (WP-48)
 
 **One catalogue.** Every metric is declared once in `src/shared/telemetry.ts` (`METRICS`) with its kind, unit and the labels it may carry, and code records it only through `metrics.count` and `metrics.record`. The table below is that catalogue; `src/shared/telemetry.test.ts` checks the two match, so a change to one changes the other.

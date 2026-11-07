@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Phone } from './contracts/common.js';
 import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { IAP_AUDIENCE_FORMS, IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
+import { DEFAULT_BURST_QUIET_MS } from './modules/messaging/index.js';
 import { realModelsRefused } from './modules/model-layer/index.js';
 
 export { PROCESS_LOGINS };
@@ -35,6 +36,16 @@ const Env = z.object({
     .string()
     .regex(/^(global|eu|us|[a-z]+-[a-z]+\d+)$/, 'VERTEX_LOCATION must be global, eu, us or a region such as europe-west4')
     .default('eu'),
+  /**
+   * The burst quiet window in milliseconds (technical-design.md, Operational defaults): inbound messages
+   * from one number merge until this long passes without a new one. 20 s by default; dev sets 2 s.
+   */
+  BURST_QUIET_MS: z
+    .string()
+    .regex(/^\d+$/, 'BURST_QUIET_MS must be a whole number of milliseconds')
+    .transform(Number)
+    .refine((ms) => ms >= 500 && ms <= 60_000, 'BURST_QUIET_MS must be from 500 to 60000')
+    .optional(),
   /** The server and database, with no user or password: each login gets its own. */
   DATABASE_URL: z.url().refine((u) => new URL(u).username === '', 'DATABASE_URL must have no user; each role login is built from it'),
   PUBLIC_BASE_URL: z.url(),
@@ -72,6 +83,8 @@ export interface Config {
   models: 'simulator' | 'vertex';
   /** With models `vertex`: where Gemini is called. */
   vertex?: { project: string; location: string };
+  /** The burst quiet window (BURST_QUIET_MS). */
+  burstQuietMs: number;
 }
 
 /** The environments where the simulators may answer (docs/deployment.md, "Simulated mode"). */
@@ -145,5 +158,6 @@ export function loadConfig(env: Record<string, string | undefined>, process: key
     simulators: store === 'postgres' ? { store, storeUrl: loginUrl(parsed.data.DATABASE_URL, SIMULATOR_LOGIN, env[passwordVar(SIMULATOR_LOGIN)]!) } : { store },
     models,
     ...(models === 'vertex' ? { vertex: { project: parsed.data.VERTEX_PROJECT!, location: parsed.data.VERTEX_LOCATION } } : {}),
+    burstQuietMs: parsed.data.BURST_QUIET_MS ?? DEFAULT_BURST_QUIET_MS,
   };
 }

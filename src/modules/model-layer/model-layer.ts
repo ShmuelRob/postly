@@ -5,6 +5,7 @@ import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTas
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
 import type { Database } from '../../db/index.js';
 import { consoleItem, modelRun, modelTaskConfig, promptTemplate } from '../../db/schema.js';
+import { log } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** Resolves a business's media asset to a URL the model provider can fetch (voice notes, photos). */
@@ -193,6 +194,19 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         metrics.count('postly.model.calls.count', { task, outcome: attemptOutcome(outcome) });
         metrics.record('postly.model.latency', durationMs, { task, outcome: attemptOutcome(outcome) });
         if (outcome.result) metrics.count('postly.model.cost_usd', { task }, outcome.result.costUsd);
+        // docs/observability.md, Timing lines: where a reply's time goes, with no input or output.
+        log.info('model call', {
+          task,
+          provider: target.provider,
+          model: target.model,
+          attempt: n,
+          outcome: attemptOutcome(outcome),
+          durationMs,
+          inputTokens: outcome.result?.inputTokens,
+          outputTokens: outcome.result?.outputTokens,
+          thinkingTokens: outcome.result?.thinkingTokens,
+          ...(options.agentTurnId ? { agentTurnId: options.agentTurnId } : {}),
+        });
         const rows = await deps.db.withBusiness('model', businessId, (tx) =>
           tx
             .insert(modelRun)

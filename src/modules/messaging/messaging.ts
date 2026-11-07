@@ -134,7 +134,7 @@ export interface Messaging {
    * limits it to one business (tests that share a database).
    */
   sweepUnprocessed(options?: { businessId?: string }): Promise<number>;
-  /** Runs the sweep now and then every `everyMs` (default: the quiet window); returns a stop function. */
+  /** Runs the sweep now and then every `everyMs` (default: the quiet window, at least 20 s); returns a stop function. */
   startSweep(everyMs?: number): () => void;
   /**
    * The `inbound-burst` job: claims this sender's unprocessed messages and hands them over, burst
@@ -273,10 +273,28 @@ export function createMessaging(options: MessagingOptions): Messaging {
         return delivered;
       }
       const ids = step.burst.messages.map((x) => x.id);
+      const claimedAt = now().getTime();
+      const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
+      // docs/observability.md, Timing lines: received (the first message) → claimed → handed over.
+      const timing = (outcome: 'ok' | 'failed') => {
+        const received = Date.parse(step.burst.messages[0]?.receivedAt ?? '') || claimedAt;
+        const done = now().getTime();
+        log.info('inbound burst handled', {
+          ...context,
+          messageCount: ids.length,
+          quietMs,
+          forced: force,
+          outcome,
+          receivedToClaimMs: claimedAt - received,
+          handlerMs: done - claimedAt,
+          totalMs: done - received,
+        });
+      };
       try {
-        const context = { businessId: step.burst.businessId, messageId: step.burst.messages[0]?.id };
         await withLogContext(context, () => withSpan('inbound burst', context, () => handler.handleInbound(step.burst)));
+        timing('ok');
       } catch (error) {
+        timing('failed');
         // Release the claim at once, so the sweep (or the job's retry) hands the burst over again.
         await db.withBusiness('messaging', businessId, (tx) =>
           tx.update(schema.message).set({ claimedAt: null }).where(inArray(schema.message.id, ids)),
@@ -503,7 +521,9 @@ export function createMessaging(options: MessagingOptions): Messaging {
       }
       return delivered;
     },
-    startSweep(everyMs = quietMs) {
+    // The sweep is a backstop for a lost wake-up, so it never runs more often than every 20 seconds,
+    // even with a short quiet window (dev's 2 s; technical-design.md, Onboarding flow).
+    startSweep(everyMs = Math.max(quietMs, DEFAULT_BURST_QUIET_MS)) {
       const sweep = () => {
         this.sweepUnprocessed().catch((error: unknown) => log.error('inbound sweep failed', { error: errorMessage(error) }));
       };
