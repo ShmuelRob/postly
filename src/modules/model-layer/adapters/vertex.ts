@@ -2,6 +2,7 @@
 // It authenticates as the runtime service account (Application Default Credentials); there is no API key.
 import { GoogleAuth } from 'google-auth-library';
 import { Language } from '../../../contracts/common.js';
+import { errorText } from '../../../shared/logger.js';
 import {
   AnalyzeImageRequest,
   GenerateStructuredRequest,
@@ -156,7 +157,7 @@ const ERROR_TEXT_MAX = 1000;
  * message and details from the response body. Never the request, so no prompt or owner content.
  */
 export function describeVertexError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorText(error, ERROR_TEXT_MAX);
   const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response;
   const body = (response?.data as { error?: { status?: string; message?: string; details?: unknown } } | undefined)?.error;
   if (!response?.status && !body) return message.slice(0, ERROR_TEXT_MAX);

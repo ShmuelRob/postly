@@ -8,7 +8,7 @@ import {
   type AgentTurnStopReason,
 } from '../../contracts/agent.js';
 import * as schema from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { addLogContext, asError, errorDetail, log, withLogContext } from '../../shared/logger.js';
 import { ModelTaskFailedError } from '../model-layer/index.js';
 import { agents as defaultAgents } from './agents/index.js';
 import { buildContext } from './context.js';
@@ -89,7 +89,7 @@ export function createAgent(input: AgentDeps): Agent {
     return turns.flatMap((t) => callsOf(t.id, t.steps as RecordedStep[]));
   }
 
-  return {
+  const turns: Agent = {
     async runTurn(businessId, agentName, trigger, options = {}) {
       const definition = agents[agentName];
       const started = deps.now();
@@ -122,6 +122,9 @@ export function createAgent(input: AgentDeps): Agent {
       });
       if (!opened.turnId) return { turnId: null, status: 'skipped', stopReason: null, messagesSent: 0 };
       const { limits, turnId } = opened;
+      // Every line of the turn from here on (model calls, tool calls, sends) carries its id (docs/observability.md).
+      addLogContext({ businessId, agentTurnId: turnId });
+      log.info('agent turn started', { agent: agentName, trigger: trigger.kind === 'burst' ? 'burst' : `event:${trigger.name}` });
 
       const steps: RecordedStep[] = [];
       const save = () =>
@@ -288,7 +291,7 @@ export function createAgent(input: AgentDeps): Agent {
         }
       } catch (error) {
         failed = error;
-        log.error('agent turn failed', { businessId, agentTurnId: turnId, error: error instanceof Error ? error : String(error) });
+        log.error('agent turn failed', { businessId, agentTurnId: turnId, error: asError(error) });
       }
 
       const ended = deps.now();
@@ -304,8 +307,8 @@ export function createAgent(input: AgentDeps): Agent {
         await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: stop, agent: agentName }, approverPhone, personaName, language, now: ended });
       } else if (failed !== null) {
         // An unexpected error still leaves the conversation with a person, never silent.
-        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: String(failed) }, approverPhone, personaName, language, now: ended }).catch(
-          (error: unknown) => log.error('agent hand-off failed', { businessId, agentTurnId: turnId, error: String(error) }),
+        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: errorDetail(failed) }, approverPhone, personaName, language, now: ended }).catch(
+          (error: unknown) => log.error('agent hand-off failed', { businessId, agentTurnId: turnId, error: asError(error) }),
         );
       }
       const status: TurnResult['status'] =
@@ -341,15 +344,33 @@ export function createAgent(input: AgentDeps): Agent {
       return { turnId, status, stopReason: stop, messagesSent: turn.messagesSent };
     },
   };
+  // One log scope per turn, so the turn's id never leaks to the caller's later lines.
+  return { runTurn: (businessId, agentName, trigger, options) => withLogContext({}, () => turns.runTurn(businessId, agentName, trigger, options)) };
 }
 
-/** Runs one call: allowed for this agent, a handler exists, then the handler's own checks. */
+/**
+ * Runs one call: allowed for this agent, a handler exists, then the handler's own checks. Each call is
+ * one `agent tool call` line: the tool, ok or refused with the refusal's code word, or an error
+ * (docs/observability.md). Never the call's arguments or the refusal's detail, which may quote the owner.
+ */
 async function runTool(call: AgentToolCall, allowed: readonly AgentToolName[], ctx: ToolContext): Promise<ToolOutcome> {
-  const handler = handlerFor(call.tool);
-  if (!allowed.includes(call.tool) || !handler) {
-    return { result: { status: 'refused', reason: 'not_allowed', detail: `${call.tool} is not available to the ${ctx.agent} agent now` } };
+  const started = performance.now();
+  const fields = { businessId: ctx.businessId, agent: ctx.agent, agentTurnId: ctx.turnId, tool: call.tool };
+  const durationMs = () => Math.round(performance.now() - started);
+  try {
+    const handler = handlerFor(call.tool);
+    const outcome: ToolOutcome =
+      !allowed.includes(call.tool) || !handler
+        ? { result: { status: 'refused', reason: 'not_allowed', detail: `${call.tool} is not available to the ${ctx.agent} agent now` } }
+        : await handler(call as never, ctx);
+    const result = outcome.result;
+    log.info('agent tool call', { ...fields, outcome: result.status, ...(result.status === 'refused' ? { reason: result.reason } : {}), durationMs: durationMs() });
+    return outcome;
+  } catch (error) {
+    // The turn's own `agent turn failed` line is the ERROR.
+    log.warn('agent tool call', { ...fields, outcome: 'error', durationMs: durationMs(), error: asError(error) });
+    throw error;
   }
-  return handler(call as never, ctx);
 }
 
 /** The successful calls recorded in one turn's steps. */

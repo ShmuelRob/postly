@@ -7,7 +7,7 @@ import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { canTransition, transition } from '../../shared/state-machine.js';
 import type { Messaging } from '../messaging/index.js';
-import { log } from '../../shared/logger.js';
+import { asError, log } from '../../shared/logger.js';
 import { holdCopy, holdOn, holdStep } from './hold.js';
 
 type SubscriptionEvent = (typeof subscriptionMachine.events)[number];
@@ -230,7 +230,7 @@ export function createBilling(options: BillingOptions): Billing {
           const action = await holdOne(id, at);
           if (action) done.push({ businessId: id, action });
         } catch (error) {
-          log.error('billing hold failed', { businessId: id, error: error instanceof Error ? error : String(error) });
+          log.error('billing hold failed', { businessId: id, error: asError(error) });
         }
       }
       return done;

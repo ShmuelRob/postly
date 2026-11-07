@@ -10,6 +10,7 @@ import { OpenQuestion } from '../../contracts/open-question.js';
 import type { SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { asError, errorDetail, log } from '../../shared/logger.js';
 import type { Agent, TurnResult } from '../agent/index.js';
 import * as copy from './onboarding-copy.js';
 import type { Workflow } from './workflow.js';
@@ -266,9 +267,9 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         try {
           await deps.sendPaymentLink(burst.businessId);
         } catch (error) {
-          (deps.logger ?? console).error('payment link not sent after activation', { businessId: burst.businessId, error: String(error) });
+          (deps.logger ?? log).error('payment link not sent after activation', { businessId: burst.businessId, error: asError(error) });
           await deps.db.withBusiness('workflow', burst.businessId, (tx) =>
-            tx.insert(schema.consoleItem).values({ businessId: burst.businessId, kind: 'payment_link_failed', details: { error: String(error) } }),
+            tx.insert(schema.consoleItem).values({ businessId: burst.businessId, kind: 'payment_link_failed', details: { error: errorDetail(error) } }),
           );
         }
       }

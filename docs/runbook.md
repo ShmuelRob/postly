@@ -8,10 +8,16 @@ Placeholders: `ENV` is `dev`, `stage` or `prod`; `PROJECT` is that environment's
 
 ## Common tools
 
-**Logs.** Cloud Console: Logging, Logs Explorer, pick `PROJECT`. Every process writes one JSON line per event with `severity`, `message`, and the correlation ids as labels (`requestId`, `businessId`, `messageId`, `jobId`, `jobName`, `process`). Filter by id, for example `labels.businessId="<id>"` in the `logging.googleapis.com/labels` field. Logs carry ids only, never customer text or phone numbers, so find a customer by id from the console, not from a log.
+**Logs.** Cloud Console: Logging, Logs Explorer, pick `PROJECT`. Every process writes one JSON line per event with `severity`, `message`, and the correlation ids as labels (`requestId`, `businessId`, `messageId`, `correlationId`, `agentTurnId`, `jobId`, `jobName`, `process`). Filter by id, for example `labels.businessId="<id>"` in the `logging.googleapis.com/labels` field. Logs carry ids only, never customer text or phone numbers, so find a customer by id from the console, not from a log.
 
 ```bash
 gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="postly-ENV-web" AND severity>=ERROR' --project PROJECT --freshness 1h --limit 50 --format json
+```
+
+**Debugging one message.** Every line of one owner message's path, from the webhook to the reply, carries its `correlationId` label: the message id, shown on the conversation in the console. Filter on `labels.correlationId="<message id>"`, or on `labels.agentTurnId` for one agent turn. The ready queries, and the order the lines come in, are in [observability.md](observability.md#how-to-debug-a-message).
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND labels.correlationId="<message id>"' --project PROJECT --freshness 1d --order asc --format 'table(timestamp, severity, resource.labels.service_name, jsonPayload.message)'
 ```
 
 **Service state.** Cloud Console: Cloud Run, pick the service, then Revisions and Logs.

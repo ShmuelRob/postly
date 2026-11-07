@@ -178,3 +178,37 @@ describe('send-only queue', () => {
     expect(pgBossConstructorOptions({ connectionString: 'postgres://app_jobs@db/p' })).not.toHaveProperty('supervise');
   });
 });
+
+// docs/observability.md, "Following one message": job lifecycle lines, in the payload's correlation.
+describe('job lifecycle lines', () => {
+  it('logs job started and ended, or failed, with the job and the payload correlationId as labels', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      const queue = await startWorker(createMemoryQueue(), {
+        'inbound-burst': async () => {},
+        'monthly-report': async () => {
+          throw Object.assign(new Error('provider down'), { code: 'E_DOWN' });
+        },
+      });
+      await queue.send('inbound-burst', { businessId: 'b-1', from: '+972501234567', correlationId: 'm-1' });
+      await queue.drain();
+      await queue.send('monthly-report', null);
+      await expect(queue.drain()).rejects.toThrow('provider down');
+    } finally {
+      setLogSink(undefined);
+    }
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.map((l) => [l.severity, l.message, (l['logging.googleapis.com/labels'] as Record<string, string>).jobName])).toEqual([
+      ['INFO', 'job started', 'inbound-burst'],
+      ['INFO', 'job ended', 'inbound-burst'],
+      ['INFO', 'job started', 'monthly-report'],
+      ['WARNING', 'job failed', 'monthly-report'],
+    ]);
+    expect(parsed[0]!['logging.googleapis.com/labels']).toMatchObject({ correlationId: 'm-1', jobId: 'memory-1' });
+    expect(parsed[1]).toMatchObject({ durationMs: expect.any(Number) });
+    expect(parsed[3]).toMatchObject({ error: 'provider down', errorCode: 'E_DOWN', durationMs: expect.any(Number) });
+    expect((parsed[3]!['logging.googleapis.com/labels'] as Record<string, string>).correlationId).toBeUndefined();
+    expect(lines.join('\n')).not.toContain('+972501234567');
+  });
+});

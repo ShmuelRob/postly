@@ -41,7 +41,7 @@ export type EventResult =
   | { ok: false; reason: RejectionReason; from?: string; detail?: string };
 
 /** A rejected event, written to the structured log. */
-import { log } from '../../shared/logger.js';
+import { currentLogContext, log } from '../../shared/logger.js';
 
 export interface RejectionLog {
   businessId: string;
@@ -54,13 +54,27 @@ export interface RejectionLog {
   detail?: string;
 }
 
+/** An applied event (docs/observability.md, "Following one message"). */
+export interface AppliedLog {
+  businessId: string;
+  machine: MachineName;
+  id: string;
+  event: string;
+  source: EventSource;
+  from: string;
+  to: string;
+}
+
 export interface WorkflowLogger {
   rejected(entry: RejectionLog): void;
+  applied?(entry: AppliedLog): void;
 }
 
 export const consoleLogger: WorkflowLogger = {
-  // `from` would be redacted as a sender field (docs/observability.md), so the state goes as `fromState`.
-  rejected: ({ from, ...entry }) => log.warn('workflow event rejected', { ...entry, fromState: from }),
+  // `from` and `to` would be redacted as sender fields (docs/observability.md), so the states go as `fromState` and `toState`.
+  // A person handling the conversation is an expected outcome (INFO); any other rejection is a WARNING.
+  rejected: ({ from, ...entry }) => (entry.reason === 'handoff' ? log.info : log.warn)('workflow event rejected', { ...entry, fromState: from }),
+  applied: ({ from, to, ...entry }) => log.info('workflow event applied', { ...entry, fromState: from, toState: to }),
 };
 
 export interface Workflow {
@@ -124,15 +138,16 @@ export function createWorkflow(db: Database, logger: WorkflowLogger = consoleLog
           guard,
           reason: outcome.ok ? null : outcome.reason,
           detail: outcome.ok ? null : (outcome.detail ?? null),
-          correlationId: request.correlationId ?? null,
+          // The inbound message this work started from, when the caller names none (docs/observability.md).
+          correlationId: request.correlationId ?? currentLogContext().correlationId ?? null,
         });
         return outcome;
       });
+      const { machine, id, event, source } = request;
       if (!result.ok) {
-        const { machine, id, event, source } = request;
         const { ok: _, ...rejection } = result;
         logger.rejected({ businessId, machine, id, event, source, ...rejection });
-      }
+      } else logger.applied?.({ businessId, machine, id, event, source, from: result.from, to: result.to });
       return result;
     },
 
