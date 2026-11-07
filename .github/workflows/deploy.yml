@@ -6,14 +6,23 @@ name: Deploy
 # branch's copy of this file with the default branch as its ref, which the stage and prod
 # environments and their Workload Identity conditions refuse.) A commit that is no longer the head of
 # its branch when its checks pass is not deployed; the newer commit deploys instead.
-# The job runs in the GitHub environment of that name: dev deploys at once, stage and prod wait for
+#
+# Build once, deploy everywhere. Images live in one shared Artifact Registry repository (in dev's
+# project, `GCP_IMAGE_REPOSITORY`) and are tagged by content: `tree-<key>` (scripts/image-key.sh: the
+# commit's tree without docs/, infra/ and top-level Markdown) and the commit SHA. Only a push to `dev`
+# builds, in the `image` job, and only when `tree-<key>` is missing; the job runs alongside CI, runs
+# the image checks (scripts/check-image.sh) on the image it pushed, and tags it only after they pass.
+# Stage and prod never build, and their deploy accounts cannot push: a promotion (same tree, new
+# merge commit) deploys the digest dev built, and fails if dev never built that tree. Every rollout
+# names the digest, so prod runs the exact bytes dev ran.
+#
+# The jobs run in the GitHub environment of that name: dev deploys at once, stage and prod wait for
 # the environment's required reviewer (the approval gate). Each environment accepts only its own
 # branch, in GitHub and in the Workload Identity condition. `workflow_dispatch` redeploys an image
-# tag that already exists (a rollback) without re-running the checks; run it from the environment's
-# branch. The job authenticates with Workload Identity Federation (no key file), builds and pushes
-# the image once, runs the migration job, and rolls out web and worker. It never runs Terraform: the
-# human applies infra (gate H8). Until Terraform has set the environment variables, it stops at its
-# first step.
+# that already exists (a rollback) without re-running the checks; run it from the environment's
+# branch. The jobs authenticate with Workload Identity Federation (no key file). Deploy never runs
+# Terraform: the human applies infra (gate H8). Until Terraform has set the environment variables, it
+# stops at its first step.
 
 on:
   push:
@@ -21,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Existing image tag (a commit SHA) to redeploy to this branch's environment
+        description: Image to redeploy, an existing tag (tree-<key>, or a dev commit SHA) or a commit SHA whose tree dev built
         type: string
         required: true
 
@@ -30,9 +39,9 @@ permissions:
   id-token: write
 
 jobs:
-  # The gate: the same jobs a PR runs (ci.yml, with its aggregate `check`) and the image and Terraform
-  # checks (infra.yml), for this commit. A failure stops the deploy; re-running the failed jobs of this
-  # run re-checks and, when they pass, deploys.
+  # The gate: the same jobs a PR runs (ci.yml, with its aggregate `check`) and the Terraform checks
+  # (infra.yml; its image checks run in the image job below instead), for this commit. A failure stops
+  # the deploy; re-running the failed jobs of this run re-checks and, when they pass, deploys.
   ci:
     if: github.event_name == 'push'
     permissions:
@@ -44,6 +53,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/infra.yml
+    with:
+      image: false
 
   # CI can finish out of push order. Deploy only the branch head, so an older commit whose checks
   # finish late never replaces a newer one that is already live.
@@ -67,15 +78,128 @@ jobs:
             echo head=false >> "$GITHUB_OUTPUT"
           fi
 
+  # The one build, on a push to dev only, in parallel with CI. It runs in the dev environment because
+  # only that environment's jobs may act as dev's deploy account (the Workload Identity condition),
+  # the only account that may push. It pushes by digest, untagged, so a candidate that fails its
+  # checks is never deployed (the registry's cleanup policy deletes it), checks that same image, then
+  # tags it.
+  image:
+    if: github.event_name == 'push' && github.ref_name == 'dev' && vars.POSTLY_DEPLOY_DEV == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGISTRY: ${{ vars.GCP_IMAGE_REPOSITORY }}
+      WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+    steps:
+      - name: Refuse to run before Terraform configured the environment
+        run: |
+          for v in REGISTRY WIF_PROVIDER DEPLOY_SA; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set for environment dev"; exit 1; fi
+          done
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - id: key
+        run: echo "key=$(scripts/image-key.sh HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Reuse the images when this tree was built before
+        id: existing
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          have() { gcloud artifacts docker images describe "$1" --format='value(image_summary.digest)' > /dev/null 2>&1; }
+          if have "$REGISTRY/postly:tree-$KEY" && have "$REGISTRY/postly-sandbox:tree-$KEY"; then
+            echo "::notice::tree-$KEY was built before; no build"
+            echo found=true >> "$GITHUB_OUTPUT"
+          else
+            echo found=false >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.existing.outputs.found != 'true'
+      - name: Sign in to the registry
+        if: steps.existing.outputs.found != 'true'
+        run: gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
+      # The same cache scopes as infra.yml's PR build. One build both pushes (by digest) and loads the
+      # image for the checks, so the checked image is the pushed one.
+      - name: Build and push the image (by digest)
+        if: steps.existing.outputs.found != 'true'
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          provenance: false
+          sbom: false
+          outputs: |
+            type=image,name=${{ env.REGISTRY }}/postly,push-by-digest=true,name-canonical=true,push=true
+            type=docker,name=postly:ci
+          cache-from: |
+            type=gha,scope=postly
+            type=gha,scope=postly-sandbox
+          cache-to: type=gha,mode=max,scope=postly
+      - name: Build and push the sandbox image (by digest)
+        if: steps.existing.outputs.found != 'true'
+        id: sandbox
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: sandbox
+          provenance: false
+          sbom: false
+          outputs: type=image,name=${{ env.REGISTRY }}/postly-sandbox,push-by-digest=true,name-canonical=true,push=true
+          cache-from: |
+            type=gha,scope=postly-sandbox
+            type=gha,scope=postly
+          cache-to: type=gha,mode=max,scope=postly-sandbox
+      - name: Image checks (non-root, no test or playground code, local stack on the simulators)
+        if: steps.existing.outputs.found != 'true'
+        run: scripts/check-image.sh postly:ci
+        env:
+          COMPOSE_BAKE: "false"
+      # Tags are immutable in the repository: tree-<key> is added once, to a checked image, and never moves.
+      - name: Tag the checked images (tree-<key> and the commit)
+        if: steps.existing.outputs.found != 'true'
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SANDBOX_DIGEST: ${{ steps.sandbox.outputs.digest }}
+        run: |
+          test -n "$DIGEST" && test -n "$SANDBOX_DIGEST"
+          # Idempotent, for a re-run after a partial tagging: a tag that exists already stays put.
+          tag() { gcloud artifacts docker images describe "$2" > /dev/null 2>&1 || gcloud artifacts docker tags add "$1" "$2" --quiet; }
+          for t in "tree-$KEY" "$GITHUB_SHA"; do
+            tag "$REGISTRY/postly@$DIGEST" "$REGISTRY/postly:$t"
+            tag "$REGISTRY/postly-sandbox@$SANDBOX_DIGEST" "$REGISTRY/postly-sandbox:$t"
+          done
+      # A reused image also gets this commit's tag, so every dev commit can be traced to its image.
+      - name: Tag the reused images with the commit
+        if: steps.existing.outputs.found == 'true'
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          for name in postly postly-sandbox; do
+            if ! gcloud artifacts docker images describe "$REGISTRY/$name:$GITHUB_SHA" > /dev/null 2>&1; then
+              gcloud artifacts docker tags add "$REGISTRY/$name:tree-$KEY" "$REGISTRY/$name:$GITHUB_SHA" --quiet
+            fi
+          done
+
   deploy:
     # Skip (not fail) until Terraform configured this environment. A job-level `if` cannot read the
     # environment's own variables (GCP_PROJECT_ID lives there), so modules/github_environment also
     # sets a repository variable POSTLY_DEPLOY_<ENV> = "true" (docs/deployment.md, CI).
-    # On a push it also needs the gate above: CI and Infra passed and the commit is still the head.
-    needs: [current]
+    # On a push it also needs the gate above (CI and Infra passed, the commit is still the head) and,
+    # on dev, the image job.
+    needs: [current, image]
     if: >-
       !cancelled() &&
-      (github.event_name == 'workflow_dispatch' || needs.current.outputs.head == 'true') &&
+      (github.event_name == 'workflow_dispatch' ||
+      (needs.current.outputs.head == 'true' && (github.ref_name != 'dev' || needs.image.result == 'success'))) &&
       ((github.ref_name == 'dev' && vars.POSTLY_DEPLOY_DEV == 'true') ||
       (github.ref_name == 'stage' && vars.POSTLY_DEPLOY_STAGE == 'true') ||
       (github.ref_name == 'main' && vars.POSTLY_DEPLOY_PROD == 'true'))
@@ -92,50 +216,78 @@ jobs:
       REGION: ${{ vars.GCP_REGION }}
       WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      REGISTRY: ${{ vars.GCP_IMAGE_REPOSITORY }}
+      REQUESTED: ${{ inputs.image_tag || github.sha }}
     steps:
       - name: Refuse to run before Terraform configured the environment
         run: |
           case "$ENV_NAME" in dev|stage|prod) ;; *) echo "::error::no environment for ref ${GITHUB_REF_NAME}"; exit 1;; esac
-          for v in PROJECT_ID REGION WIF_PROVIDER DEPLOY_SA; do
+          for v in PROJECT_ID REGION WIF_PROVIDER DEPLOY_SA REGISTRY; do
             if [ -z "${!v}" ]; then echo "::error::$v is not set for environment $ENV_NAME"; exit 1; fi
           done
           echo "PREFIX=postly-$ENV_NAME" >> "$GITHUB_ENV"
-          echo "IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/postly-$ENV_NAME/postly:$IMAGE_TAG" >> "$GITHUB_ENV"
-          echo "SANDBOX_IMAGE=$REGION-docker.pkg.dev/$PROJECT_ID/postly-$ENV_NAME/postly-sandbox:$IMAGE_TAG" >> "$GITHUB_ENV"
+      # The full history, so a dispatch can name any commit and get its image key.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
       - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-      - name: Build and push the image (once per run)
+      # Never builds. A push deploys tree-<key> of its commit; a dispatch takes an existing tag, or a
+      # commit whose tree-<key> it looks up. The rollout names the digest, not the tag.
+      - name: Find the image to deploy (by digest)
+        run: |
+          digest() { gcloud artifacts docker images describe "$REGISTRY/$1:$2" --format='value(image_summary.digest)' 2>/dev/null || true; }
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -n "$(digest postly "$REQUESTED")" ]; then
+            tag="$REQUESTED"
+          elif key="$(scripts/image-key.sh "$REQUESTED")"; then
+            tag="tree-$key"
+          else
+            echo "::error::$REQUESTED is neither an image tag nor a commit of this repository"; exit 1
+          fi
+          d="$(digest postly "$tag")"
+          if [ -z "$d" ]; then
+            echo "::error::no image postly:$tag in $REGISTRY. Only a push to dev builds; promote only a tree dev built (docs/deployment.md, CI)."
+            exit 1
+          fi
+          echo "IMAGE=$REGISTRY/postly@$d" >> "$GITHUB_ENV"
+          if [ "$ENV_NAME" = dev ]; then
+            sd="$(digest postly-sandbox "$tag")"
+            if [ -z "$sd" ]; then echo "::error::no image postly-sandbox:$tag in $REGISTRY"; exit 1; fi
+            echo "SANDBOX_IMAGE=$REGISTRY/postly-sandbox@$sd" >> "$GITHUB_ENV"
+          fi
+          echo "$ENV_NAME: $REQUESTED → postly:$tag = $REGISTRY/postly@$d" | tee -a "$GITHUB_STEP_SUMMARY"
+      # A push whose image every service already runs (a docs-only or infra-only commit) has nothing
+      # to roll out: the migrations are the image's, and they ran when it was deployed. A dispatch
+      # always rolls out.
+      - name: Skip the rollout when every service already runs this digest
+        id: live
         if: github.event_name == 'push'
         run: |
-          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-      # The dev sandbox (WP-51) has its own image and exists only in dev; stage and prod never build it.
-      - name: Build and push the sandbox image (dev only)
-        if: github.event_name == 'push' && env.ENV_NAME == 'dev'
-        run: |
-          docker build -f Dockerfile.sandbox -t "$SANDBOX_IMAGE" .
-          docker push "$SANDBOX_IMAGE"
-      - name: Check the image to redeploy exists
-        if: github.event_name == 'workflow_dispatch'
-        run: gcloud artifacts docker images describe "$IMAGE" --quiet > /dev/null
+          svc() { gcloud run services describe "$PREFIX-$1" --region "$REGION" --format='value(spec.template.spec.containers[0].image)'; }
+          live=true
+          for s in web worker console; do [ "$(svc "$s")" = "$IMAGE" ] || live=false; done
+          job="$(gcloud run jobs describe "$PREFIX-migrate" --region "$REGION" --format='value(spec.template.spec.template.spec.containers[0].image)' || true)"
+          [ "$job" = "$IMAGE" ] || live=false
+          if [ "$ENV_NAME" = dev ] && [ "$(svc sandbox)" != "$SANDBOX_IMAGE" ]; then live=false; fi
+          if [ "$live" = true ]; then echo "::notice::$ENV_NAME already runs $IMAGE; nothing to roll out"; fi
+          echo "live=$live" >> "$GITHUB_OUTPUT"
       - name: Run the migration job (migrations first, then code)
+        if: steps.live.outputs.live != 'true'
         run: |
           gcloud run jobs update "$PREFIX-migrate" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run jobs execute "$PREFIX-migrate" --region "$REGION" --wait
       - name: Roll out the worker, the console, then the web
+        if: steps.live.outputs.live != 'true'
         run: |
           gcloud run deploy "$PREFIX-worker" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-console" --region "$REGION" --image "$IMAGE" --quiet
           gcloud run deploy "$PREFIX-web" --region "$REGION" --image "$IMAGE" --quiet
+      # The dev sandbox (WP-51) exists only in dev; stage and prod never deploy it.
       - name: Roll out the sandbox (dev only)
-        if: github.event_name == 'push' && env.ENV_NAME == 'dev'
+        if: steps.live.outputs.live != 'true' && env.ENV_NAME == 'dev'
         run: gcloud run deploy "$PREFIX-sandbox" --region "$REGION" --image "$SANDBOX_IMAGE" --quiet
       - name: Smoke check
         run: |

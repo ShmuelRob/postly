@@ -7,7 +7,7 @@ import { createPostgresSimulatorStore } from '../../src/db/index.js';
 import { createSandbox } from './sandbox.js';
 
 // The dev sandbox service (WP-51, docs/deployment.md "The sandbox"), from its own image
-// (Dockerfile.sandbox), never the product image. loadConfig refuses the simulators outside local,
+// (the Dockerfile's `sandbox` target), never the product image. loadConfig refuses the simulators outside local,
 // test and dev; the sandbox also refuses to start anywhere but dev or local, and only on the shared
 // Postgres store, since an in-memory store would show nothing the web service did.
 

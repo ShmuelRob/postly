@@ -32,10 +32,16 @@ provider "github" {
 }
 
 module "postly" {
-  source            = "../../modules/stack"
-  project_id        = var.project_id
-  region            = var.region
-  env_name          = "prod"
+  source     = "../../modules/stack"
+  project_id = var.project_id
+  region     = var.region
+  env_name   = "prod"
+  # The shared repository in dev's project (docs/deployment.md, CI): read only, never pushed to from here.
+  image_registry = {
+    project_id    = var.image_registry_project
+    location      = coalesce(var.image_registry_location, var.region)
+    repository_id = "postly"
+  }
   public_base_url   = var.public_base_url
   app_metric_alerts = var.app_metric_alerts
   business_number   = var.business_number
@@ -64,6 +70,7 @@ module "github" {
     GCP_REGION                     = var.region
     GCP_WORKLOAD_IDENTITY_PROVIDER = module.postly.workload_identity_provider
     GCP_DEPLOY_SERVICE_ACCOUNT     = module.postly.deploy_service_account
+    GCP_IMAGE_REPOSITORY           = module.postly.image_repository
   }
 }
 

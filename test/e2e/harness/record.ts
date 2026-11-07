@@ -94,4 +94,4 @@ export function emptyRecord(): E2eRecord {
 }
 
 // The vitest TaskMeta augmentation for `e2e` lives in ./task-meta.ts, so this file stays free of
-// test-only modules: the dev sandbox image compiles it without vitest installed (Dockerfile.sandbox).
+// test-only modules: the dev sandbox image compiles it without vitest installed (the Dockerfile's sandbox target).

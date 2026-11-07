@@ -1,9 +1,18 @@
 # No real values are committed. Copy terraform.tfvars.example to terraform.tfvars (git-ignored).
-# Only project_id, business_number and alert_email need a value; the rest have defaults.
+# Only project_id, business_number, alert_email and image_registry_project need a value; the rest have defaults.
 
 variable "project_id" {
   description = "The GCP project for this environment."
   type        = string
+}
+variable "image_registry_project" {
+  description = "Dev's project, which holds the shared image repository `postly` (the dev root's image_registry output)."
+  type        = string
+}
+variable "image_registry_location" {
+  description = "The shared image repository's location; null is this environment's region (me-west1 everywhere today)."
+  type        = string
+  default     = null
 }
 variable "business_number" {
   description = "Postly's WhatsApp number for this environment (a test number)."

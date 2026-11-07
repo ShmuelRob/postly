@@ -1,83 +1,54 @@
 name: Infra
 
-# Builds the production image and checks the Terraform on pushes to dev, stage and main, and on PRs
-# that touch them (the image: anything but docs and infra/; the Terraform: infra/). It never pushes an
-# image, never authenticates to Google Cloud and never plans or applies (docs/deployment.md). On a
-# push it runs inside Deploy (`workflow_call`), which deploys only after it passed for that commit.
+# Checks the images and the Terraform on PRs that touch them (the image: anything but docs, infra/
+# and top-level Markdown; the Terraform: infra/), and the Terraform on pushes to dev, stage and main
+# (inside Deploy, `workflow_call`, which deploys only after it passed for that commit). It never
+# pushes an image, never authenticates to Google Cloud and never plans or applies (docs/deployment.md).
+# On a push Deploy passes `image: false`: its own `image` job builds the image once, runs the same
+# checks (scripts/check-image.sh) on it, and pushes it, so a push run builds it once, not twice.
 
 on:
   pull_request:
   workflow_call:
-
-permissions:
-  contents: read
-
-# As in ci.yml: PR runs cancel older ones; a push's run (inside Deploy) is never cancelled.
-concurrency:
-  group: infra-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.diff.outputs.image }}
-      terraform: ${{ steps.diff.outputs.terraform }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-      - id: diff
-        run: |
-          if [ "${{ github.event_name }}" != pull_request ]; then
-            echo image=true >> "$GITHUB_OUTPUT"; echo terraform=true >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)
-          echo "$files"
-          echo "image=$(echo "$files" | grep -qvE '^(infra/|docs/|[^/]+\.md$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "terraform=$(echo "$files" | grep -qE '^(infra/|\.github/workflows/infra\.yml$)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-  image:
+    inputs:
+      image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      # One Dockerfile, two targets. The gha cache scopes are the ones Deploy's image job writes on
+      # dev, so a PR to dev starts from dev's last build (a PR's own cache is readable only by that PR).
       - name: Build the image (not pushed)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
+          target: runtime
           push: false
           load: true
+          provenance: false
           tags: postly:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=postly
+            type=gha,scope=postly-sandbox
+          cache-to: type=gha,mode=max,scope=postly
       - name: Build the dev sandbox image (not pushed)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Dockerfile.sandbox
+          target: sandbox
           push: false
+          provenance: false
           tags: postly-sandbox:ci
-          cache-from: type=gha,scope=sandbox
-          cache-to: type=gha,mode=max,scope=sandbox
-      - name: Image runs as non-root and holds no test or playground code
-        run: |
-          test "$(docker run --rm --entrypoint id postly:ci -u)" != "0"
-          ! docker run --rm --entrypoint sh postly:ci -c 'find dist -name "*.test.*" -o -name playground | grep -q .'
-          ! docker run --rm --entrypoint sh postly:ci -c 'test -d node_modules/vitest'
-      - name: Local stack on the simulators (migrate, web, worker)
-        run: |
-          docker compose -p ci up -d
-          for i in $(seq 1 40); do curl -fsS localhost:8080/healthz && break; sleep 3; done
-          curl -fsS localhost:8080/healthz
-          docker compose -p ci exec -T postgres psql -U postgres -d postly -tAc "select policy from pgboss.queue where name = 'weekly-update-tick'" | grep -qx singleton
+          cache-from: |
+            type=gha,scope=postly-sandbox
+            type=gha,scope=postly
+          cache-to: type=gha,mode=max,scope=postly-sandbox
+      - name: Image checks (non-root, no test or playground code, local stack on the simulators)
+        run: scripts/check-image.sh postly:ci
         env:
           COMPOSE_BAKE: "false"
-      - name: Stack logs
-        if: always()
-        run: docker compose -p ci logs --no-color || true
 
   terraform:
     needs: changes
