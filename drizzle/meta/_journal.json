@@ -183,6 +183,13 @@
       "when": 1794614408000,
       "tag": "0025_console_action",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794614409000,
+      "tag": "0026_agent_onboarding_batches",
+      "breakpoints": true
     }
   ]
 }

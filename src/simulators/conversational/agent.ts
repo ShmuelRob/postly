@@ -16,12 +16,12 @@ import { playgroundPlanning } from './weekly.js';
  *
  * The runtime rebuilds the context before each step and `toolResults` holds every result of the
  * turn so far, so each rule reads what this turn already did from `toolResults` (which tools ran,
- * and the ids they returned) and the rest from the current context. A step has at most four calls;
+ * and the ids they returned) and the rest from the current context. A step has at most twelve calls;
  * with nothing left to do the agent ends the turn.
  */
 export function playgroundAgent(context: AgentContext): AgentStep {
   const calls = context.agent === 'onboarding' ? onboarding(context) : context.agent === 'weekly' ? weekly(context) : drafts(context);
-  return { calls: calls.length ? calls.slice(0, 4) : [{ tool: 'end_turn' }], confidence: 0.9 };
+  return { calls: calls.length ? calls.slice(0, MAX_CALLS) : [{ tool: 'end_turn' }], confidence: 0.9 };
 }
 
 type Tool = AgentToolCall['tool'];
@@ -33,6 +33,13 @@ const okData = (c: AgentContext, tool: Tool) =>
 const waiting = (c: AgentContext) => ran(c, 'request_photo') || c.toolResults.some((r) => r.tool === 'ask_owner');
 
 const ownerMessages = (c: AgentContext) => c.messages.filter((m) => m.role === 'owner');
+/** The owner's messages since Postly's last one, joined: one answer the quiet window may have split. */
+const latestBurst = (c: AgentContext) => {
+  const lastPostly = c.messages.map((m) => m.role).lastIndexOf('postly');
+  return c.messages.slice(lastPostly + 1).filter((m) => m.role === 'owner').map((m) => m.text.trim()).filter(Boolean).join('\n');
+};
+/** At most this many calls a step (AgentStep, agent.md A11). */
+const MAX_CALLS = 12;
 const latestOwner = (c: AgentContext) => ownerMessages(c).at(-1);
 const ownerPhotos = (c: AgentContext) => ownerMessages(c).flatMap((m) => m.photos.map((p) => p.assetId));
 const ask = (text: string, topic: string, fields?: string[]): AgentToolCall => ({
@@ -59,24 +66,32 @@ function onboarding(c: AgentContext): AgentToolCall[] {
   if (c.step === 'brand_assets') return brandAssets(c);
   if (c.step !== 'profile_questions') return [];
 
-  const answer = latestOwner(c)?.text.trim() ?? '';
+  // The owner's whole answer: every message since Postly's last one (the quiet window may split it).
+  const answer = latestBurst(c);
   const asked = c.openQuestion?.askedFields ?? [];
   // The answer is read once per turn: the first step sets the fields, later steps only ask.
   const sets = !ran(c, 'set_profile_field') && answer && asked.length ? profileCalls(answer, asked) : [];
-  if (sets.length > 3) return sets;
+  if (sets.length > MAX_CALLS - 1) return sets.slice(0, MAX_CALLS);
 
   // Fields set this turn may not be in a rebuilt context yet; never ask for them again.
   const setNow = new Set(sets.map((s) => (s.tool === 'set_profile_field' ? s.field.split('.')[0] : '')));
   const answered = ran(c, 'set_profile_field') ? new Set(asked) : new Set<string>();
   const missing = c.missingFields.filter((f) => !setNow.has(f) && !answered.has(f));
 
+  // Batch A's answer (agent.md, A11): the follow-ups on batch A, or a thank-you; code appends batch B.
+  if (c.openQuestion?.key === 'batch:a') {
+    const followUp = GROUPS.slice(0, 2).find((g) => g.fields.some((f) => missing.includes(f)));
+    const fields = followUp ? followUp.fields.filter((f) => missing.includes(f)) : [];
+    return [...sets, ask(followUp ? `תודה! ועוד פרט קטן: ${followUp.question}` : 'תודה רבה, רשמתי!', followUp ? `profile:${fields[0]}` : 'info', fields)];
+  }
+
+  // After batch B: only what is still missing; with nothing missing the turn ends and code moves on.
   const next = GROUPS.find((g) => g.fields.some((f) => missing.includes(f)));
   if (next) {
     const fields = next.fields.filter((f) => missing.includes(f) || f === 'targetAudience');
     const topic = fields.find((f) => missing.includes(f)) ?? fields[0];
     return [...sets, ask(next.question, `profile:${topic}`, fields)];
   }
-  if (c.openQuestion?.key !== 'anything_else') return [...sets, ask(ANYTHING_ELSE, 'anything_else')];
   return sets;
 }
 

@@ -264,7 +264,8 @@ export type AgentToolCall = z.infer<typeof AgentToolCall>;
 
 /** The output of every agent task: the tool calls to run in order, and a confidence. */
 export const AgentStep = z.object({
-  calls: z.array(AgentToolCall).min(1).max(4),
+  // 1 to 12 calls (agent.md, A11: batch A's seven fields and the question fit one step).
+  calls: z.array(AgentToolCall).min(1).max(12),
   confidence: z.number().min(0).max(1),
 });
 export type AgentStep = z.infer<typeof AgentStep>;

@@ -10,7 +10,7 @@ import { OpenQuestion } from '../../contracts/open-question.js';
 import type { SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import type { Agent, TurnResult } from '../agent/index.js';
+import { type Agent, onboardingBatches, type TurnResult } from '../agent/index.js';
 import * as copy from './onboarding-copy.js';
 import type { Workflow } from './workflow.js';
 
@@ -366,7 +366,10 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         if (!sent.ok) return;
         await reply(burst, copy.intro(persona));
         if (deps.agent) {
-          return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent'), MUST_REPLY));
+          // Batched onboarding (agent.md, A11): batch A goes out by code, with no model call; the
+          // agent's first turn reads the owner's answer to it.
+          await ask(burst, onboardingBatches.aKey, onboardingBatches.a, null, onboardingBatches.aFields);
+          return;
         }
         return askNextProfileQuestion(burst, draft, null);
       }

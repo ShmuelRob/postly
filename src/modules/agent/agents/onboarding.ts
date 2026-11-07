@@ -40,8 +40,9 @@ export const missingFromQuestions = (profile: unknown) =>
   missingRequiredProfileFields((profile ?? {}) as Record<string, unknown>).filter((f) => f !== 'style' && f !== 'approverPhone');
 
 /**
- * The done rules (agent.md, Agents): profile_questions when no required field is missing and the
- * closing "anything else?" was asked in an earlier turn (so this turn read its answer) or declined;
+ * The done rules (agent.md, Agents): profile_questions when no required field is missing and, in an
+ * earlier turn (so this turn read its answer), batch B (A11, which carries the closing question) or the
+ * closing "anything else?" was asked, or the owner declined;
  * brand_assets when the logo and the business photos each came as an image or were declined;
  * profile_review when this turn saved a correction.
  */
@@ -56,7 +57,14 @@ export async function onboardingDone(db: Database, businessId: string, turnId: s
   switch (step) {
     case 'profile_questions': {
       if (missingFromQuestions(profile).length > 0) return false;
-      const askedBefore = calls.some((c) => ok(c) && c.turnId !== turnId && c.call.tool === 'ask_owner' && c.call.topic === 'anything_else' && c.call.expects === 'answer');
+      const askedBefore = calls.some(
+        (c) =>
+          ok(c) &&
+          c.turnId !== turnId &&
+          c.call.tool === 'ask_owner' &&
+          c.call.expects === 'answer' &&
+          (c.call.topic === 'anything_else' || (c.result.status === 'ok' && c.result.data.batchB === true)),
+      );
       return askedBefore || declined(calls, 'anything_else');
     }
     case 'brand_assets': {
@@ -78,7 +86,7 @@ export const onboardingAgent: AgentDefinition = {
   task: 'agent_onboarding',
   tools: ['ask_owner', 'set_profile_field', 'request_photo', 'record_decline', 'hand_off_to_console', 'end_turn'],
   doneRule:
-    'profile_questions: every required field (name, field, mainProducts, location, differentiator, channels) is set, and you asked "anything else customers should know?" once and read the answer, or the owner declined. ' +
+    'profile_questions: every required field (name, field, mainProducts, location, differentiator, channels) is set, and the owner answered batch B (code appends it to your first question after batch A; it ends with "anything else customers should know?"), or the owner declined. ' +
     'brand_assets: the logo arrived as an image or the owner declined it, and business photos arrived or the owner declined them. ' +
     'profile_review: you saved the correction the owner asked for.',
   isDone: ({ db, businessId, turnId }) => onboardingDone(db, businessId, turnId),

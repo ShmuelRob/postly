@@ -6,7 +6,7 @@ Postly's onboarding, weekly data gathering and post creation move from fixed one
 
 ## Decisions
 
-Decided by the human on 2026-11-05. The budget values (A4) and the model (A8) are configuration, so they change without a code change.
+Decided by the human on 2026-11-05 (A11 on 2026-11-07). The budget values (A4) and the model (A8) are configuration, so they change without a code change.
 
 | # | Question | Decision (2026-11-05) |
 | --- | --- | --- |
@@ -20,6 +20,7 @@ Decided by the human on 2026-11-05. The budget values (A4) and the model (A8) ar
 | A8 | **Model per agent** | Gemini **3.5 Flash-Lite** (`gemini-3.5-flash-lite`) for all three agent tasks, set in `model_task_config`, with thinking at `MEDIUM`. Was `gemini-2.5-flash-lite` until Vertex retired it on 2026-10-20; moved on 2026-11-06 (`drizzle/0023_gemini_3_5_flash_lite.sql`, [Running on dev](#running-on-dev)) |
 | A9 | **Retiring the one-shot tasks** | `profile_extraction`, `fact_extraction`, `weekly_planning`, `caption_writing` and `change_interpretation` are no longer reachable in any deployed environment: since 2026-11-06 the agents always run, with no `agent_flows` switch ([Running on dev](#running-on-dev)). The one-shot code stays only for the tests and the local playground that drive it (`oneShotFlows`), until a cleanup package removes it with those tests |
 | A10 | **Conversation history the model sees** | The last 20 messages of the conversation within 14 days, plus the current week's update; older context only through the profile, the preference rules and the post history summary |
+| A11 | **Batched onboarding questions** | Decided by the human on 2026-11-07, to cut the model round trips the owner waits for. Code sends the first half of the profile questions, **batch A**, in one fixed message right after the intro, with no model call. The owner answers freely, over one message or several (the quiet window merges them). **One model step** then saves every field it finds and asks, in one message, its follow-ups on batch A, to which code appends **batch B**, the other half. **One more model step** saves batch B and the follow-ups; then brand assets, style, summary and approval go on as before ([Batched onboarding](#batched-onboarding-a11)) |
 
 **Follow-up (A8, A10).** If 3.5 Flash-Lite proves too weak in the manual eval (WP-96) or in dev use, revisit the history size, the model, or both; the trigger and the comparison to run are in [implementation-plan.md](implementation-plan.md#phase-7-the-agent) (WP-97).
 
@@ -48,7 +49,7 @@ Three agents share one runtime and one tool framework. Each is a model task with
 
 | Agent | Model task | Runs while | Allowed tools | Done when (code decides) |
 | --- | --- | --- | --- | --- |
-| Onboarding | `agent_onboarding` | Onboarding steps `profile_questions` and `brand_assets`, and corrections in `profile_review` | `ask_owner`, `set_profile_field`, `request_photo`, `record_decline`, `hand_off_to_console`, `end_turn` | `profile_questions`: `missingRequiredProfileFields` is empty (except `style`) and the agent has asked the closing question "anything else customers should know?" once, or the owner declined. `brand_assets`: the logo request and the business-photo request are each answered by an image or a recorded decline |
+| Onboarding | `agent_onboarding` | Onboarding steps `profile_questions` and `brand_assets`, and corrections in `profile_review` | `ask_owner`, `set_profile_field`, `request_photo`, `record_decline`, `hand_off_to_console`, `end_turn` | `profile_questions`: `missingRequiredProfileFields` is empty (except `style`) and, in an earlier turn, batch B (which carries the closing question "anything else customers should know?", A11) or that question was asked, or the owner declined. `brand_assets`: the logo request and the business-photo request are each answered by an image or a recorded decline |
 | Weekly update | `agent_weekly` | Conversation `processing_update` and `awaiting_answer`, week `received` | `ask_owner`, `record_fact`, `request_photo`, `record_decline`, `plan_posts`, `set_profile_field` (A7), `hand_off_to_console`, `end_turn` | A plan passed the [plan checks](#tools); every fact a planned post depends on is recorded or declined. Code then applies `FACTS_EXTRACTED` |
 | Drafts | `agent_drafts` | Posts `drafting`; conversation `processing_update`, both after the plan and after a change (see [Fixes](#how-it-fits-the-state-machines)) | `create_draft`, `apply_change`, `ask_owner`, `request_photo`, `plan_posts` (revise only), `record_decline`, `hand_off_to_console`, `end_turn` | Every post of the week is `awaiting_approval`, `awaiting_clarification` or `needs_review`; code then applies `DRAFTS_SENT` |
 
@@ -62,13 +63,13 @@ A **turn** is one run of one agent for one business, triggered by a claimed inbo
 
 1. **Lock.** The turn takes the business's `conversation_state` row (`for update` in a short transaction that inserts the turn's `agent_turn` row as `running`), so at most one turn runs per business: a second trigger that finds a `running` turn younger than twice the turn timeout runs nothing (the burst stays unprocessed and the sweep hands it over again). An older `running` turn is a crashed one; it is closed as `failed` and the new turn starts.
 2. **Context.** Code builds the agent's input from this business only ([Context](#context)).
-3. **Step.** The model layer runs the agent's task. Its output is an `AgentStep`: one to four tool calls and a `confidence` (0 to 1). The output is Zod-validated like every model task; an invalid output retries within `model_task_config.max_retries` and then routes to the console.
+3. **Step.** The model layer runs the agent's task. Its output is an `AgentStep`: one to twelve tool calls (four until A11) and a `confidence` (0 to 1). The output is Zod-validated like every model task; an invalid output retries within `model_task_config.max_retries` and then routes to the console.
 4. **Execute.** Code runs the step's tool calls in order. Each call is checked (allowed for this agent and state, input schema, the tool's code checks) and then applied through the module that owns the data, in that module's transaction and role. A refused call stops the step: the later calls in it are skipped, and the refusal reason goes back to the agent.
 5. **Decide.** After each step code evaluates the agent's "done" rule and applies the state machine event when it holds. The turn ends when the agent is done, when a call that waits for the owner (`ask_owner` expecting an answer, `request_photo`) was sent, on `end_turn`, on `hand_off_to_console`, or at a limit.
 6. **Loop.** Otherwise the tool results are appended to the context and the next step runs.
 7. **Record.** The `agent_turn` row gets the stop reason, the steps (tool calls and results), the total cost and duration; every model call of the turn is a `model_run` with the turn's id.
 
-**No silent turn (2026-11-07).** On dev on 2026-11-06 an owner's last message got no reply: the onboarding turn ended with `end_turn` and sent nothing, the runtime did not evaluate the done rule after `end_turn` (although its tool rule, [end_turn](#tools), says it does), and the onboarding flow acts only on `done`. So: after `end_turn` code evaluates the done rule, and the turn ends `done` when it holds. And a flow whose owner waits on a turn, with no code reply after it unless it ends done, runs the turn with `mustReply` (onboarding `profile_questions` and `brand_assets`, the turn after the intro, and the weekly agent): such a turn that ends with `end_turn`, not done, with no message sent by its tools, hands off like a limit (the fixed line, the handoff flag, an `agent_limit` console item with reason `silent_turn`, and the log line `agent turn ended silent`). Flows that reply in code after any turn (profile corrections, the drafts agent) do not pass it. When a turn fails before its context is read, the hand-off line goes to the approver's number read from the business. `TurnResult.messagesSent` counts the messages the turn's tools sent.
+**No silent turn (2026-11-07).** On dev on 2026-11-06 an owner's last message got no reply: the onboarding turn ended with `end_turn` and sent nothing, the runtime did not evaluate the done rule after `end_turn` (although its tool rule, [end_turn](#tools), says it does), and the onboarding flow acts only on `done`. So: after `end_turn` code evaluates the done rule, and the turn ends `done` when it holds. And a flow whose owner waits on a turn, with no code reply after it unless it ends done, runs the turn with `mustReply` (onboarding `profile_questions` and `brand_assets`, and the weekly agent): such a turn that ends with `end_turn`, not done, with no message sent by its tools, hands off like a limit (the fixed line, the handoff flag, an `agent_limit` console item with reason `silent_turn`, and the log line `agent turn ended silent`). Flows that reply in code after any turn (profile corrections, the drafts agent) do not pass it. When a turn fails before its context is read, the hand-off line goes to the approver's number read from the business. `TurnResult.messagesSent` counts the messages the turn's tools sent.
 
 A crash mid-turn leaves the turn `running`; the burst it came from is still unprocessed (its claim is a lease), so the sweep re-runs it as a new turn. Each tool call's effect is its own transaction and is recorded in the turn's `steps` right after it runs, so a re-run sees what the crashed turn already did (its recorded calls are in the context's history). A crash between a send and its record can repeat that one message once; WP-90 accepts this (messaging has no idempotency key for free-form sends) and the console shows both turns.
 
@@ -251,12 +252,39 @@ No fields. Ends the turn without waiting for anything (for example after an ackn
 
 Onboarding always runs on the agent (outside the one-shot test compositions, A9):
 
-- **intro** (code): the persona's intro, `onboardingCopy.intro(name)`: her name (A1: the business's `persona.agentName`, else `system_control.agent_name` for the language, else Postly / פוסטלי) and feminine Hebrew (A2). Then the first agent turn asks the first question.
-- **profile_questions**: each owner burst runs a turn. When the turn ends `done`, code applies `PROFILE_FIELDS_COMPLETE` (its usual guard) and starts a brand-assets turn at once, which asks for the logo.
+- **intro** (code): the persona's intro, `onboardingCopy.intro(name)`: her name (A1: the business's `persona.agentName`, else `system_control.agent_name` for the language, else Postly / פוסטלי) and feminine Hebrew (A2). Then code sends batch A of the profile questions with no model call ([Batched onboarding](#batched-onboarding-a11)).
+- **profile_questions**: each owner burst runs a turn; the first turn after batch A asks its follow-ups with batch B appended, and the next one finishes the fields ([Batched onboarding](#batched-onboarding-a11)). When the turn ends `done`, code applies `PROFILE_FIELDS_COMPLETE` (its usual guard) and starts a brand-assets turn at once, which asks for the logo.
 - **brand_assets**: an image answers the open photo request: for `photo_request:logo`, code sets `brand.logoAssetId` from the first image; other images join the open question's `photoAssetIds`. Then the turn runs; when it ends `done`, code applies `BRAND_ASSETS_DONE` and sends the style samples.
 - **profile_review**: the approval words still approve by code. Any other text runs a turn; `done` (a correction saved) applies `PROFILE_CORRECTED` and code resends the summary; a turn that ends without a change gets the "what to correct?" line; a question from the agent waits for the answer.
 - Every other step (style choice, approval, channels, activation, payment link) is code, unchanged. With the flow off, onboarding runs the fixed questions as before.
 - The agent's `questionAsked` event stores its open question on `conversation_state` (attempts counted per key), so a repeated topic still meets the three-attempt limit.
+
+### Batched onboarding (A11)
+
+Decided by the human on 2026-11-07 (A11): "the onboarding will ask half the questions like it did before, then llm will get the data, put in the right place, ask following questions and the rest of them, and then llm again". The owner waited about a minute for each reply of a question-by-question agent, so the profile questions now go in two batches and two model steps.
+
+**The split.** The PRD's profile questions ([PRD](../PRD.md#required-fields-and-defaults)) are the four question groups of the fixed flow ([technical-design.md](technical-design.md#onboarding-flow)); each batch takes two of them. Batch A holds the plain facts the owner knows by heart, one line each, all of them quote-checked; batch B holds the answers that take a moment's judgment, the publishing preferences, and the closing question.
+
+| Batch | Sent by | Asks | Fields |
+| --- | --- | --- | --- |
+| A | Code, the message after the intro, with no model call | The business name, its field and main products; the city and address; the opening hours; pickup and/or delivery | `name`, `field`, `mainProducts`, `location.city`, `location.address`, `location.hours`, `location.fulfillment` |
+| B | Code, appended to the agent's first question after batch A's answer, in the same message | Who the customers are; what makes the business different; Instagram, Facebook or both; publishing on Shabbat and holidays; "anything else customers should know?" | `targetAudience`, `differentiator`, `channels`, `schedule.publishOnShabbatAndHolidays` |
+
+The optional fields with defaults (tone, content types, formats, frequency, call to action, contact details, hashtags) are not asked: the agent saves one when the owner mentions it, and the profile summary shows the defaults for the owner to correct, as before.
+
+**The flow.**
+
+1. **Intro (code).** The persona's intro, then batch A (`agentCopy.batchA`, H6), and the open question `batch:a` with batch A's fields. The onboarding moves to `profile_questions` (`INTRO_SENT`) as before.
+2. **Batch A's answer: one model step.** The owner answers freely, in one message or several (the quiet window merges them into one burst). The turn's first step saves every field it finds with `set_profile_field` (also any batch B field the owner already gave) and asks one `ask_owner` with `expects: answer` whose text holds only the follow-ups on what is missing or vague in batch A, or a short thank-you line when nothing is. Code appends batch B (`agentCopy.batchB`, H6) to the first such question of the onboarding and sends both as one message; the open question's key becomes `batch:b` and its asked fields the agent's plus batch B's, and the call's result is `{ sent: true, batchB: true }`. The agent never writes batch B itself (H7).
+3. **Batch B's answer: one more model step.** The turn saves every field it finds. When a required field is still missing or vague, it asks one message with every follow-up (an ordinary `ask_owner`; the three-attempt limit per topic still applies); otherwise it ends the turn, the done rule passes, and code applies `PROFILE_FIELDS_COMPLETE` and starts the brand-assets turn, as before.
+
+**The done rule** of `profile_questions` becomes: no required field missing, and in an earlier turn batch B (which carries the closing question) or the "anything else?" question was asked, or the owner declined it.
+
+**What stays.** Code owns every step and every event; each field still passes `set_profile_field`'s quote and number checks, and each text the owner reads the owner-text checks (no number without a source); the batch-answer turns run with `mustReply` ([A turn](#a-turn), No silent turn). Brand assets, the style samples, the summary, corrections, approval, channels and activation are unchanged.
+
+**Step size (H1).** An `AgentStep` takes 1 to 12 tool calls (it was 1 to 4), so batch A's seven fields and the question fit in one step. The limits of a turn (24 tool calls, the cost caps) are unchanged.
+
+**Model calls.** In the common case the whole profile takes two agent steps, one per batch, where the question-by-question agent took a turn per question (five or six turns of one or two steps each).
 
 **Not yet with the onboarding agent:** a voice note's transcript does not reach the agent, because the context builder reads each message's text only (a runtime follow-up). With the flow on, a voice answer is seen as an empty message.
 

@@ -98,11 +98,11 @@ describe('persona (agent.md, A1 and A2)', () => {
 describe('AgentStep', () => {
   const step = (calls: unknown[], confidence = 0.9) => AgentStep.safeParse({ calls, confidence });
 
-  it('takes 1 to 4 tool calls and a confidence of 0 to 1', () => {
+  it('takes 1 to 12 tool calls (agent.md, A11) and a confidence of 0 to 1', () => {
     expect(step([{ tool: 'end_turn' }]).success).toBe(true);
     expect(step([]).success).toBe(false);
-    expect(step(Array(4).fill({ tool: 'end_turn' })).success).toBe(true);
-    expect(step(Array(5).fill({ tool: 'end_turn' })).success).toBe(false);
+    expect(step(Array(12).fill({ tool: 'end_turn' })).success).toBe(true);
+    expect(step(Array(13).fill({ tool: 'end_turn' })).success).toBe(false);
     expect(step([{ tool: 'end_turn' }], 1.1).success).toBe(false);
   });
 

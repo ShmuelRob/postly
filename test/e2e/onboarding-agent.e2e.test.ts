@@ -1,12 +1,14 @@
 /**
- * Onboarding through the agent (WP-92; PRD, How the agent works; agent.md). Onboarding always runs
- * on the agent (outside the one-shot test compositions): the onboarding agent asks the profile questions in its own
- * words, follows up on a vague answer, asks "anything else?", asks for the logo and photos, and
- * applies a correction; code decides when each step is done and runs the rest (style samples,
- * summary, approval by text, channel connection, activation, payment link). The agent is the scripted
- * agent (no real model): each turn below is what the model would answer, and every tool call still
- * goes through the real checks. Everything else is real except the vendors. Copy is provisional (H6),
- * the prompt is provisional (H7).
+ * Onboarding through the agent (WP-92; PRD, WhatsApp onboarding; agent.md, A11: batched onboarding).
+ * Onboarding always runs on the agent (outside the one-shot test compositions). Code sends the first
+ * half of the profile questions (batch A) right after the intro, with no model call. The owner answers
+ * over two messages, merged into one burst by the quiet window; one agent step saves every field it
+ * finds and asks its follow-up, and code appends batch B to that same message. One more step saves
+ * batch B and ends the turn; code sees the profile done and the agent asks for the logo and photos.
+ * Code runs the rest (style samples, summary, a correction through the agent, approval by text,
+ * channel connection, activation, payment link). The agent is the scripted agent (no real model): each
+ * turn below is what the model would answer, and every tool call still goes through the real checks.
+ * Copy is provisional (H6), the prompt is provisional (H7).
  */
 import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
@@ -19,6 +21,7 @@ import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
 import { BILLING_COPY } from '../../src/modules/billing/index.js';
 import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
+import { onboardingBatches } from '../../src/modules/agent/index.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
 import { buildServer } from '../../src/server.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
@@ -47,28 +50,22 @@ const svgPhoto = (file: string) => sharp(`fixtures/example-set/bakery/photos/${f
 // What the owner writes, and the agent's questions (the scripted model's answers; feminine Hebrew).
 const SAY = {
   hello: 'היי, נרשמתי לפוסטלי',
-  business: 'קוראים לנו מאפיית בן עמי, מאפייה שכונתית. אנחנו אופים חלות, בורקס ועוגות שמרים',
-  vague: 'אנחנו בחולון',
-  location: 'רחוב הרצל 12. פתוחים א׳-ה׳ 7:00-19:00 ושישי 7:00-14:00. רק איסוף עצמי',
-  different: 'הבצק שלנו תופח 24 שעות ואנחנו אופים כל בוקר מחדש. הלקוחות בעיקר משפחות מהשכונה',
-  channels: 'אינסטגרם ופייסבוק. בשבת לא מפרסמים',
-  nothingElse: 'לא, זה הכול',
+  // Batch A's answer, typed as two messages: one burst.
+  aboutUs: 'קוראים לנו מאפיית בן עמי, מאפייה שכונתית. אנחנו אופים חלות, בורקס ועוגות שמרים',
+  where: 'אנחנו בחולון, פתוחים א׳-ה׳ 7:00-19:00 ושישי 7:00-14:00. רק איסוף עצמי',
+  // The follow-up and batch B, in one answer.
+  batchB: 'רחוב הרצל 12. הלקוחות בעיקר משפחות מהשכונה. הבצק שלנו תופח 24 שעות ואנחנו אופים כל בוקר מחדש. אינסטגרם ופייסבוק, בשבת לא מפרסמים. זה הכול',
   correction: 'בשישי אנחנו סוגרים ב-13:00',
 };
 const ASK = {
-  business: 'נעים מאוד! איך קוראים לעסק, ומה אתם מוכרים?',
-  where: 'איפה המאפייה נמצאת? כתובת ושעות פתיחה, ואם יש איסוף עצמי או משלוחים',
-  address: 'ובאיזו כתובת בחולון? ומה שעות הפתיחה?',
-  different: 'מה מייחד את המאפייה שלכם, ומי הלקוחות?',
-  channels: 'באילו רשתות לפרסם: אינסטגרם, פייסבוק או שתיהן?',
-  anythingElse: 'יש עוד משהו שחשוב שהלקוחות ידעו?',
-  thanks: 'תודה, יש לי את כל מה שצריך!',
+  // The agent's follow-up on batch A; code appends batch B to it.
+  address: 'תודה! ובאיזו כתובת בחולון?',
   logo: 'יש לכם לוגו? שלחו אותו כאן כתמונה',
   photos: 'קיבלתי את הלוגו, תודה! עכשיו שלחו כמה תמונות של המאפייה או של המוצרים',
   samplesSoon: 'איזה יופי! אני מכינה לכם דוגמאות',
 };
 
-e2eTest('a new owner onboards through the agent: follow-up questions, brand assets and a correction, then activation', { timeout: 180_000 }, async ({ e2e }) => {
+e2eTest('a new owner onboards through the agent: batch A by code, two model steps for the whole profile, brand assets and a correction, then activation', { timeout: 180_000 }, async ({ e2e }) => {
   const storage = memoryStorage();
   const messagingSim = new MessagingSimulator({ businessNumber: BUSINESS_PHONE });
   const publishingSim = new PublishingSimulator();
@@ -78,44 +75,36 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   const photo = messagingSim.addMedia('image/jpeg', new Uint8Array(await svgPhoto('challah.svg')));
   await storage.put('bundled/sample.jpg', new Uint8Array(await svgPhoto('oven.svg')), 'image/jpeg');
 
-  // One entry per agent turn, in order.
+  // One entry per agent turn, in order. Batch A goes out by code, so no turn runs after the intro.
   modelSim.scriptAgent(
     'onboarding',
-    // After the intro: the first question.
-    [step(call.askOwner(ASK.business, { topic: 'profile:name' }))],
-    // Name, field and products, then the location question.
+    // Batch A's answer: ONE step saves every field found in the two messages and asks the one
+    // follow-up (the street); code appends batch B. The address waits, so the location is not saved yet.
     [
       step(
         call.setProfileField('name', 'מאפיית בן עמי', 'מאפיית בן עמי'),
         call.setProfileField('field', 'מאפייה שכונתית', 'מאפייה שכונתית'),
         call.setProfileField('mainProducts', ['חלות', 'בורקס', 'עוגות שמרים'], 'חלות, בורקס ועוגות שמרים'),
+        call.setProfileField('location.city', 'חולון', 'אנחנו בחולון'),
+        call.setProfileField('location.hours', 'א׳-ה׳ 7:00-19:00, שישי 7:00-14:00', 'פתוחים א׳-ה׳ 7:00-19:00 ושישי 7:00-14:00'),
+        call.setProfileField('location.fulfillment', ['pickup'], 'רק איסוף עצמי'),
+        call.askOwner(ASK.address, { topic: 'profile:location', fields: ['location'] }),
       ),
-      step(call.askOwner(ASK.where, { topic: 'profile:location' })),
     ],
-    // A vague answer: the city is kept, and one follow-up asks for the rest.
-    [step(call.setProfileField('location.city', 'חולון', 'בחולון')), step(call.askOwner(ASK.address, { topic: 'profile:location' }))],
-    // The rest of the location completes it; then what makes the business different.
+    // Batch B's answer with the follow-up: ONE step saves the rest and ends the turn; the done rule
+    // passes (every field set, batch B asked in the turn before), so code moves on to brand assets.
     [
       step(
         call.setProfileField('location.address', 'רחוב הרצל 12', 'רחוב הרצל 12'),
-        call.setProfileField('location.hours', 'א׳-ה׳ 7:00-19:00, שישי 7:00-14:00', 'פתוחים א׳-ה׳ 7:00-19:00 ושישי 7:00-14:00'),
-        call.setProfileField('location.fulfillment', ['pickup'], 'רק איסוף עצמי'),
-      ),
-      step(call.askOwner(ASK.different, { topic: 'profile:differentiator' })),
-    ],
-    [
-      step(
-        call.setProfileField('differentiator', 'בצק שתופח 24 שעות ואפייה טרייה כל בוקר', 'הבצק שלנו תופח 24 שעות ואנחנו אופים כל בוקר מחדש'),
         call.setProfileField('targetAudience', 'משפחות מהשכונה', 'משפחות מהשכונה'),
+        call.setProfileField('differentiator', 'בצק שתופח 24 שעות ואפייה טרייה כל בוקר', 'הבצק שלנו תופח 24 שעות ואנחנו אופים כל בוקר מחדש'),
+        call.setProfileField('channels', ['instagram', 'facebook'], 'אינסטגרם ופייסבוק'),
+        call.setProfileField('schedule.publishOnShabbatAndHolidays', false, 'בשבת לא מפרסמים'),
+        call.setProfileField('schedule.days', [], 'בשבת לא מפרסמים'),
+        call.setProfileField('schedule.hours', [], 'בשבת לא מפרסמים'),
+        call.endTurn(),
       ),
-      step(call.askOwner(ASK.channels, { topic: 'profile:channels' })),
     ],
-    // Channels: every required field is set, so the closing question.
-    [step(call.setProfileField('channels', ['instagram', 'facebook'])), step(call.askOwner(ASK.anythingElse, { topic: 'anything_else' }))],
-    // The answer to "anything else?": the agent only ends its turn, as the rule agent did on dev on
-    // 2026-11-06. Code still evaluates the done rule after end_turn (agent.md), so the owner is not
-    // left without a reply: the profile questions are done and brand assets start.
-    [step({ tool: 'end_turn' })],
     // brand_assets, started by code: the logo request.
     [step(call.requestPhoto('logo', ASK.logo))],
     // The logo arrived (code saved it): now the photos.
@@ -140,6 +129,8 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   await db.withSystem('console', (tx) => tx.update(schema.business).set({ approverPhone: `+9720${Date.now()}` }).where(eq(schema.business.approverPhone, OWNER)));
 
   let onboarding: ReturnType<typeof createApp>['onboarding'] | undefined;
+  let holding = false;
+  let flush: () => Promise<void> = async () => {};
   let record: (turn: AgentTurnReport) => void = () => {};
   const app: AppFactory = ({ messaging: messagingProvider, publishing, model, design: recordedDesign }) => {
     const postly = createApp({
@@ -153,13 +144,14 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
       onAgentTurnEnd: (turn) => record(turn as AgentTurnReport),
     });
     onboarding = postly.onboarding;
+    flush = () => postly.messaging.flushBursts();
     const server = buildServer({ messaging: postly.messaging, billing: postly.billing!, publicBaseUrl: 'https://postly.example.test' });
     return {
       async deliverInbound(message) {
         const hook = messagingSim.webhook(message);
         const res = await server.inject({ method: 'POST', url: WEBHOOK_PATH, headers: hook.headers, payload: hook.body });
         expect(res.statusCode).toBe(200);
-        await postly.messaging.flushBursts();
+        if (!holding) await postly.messaging.flushBursts();
       },
       close: async () => {
         await server.close();
@@ -175,26 +167,28 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   const said = () => run.owner.received().map((m) => m.text);
   const lastSaid = () => said().at(-1);
 
-  // 1. The persona introduces herself (feminine Hebrew), and the agent asks the first question.
+  // 1. The persona introduces herself (feminine Hebrew), and code sends batch A: no model call.
   await run.owner.sendsText(SAY.hello);
-  expect(said()).toEqual([copy.intro('פוסטלי'), ASK.business]);
+  expect(said()).toEqual([copy.intro('פוסטלי'), onboardingBatches.a]);
   expect(said()[0]).toContain('אני פוסטלי, סוכנת הסושיאל');
+  expect(modelSim.callsFor('agent_onboarding')).toHaveLength(0);
 
-  // 2. Answers are saved only from the owner's own words; a vague answer gets a follow-up.
-  await run.owner.sendsText(SAY.business);
-  expect(lastSaid()).toBe(ASK.where);
-  await run.owner.sendsText(SAY.vague);
-  expect(lastSaid()).toBe(ASK.address);
-  await run.owner.sendsText(SAY.location);
-  expect(lastSaid()).toBe(ASK.different);
-  await run.owner.sendsText(SAY.different);
-  expect(lastSaid()).toBe(ASK.channels);
-  await run.owner.sendsText(SAY.channels);
-  expect(lastSaid()).toBe(ASK.anythingElse);
+  // 2. The owner answers batch A in two messages, one burst. One model step saves what it can and
+  // asks the follow-up, and batch B comes in the same message.
+  holding = true;
+  await run.owner.sendsText(SAY.aboutUs);
+  await run.owner.sendsText(SAY.where);
+  holding = false;
+  await flush();
+  expect(said()).toHaveLength(3);
+  expect(lastSaid()).toBe(`${ASK.address}\n\n${onboardingBatches.b}`);
+  expect(modelSim.callsFor('agent_onboarding')).toHaveLength(1);
 
-  // 3. The closing question answered: code applies PROFILE_FIELDS_COMPLETE; the agent asks for the logo.
-  await run.owner.sendsText(SAY.nothingElse);
-  expect(said().slice(-2)).toEqual([ASK.anythingElse, ASK.logo]);
+  // 3. The follow-up and batch B answered at once: one more model step, then code applies
+  // PROFILE_FIELDS_COMPLETE and the agent asks for the logo.
+  await run.owner.sendsText(SAY.batchB);
+  expect(lastSaid()).toBe(ASK.logo);
+  expect(modelSim.callsFor('agent_onboarding')).toHaveLength(3);
 
   // 4. Brand assets: code stores the logo and the photo; then code sends the style samples.
   await run.owner.sendsImage(logo);
@@ -235,7 +229,9 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
     channels: ['instagram', 'facebook'],
     brand: { logoAssetId: expect.any(String) },
   });
-  expect(stored.turns).toHaveLength(11);
+  // Six turns of one model step each: two for the whole profile (A11), three for brand assets, one correction.
+  expect(stored.turns).toHaveLength(6);
+  expect(modelSim.callsFor('agent_onboarding')).toHaveLength(6);
   expect(stored.turns.every((t) => t.agent === 'onboarding' && t.status !== 'failed' && t.status !== 'handed_off')).toBe(true);
   expect(run.networkPosts()).toEqual([]);
 });

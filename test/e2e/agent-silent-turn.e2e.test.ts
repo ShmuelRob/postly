@@ -10,7 +10,7 @@ import { afterAll, expect, inject } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
-import { handOffLine } from '../../src/modules/agent/index.js';
+import { handOffLine, onboardingBatches } from '../../src/modules/agent/index.js';
 import { WEBHOOK_PATH } from '../../src/modules/messaging/index.js';
 import { onboardingCopy as copy } from '../../src/modules/workflow/index.js';
 import { buildServer } from '../../src/server.js';
@@ -20,7 +20,6 @@ import { call, providerFailure, step } from '../../src/simulators/scripted-agent
 import { e2eTest, type AppFactory, type E2eHarness, type Providers } from './harness/index.js';
 
 const BUSINESS_PHONE = '+972521111193';
-const FIRST_QUESTION = 'נעים מאוד! איך קוראים לעסק, ומה אתם מוכרים?';
 
 const db = createDatabase(inject('databaseUrls'), { max: 3 });
 afterAll(() => db.close());
@@ -83,18 +82,17 @@ e2eTest('a turn that ends without a word hands off: the owner reads the hand-off
   const { run, modelSim, items, handoffAt, said } = await start(e2e, '+972501230095', (model) =>
     model.scriptAgent(
       'onboarding',
-      // After the intro: the first question.
-      [step(call.askOwner(FIRST_QUESTION, { topic: 'profile:name' }))],
-      // The owner answers; the agent only ends its turn, as on dev on 2026-11-06: nothing saved, nothing asked.
+      // Batch A went out by code after the intro (A11). The owner answers; the agent only ends its
+      // turn, as on dev on 2026-11-06: nothing saved, nothing asked.
       [step(call.endTurn())],
     ),
   );
 
   await run.owner.sendsText('היי, נרשמתי לפוסטלי');
-  expect(said()).toEqual([copy.intro('פוסטלי'), FIRST_QUESTION]);
+  expect(said()).toEqual([copy.intro('פוסטלי'), onboardingBatches.a]);
 
   await run.owner.sendsText('קוראים לנו פרחי דנה');
-  expect(said()).toEqual([copy.intro('פוסטלי'), FIRST_QUESTION, handOffLine('פוסטלי', 'he')]);
+  expect(said()).toEqual([copy.intro('פוסטלי'), onboardingBatches.a, handOffLine('פוסטלי', 'he')]);
   expect(await handoffAt()).not.toBeNull();
   expect((await items()).map((i) => [i.kind, (i.details as { reason?: string }).reason])).toEqual([['agent_limit', 'silent_turn']]);
   expect(modelSim.agentScriptProblems()).toEqual([]);
@@ -104,7 +102,6 @@ e2eTest('a turn whose model call fails every attempt hands off with the line too
   const { run, items, handoffAt, said } = await start(e2e, '+972501230096', (model) =>
     model.scriptAgent(
       'onboarding',
-      [step(call.askOwner(FIRST_QUESTION, { topic: 'profile:name' }))],
       // Vertex down: three attempts (max_retries 2) all fail.
       [providerFailure('Vertex AI 503'), providerFailure('Vertex AI 503'), providerFailure('Vertex AI 503')],
     ),

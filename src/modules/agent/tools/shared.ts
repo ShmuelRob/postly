@@ -3,6 +3,7 @@ import type { AgentToolResult } from '../../../contracts/agent.js';
 import { WindowClosedError } from '../../../contracts/providers/messaging.js';
 import * as schema from '../../../db/schema.js';
 import { latestOwnerText, ownerTextProblem, quoteIn } from '../checks.js';
+import { onboardingBatches } from '../copy.js';
 import { handOff } from '../handoff.js';
 import type { ToolContext, ToolHandlers, ToolOutcome } from '../types.js';
 
@@ -29,14 +30,17 @@ async function postExists(ctx: ToolContext, postId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Checks a message for the owner and sends it; the turn's counters move only when it is sent. */
-async function sendToOwner(ctx: ToolContext, text: string, expectsAnswer: boolean): Promise<ToolOutcome | null> {
+/**
+ * Checks a message for the owner and sends it; the turn's counters move only when it is sent. `append`
+ * is fixed code copy added after the checked text (batch B, A11), so the checks see only the agent's words.
+ */
+async function sendToOwner(ctx: ToolContext, text: string, expectsAnswer: boolean, append?: string): Promise<ToolOutcome | null> {
   if (ctx.turn.messagesSent >= MAX_MESSAGES_PER_TURN) return refused('question_limit', 'at most two messages to the owner in one turn');
   if (expectsAnswer && ctx.turn.questionsAsked >= 1) return refused('question_limit', 'at most one question in one turn');
   const problem = ownerTextProblem(text, ctx.context);
   if (problem) return refused(problem.reason, problem.detail);
   try {
-    await ctx.deps.messaging.sendText(ctx.businessId, { to: ctx.approverPhone, text });
+    await ctx.deps.messaging.sendText(ctx.businessId, { to: ctx.approverPhone, text: append ? `${text}\n\n${append}` : text });
   } catch (error) {
     if (error instanceof WindowClosedError) return refused('window_closed', 'the owner has not written in 24 hours; only a template can go out');
     throw error;
@@ -52,9 +56,16 @@ export const sharedTools: ToolHandlers = {
     if (call.expects === 'answer' && asked >= ctx.limits.maxRepeatedQuestions) {
       return { ...refused('question_limit', `"${call.topic}" was already asked ${asked} times`), stop: 'stuck' };
     }
-    const problem = await sendToOwner(ctx, call.text, call.expects === 'answer');
+    // Batched onboarding (agent.md, A11): the question that answers batch A carries batch B, in one message.
+    const batchB = call.expects === 'answer' && ctx.agent === 'onboarding' && ctx.context.step === 'profile_questions' && ctx.context.openQuestion?.key === onboardingBatches.aKey;
+    const problem = await sendToOwner(ctx, call.text, call.expects === 'answer', batchB ? onboardingBatches.b : undefined);
     if (problem) return problem;
     if (call.expects === 'none') return ok({ sent: true });
+    if (batchB) {
+      const askedFields = [...new Set([...(call.fields ?? []), ...onboardingBatches.bFields])];
+      await ctx.deps.events.questionAsked(ctx.businessId, { agent: ctx.agent, key: onboardingBatches.bKey, askedFields });
+      return { ...ok({ sent: true, batchB: true }), stop: 'waiting_for_owner' };
+    }
     await ctx.deps.events.questionAsked(ctx.businessId, { agent: ctx.agent, key: call.topic, askedFields: call.fields ?? [] });
     return { ...ok({ sent: true }), stop: 'waiting_for_owner' };
   },
