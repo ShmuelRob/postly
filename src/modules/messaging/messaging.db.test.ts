@@ -5,6 +5,7 @@ import { WindowClosedError } from '../../contracts/providers/messaging.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { buildServer } from '../../server.js';
+import { setLogSink } from '../../shared/logger.js';
 import { MessagingSimulator } from '../../simulators/messaging.js';
 import { createMessaging, type InboundBurst, type Messaging, type Timers, WEBHOOK_PATH } from './index.js';
 
@@ -89,6 +90,31 @@ describe('messaging module', () => {
       ['text'],
       ['button_reply'],
     ]);
+  });
+
+  // docs/observability.md, Timing lines: received → claimed → handed over, per burst, without content.
+  it('logs each handed-over burst with its timings and message count, and none of its text', async () => {
+    let t = Date.now();
+    const { owner, sim, clock, messaging } = await setup({ now: () => new Date(t) });
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      await messaging.receive(sim.inboundText(owner, 'יש מבצע'));
+      t += 1_000;
+      await messaging.receive(sim.inboundText(owner, 'על חלות'));
+      t += 20_000;
+      clock.fire();
+      await expect.poll(() => lines.some((l) => l.includes('inbound burst handled'))).toBe(true);
+    } finally {
+      setLogSink(undefined);
+    }
+    const line = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.message === 'inbound burst handled');
+    expect(line).toMatchObject({ messageCount: 2, quietMs: 20_000, forced: false, outcome: 'ok' });
+    // Received at the first message; claimed one quiet window after the newest.
+    expect(line?.receivedToClaimMs).toBeGreaterThanOrEqual(21_000);
+    expect(line?.handlerMs).toEqual(expect.any(Number));
+    expect(line?.totalMs).toBeGreaterThanOrEqual(21_000);
+    expect(lines.join('\n')).not.toContain('חלות');
   });
 
   it('routes an unknown number to the console without replying or handing it over', async () => {

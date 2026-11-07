@@ -78,7 +78,7 @@ export function App() {
           </button>
         )}
       </header>
-      <Chat messages={state?.messages ?? []} ready={!!state} onSend={act} />
+      <Chat messages={state?.messages ?? []} ready={!!state} onSend={act} handoff={!!state?.conversation?.handoff} />
       <Feed feed={state?.feed} />
       <StatePanel
         state={state}
@@ -91,12 +91,17 @@ export function App() {
 
 type Send = (input: OwnerInput | Promise<OwnerInput>) => void;
 
-function Chat({ messages, ready, onSend }: { messages: ChatMessage[]; ready: boolean; onSend: Send }) {
+/** How long after the owner's last message the chat shows Postly typing, unless she answered or a person took over. */
+const TYPING_FOR_MS = 3 * 60 * 1000;
+
+function Chat({ messages, ready, onSend, handoff }: { messages: ChatMessage[]; ready: boolean; onSend: Send; handoff: boolean }) {
   const [text, setText] = useState('');
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages.length]);
+  const last = messages.at(-1);
+  const typing = !handoff && last?.direction === 'from_owner' && Date.now() - Date.parse(last.at) < TYPING_FOR_MS;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -138,6 +143,11 @@ function Chat({ messages, ready, onSend }: { messages: ChatMessage[]; ready: boo
             <time>{new Date(m.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</time>
           </div>
         ))}
+        {typing && (
+          <div className="bubble to_owner typing" data-testid="typing" aria-live="polite">
+            פוסטלי מקלידה…
+          </div>
+        )}
         <div ref={end} />
       </div>
       <form className="composer" onSubmit={submit}>

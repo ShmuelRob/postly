@@ -15,7 +15,7 @@ import { buildContext } from './context.js';
 import { handOff } from './handoff.js';
 import { loadLimits, localMidnight, localWeekStart, utcMidnight } from './limits.js';
 import { handlerFor } from './registry.js';
-import type { AgentDeps, AgentLimits, PastCall, ToolContext, ToolOutcome, TurnResult, TurnTrigger } from './types.js';
+import type { AgentDeps, AgentLimits, PastCall, RunTurnOptions, ToolContext, ToolOutcome, TurnResult, TurnTrigger } from './types.js';
 
 /** One recorded step of a turn: what the model asked for and what code answered (agent_turn.steps). */
 interface RecordedStep {
@@ -66,7 +66,7 @@ export interface Agent {
    * for a routed burst or a code event; returns `skipped` when another turn runs or a person handles
    * the conversation.
    */
-  runTurn(businessId: string, agent: AgentName, trigger: TurnTrigger): Promise<TurnResult>;
+  runTurn(businessId: string, agent: AgentName, trigger: TurnTrigger, options?: RunTurnOptions): Promise<TurnResult>;
 }
 
 export function createAgent(input: AgentDeps): Agent {
@@ -87,7 +87,7 @@ export function createAgent(input: AgentDeps): Agent {
   }
 
   return {
-    async runTurn(businessId, agentName, trigger) {
+    async runTurn(businessId, agentName, trigger, options = {}) {
       const definition = agents[agentName];
       const started = deps.now();
 
@@ -117,7 +117,7 @@ export function createAgent(input: AgentDeps): Agent {
         const [turn] = await tx.insert(t).values({ businessId, agent: agentName, trigger, startedAt: started }).returning({ id: t.id });
         return { limits, turnId: turn!.id };
       });
-      if (!opened.turnId) return { turnId: null, status: 'skipped', stopReason: null };
+      if (!opened.turnId) return { turnId: null, status: 'skipped', stopReason: null, messagesSent: 0 };
       const { limits, turnId } = opened;
 
       const steps: RecordedStep[] = [];
@@ -131,6 +131,7 @@ export function createAgent(input: AgentDeps): Agent {
       let personaName = '';
       let language: Parameters<typeof handOff>[1]['language'] = 'he';
       let failed: unknown = null;
+      const turn = { messagesSent: 0, questionsAsked: 0 };
       try {
         const first = await deps.db.withBusiness('workflow', businessId, (tx) =>
           buildContext(tx, { businessId, agent: definition, now: started, history: [], budget: { stepsLeft: limits.maxSteps, costLeftUsd: limits.maxTurnCostUsd }, toolResults: [] }),
@@ -140,7 +141,6 @@ export function createAgent(input: AgentDeps): Agent {
         language = first.context.languages[0] ?? 'he';
         const scope = agentName === 'onboarding' ? new Date(0) : localWeekStart(started, first.timezone);
         const history = await pastCalls(businessId, agentName, scope);
-        const turn = { messagesSent: 0, questionsAsked: 0 };
         const toolResults: { tool: AgentToolName; result: AgentToolResult }[] = [];
         const stepCap = await deps.models.costCap(businessId, definition.task);
         let toolCalls = 0;
@@ -183,6 +183,7 @@ export function createAgent(input: AgentDeps): Agent {
           );
 
           let step: AgentStep;
+          const modelStarted = deps.now().getTime();
           try {
             const left = limits.timeoutMs - (deps.now().getTime() - started.getTime());
             const answer = await withinTime(
@@ -200,6 +201,7 @@ export function createAgent(input: AgentDeps): Agent {
             stop = 'invalid_output';
             break;
           }
+          const modelMs = deps.now().getTime() - modelStarted;
           const recorded: RecordedStep = { confidence: step.confidence, costUsd: (await deps.models.spentOnTurn(businessId, turnId)) - turnSpent, calls: [] };
           steps.push(recorded);
           if (step.confidence < limits.minConfidence) {
@@ -209,6 +211,7 @@ export function createAgent(input: AgentDeps): Agent {
             break;
           }
 
+          const toolsStarted = deps.now().getTime();
           const ctx: ToolContext = { businessId, turnId, agent: agentName, deps, context, approverPhone, personaName, limits, history, turn };
           for (const call of step.calls) {
             if (toolCalls >= limits.maxToolCalls) {
@@ -223,6 +226,8 @@ export function createAgent(input: AgentDeps): Agent {
             await save();
             if (outcome.stop) {
               stop = outcome.stop;
+              // end_turn ends the turn, and code still evaluates the done rule (agent.md, end_turn).
+              if (stop === 'end_turn' && (await definition.isDone({ businessId, db: deps.db, turnId }))) stop = 'done';
               break;
             }
             if (outcome.result.status === 'refused') {
@@ -238,6 +243,17 @@ export function createAgent(input: AgentDeps): Agent {
             }
           }
           if (stop === null && (await definition.isDone({ businessId, db: deps.db, turnId }))) stop = 'done';
+          // docs/observability.md, Timing lines: where a turn's time goes (tool names only, no text).
+          log.info('agent step', {
+            businessId,
+            agent: agentName,
+            agentTurnId: turnId,
+            step: steps.length,
+            calls: step.calls.length,
+            tools: step.calls.map((c) => c.tool).join(','),
+            modelMs,
+            toolsMs: deps.now().getTime() - toolsStarted,
+          });
         }
       } catch (error) {
         failed = error;
@@ -245,7 +261,15 @@ export function createAgent(input: AgentDeps): Agent {
       }
 
       const ended = deps.now();
-      if (failed === null && stop !== null && LIMIT_STOPS.has(stop)) {
+      // No silent turn (agent.md, Runtime). `silent` holds when the caller said the owner waits on this
+      // turn (`mustReply`: no code reply follows it unless it ends done), the turn ran without an
+      // unexpected error, it ended by the agent's own end_turn with the done rule false (a done turn
+      // has stop 'done'), and its tools sent the owner nothing. A limit or a failure hands off below.
+      const silent = failed === null && options.mustReply === true && stop === 'end_turn' && turn.messagesSent === 0;
+      if (silent) {
+        log.warn('agent turn ended silent', { businessId, agent: agentName, agentTurnId: turnId });
+        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'silent_turn', agent: agentName }, approverPhone, personaName, language, now: ended });
+      } else if (failed === null && stop !== null && LIMIT_STOPS.has(stop)) {
         await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: stop, agent: agentName }, approverPhone, personaName, language, now: ended });
       } else if (failed !== null) {
         // An unexpected error still leaves the conversation with a person, never silent.
@@ -254,7 +278,7 @@ export function createAgent(input: AgentDeps): Agent {
         );
       }
       const status: TurnResult['status'] =
-        failed !== null ? 'failed' : stop === 'waiting_for_owner' ? 'waiting' : stop === 'done' || stop === 'end_turn' ? 'done' : 'handed_off';
+        failed !== null ? 'failed' : silent ? 'handed_off' : stop === 'waiting_for_owner' ? 'waiting' : stop === 'done' || stop === 'end_turn' ? 'done' : 'handed_off';
       const costUsd = await deps.models.spentOnTurn(businessId, turnId).catch(() => 0);
       await deps.db.withBusiness('workflow', businessId, (tx) =>
         tx
@@ -262,6 +286,18 @@ export function createAgent(input: AgentDeps): Agent {
           .set({ status, stopReason: stop, steps, costUsd: costUsd.toFixed(6), durationMs: ended.getTime() - started.getTime(), endedAt: ended })
           .where(and(eq(schema.agentTurn.businessId, businessId), eq(schema.agentTurn.id, turnId))),
       );
+      log.info('agent turn ended', {
+        businessId,
+        agent: agentName,
+        agentTurnId: turnId,
+        trigger: trigger.kind === 'burst' ? 'burst' : `event:${trigger.name}`,
+        status,
+        stopReason: stop,
+        steps: steps.length,
+        toolCalls: steps.reduce((n, s) => n + s.calls.length, 0),
+        durationMs: ended.getTime() - started.getTime(),
+        costUsd: Number(costUsd.toFixed(6)),
+      });
       if (onTurnEnd) {
         await onTurnEnd({
           agent: agentName,
@@ -271,7 +307,7 @@ export function createAgent(input: AgentDeps): Agent {
           steps: steps.map((s) => ({ calls: s.calls.map((c) => c.call as AgentToolCall), results: s.calls.map((c) => c.result) })),
         });
       }
-      return { turnId, status, stopReason: stop };
+      return { turnId, status, stopReason: stop, messagesSent: turn.messagesSent };
     },
   };
 }

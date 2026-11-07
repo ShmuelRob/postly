@@ -201,8 +201,9 @@ export class VertexModelProvider implements ModelProvider {
     const output: unknown = JSON.parse(text);
     const inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
     // Reasoning is billed as output, and Vertex reports it apart from the response tokens.
-    const outputTokens = (response.usageMetadata?.candidatesTokenCount ?? 0) + (response.usageMetadata?.thoughtsTokenCount ?? 0);
+    const thinkingTokens = response.usageMetadata?.thoughtsTokenCount ?? 0;
+    const outputTokens = (response.usageMetadata?.candidatesTokenCount ?? 0) + thinkingTokens;
     const costUsd = (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-    return { output, inputTokens, outputTokens, costUsd };
+    return { output, inputTokens, outputTokens, thinkingTokens, costUsd };
   }
 }

@@ -153,6 +153,7 @@ describe('VertexModelProvider', () => {
       temperature: 0.2,
     });
     expect(result.outputTokens).toBe(500);
+    expect(result.thinkingTokens).toBe(300);
     // 1000 * 0.30/M + 500 * 2.50/M
     expect(result.costUsd).toBeCloseTo(0.00155, 8);
   });

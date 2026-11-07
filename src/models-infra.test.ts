@@ -37,6 +37,15 @@ describe('the model in Terraform', () => {
     expect(models).not.toMatch(/resource "google_[a-z_]*iam/);
   });
 
+  // technical-design.md, Operational defaults: the quiet window is configuration per environment.
+  it('sets BURST_QUIET_MS for web and worker from a validated variable; dev waits 2 seconds, stage and prod keep 20', () => {
+    const main = read('modules/stack/main.tf');
+    expect(main).toMatch(/variable "burst_quiet_ms"[\s\S]*?default\s*=\s*20000[\s\S]*?var\.burst_quiet_ms >= 500 && var\.burst_quiet_ms <= 60000/);
+    expect(main).toMatch(/app_env = merge\(\{[\s\S]*?BURST_QUIET_MS\s*=\s*tostring\(var\.burst_quiet_ms\)/);
+    expect(read('environments/dev/main.tf')).toMatch(/burst_quiet_ms\s*=\s*2000/);
+    for (const env of ['stage', 'prod']) expect(read(`environments/${env}/main.tf`)).not.toMatch(/burst_quiet_ms/);
+  });
+
   it('adds a monthly Vertex AI budget only with a billing account', () => {
     expect(models).toMatch(/model_budget\s*=\s*var\.billing_account != null/);
     expect(models).toMatch(/resource "google_billing_budget" "model" \{\s*count\s*=\s*local\.model_budget \? 1 : 0/);
