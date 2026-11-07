@@ -5,7 +5,7 @@ Postly is built with coding agents, on a TypeScript modular monolith. Humans own
 ## Language and documentation rules
 
 - Everything related to code is written in English: code, comments, commits, pull requests, agent instructions, specs, PRDs, and technical documentation.
-- Every document produced gets a separate companion with its key points and a summary in Hebrew. The product spec is the exception: it is kept at full length in both Hebrew and English.
+- Every document produced gets a separate companion with its key points and a summary in Hebrew. The product spec is the exception: it is kept at full length in both Hebrew and English. A review-queue item (`docs/review-queue/pr-<N>.md`) is not a document in this sense: it carries its short Hebrew summary in a `## עברית` section of the same file (decided by the human on 2026-11-07).
 - User-facing product content stays in the language the business chose, such as Hebrew WhatsApp messages and post captions.
 
 ## Stack

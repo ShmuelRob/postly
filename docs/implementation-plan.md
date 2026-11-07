@@ -11,7 +11,11 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 - TDD: failing tests first, then code. A package is done only when its end-to-end test passes and its report is shown to the human.
 - Stay inside the package's files. Any change outside them is reported, not made.
 - Never skip, weaken, or delete a failing end-to-end test.
-- One branch and one pull request per package, named `wp/<id>-<slug>`, targeting `dev` ([deployment.md](deployment.md#terraform): `dev` → `stage` → `main` is the promotion path; `main` is prod). Sessions never merge; the manager merges after the gates pass.
+- One branch and one pull request per package, named `wp/<id>-<slug>`, targeting `dev` ([deployment.md](deployment.md#terraform): `dev` → `stage` → `main` is the promotion path; `main` is prod). Developer sessions never merge: a reviewer approves the exact SHA and GitHub auto-merges it ([operating mode](#operating-mode)).
+- Run `npm run check:local` before pushing (typecheck, conflict markers, links, boundaries, the review-queue files, and the unit tests related to the files changed against `origin/dev`; no Docker, no browser). CI runs `npm run check` on every PR and is the gate: a PR is done only when `check` is green. A session that adds or changes an end-to-end test still runs that test locally (`npx vitest run <file>`) and shows the human its report.
+- A session that touches `infra/` runs `npm run fmt:infra` (`terraform fmt -recursive infra`) before pushing; `check:local` runs `terraform fmt -check` when `infra/` changed.
+- Feature PRs never edit this plan or its Hebrew summary. A package whose text needs a change reports it, and the manager makes the change ([operating mode](#operating-mode)).
+- Every PR fills in the [pull request template](../.github/pull_request_template.md), and a PR that touches a human-review area adds its own review-queue file, `docs/review-queue/pr-<N>.md` ([review-queue/README.md](review-queue/README.md)).
 
 ## Lanes
 
@@ -21,14 +25,29 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
 
+### Change-size lanes
+
+Set by the human on 2026-11-07 ([workflow-improvements.md](https://github.com/ShmuelRob/postly/pull/142), item 9). They change how a PR is reviewed and merged, not who reviews it: a reviewer is always a separate session from the author, and nobody approves their own change.
+
+| Lane | Which PRs | How they close |
+| --- | --- | --- |
+| Normal | Every PR not in another lane | A reviewer session starts after the PR opens and follows the [reviewer brief](#reviewer-brief) |
+| Docs-only | `npm run lane:docs-only` passes on the branch: every changed file is `docs/**/*.md` or a top-level `*.md`, and none is a contract or gate doc or a doc a test reads (listed below) | The reviewer reviews and, if nothing blocks, posts `review` and turns on auto-merge in one step. CI runs only its `static` job; the test jobs are skipped and `check` still reports success |
+| Hotfix | A red `dev` or a broken dev deploy | The developer runs `npm run check:local` and opens the PR at once. The manager starts the reviewer at the same time as the developer, so it reads the diagnosis while the fix is written; it reviews the diff only, and the merge is by auto-merge. A hotfix that touches a human-review area still adds its review-queue file |
+
+The docs-only lane is decided by the script (`scripts/lane.ts`), never by judgment. Its exclusions: the contract docs and their Hebrew summaries (`docs/state-machines.*`, `docs/database-schema.*`, `docs/contracts.*`); the gate decisions (`docs/human-review-queue.*` and `docs/review-queue/`); and every doc whose path a `*.test.ts` file names, since its tests must run when it changes. A PR in an excluded file takes the normal lane.
+
 ## Operating mode
 
 Set by the human on 2026-11-02. It overrides the waiting steps in the gates, the loop, and the brief below until the human changes it.
 
-- **Gates no longer block, with two exceptions.** A gate that spends real money (a paid vendor plan, a real payment) or deploys to any cloud environment (WP-44, anything that creates cloud resources) still waits for the human. Every other gate becomes a queued review: the work goes ahead, and the item is added to [human-review-queue.md](human-review-queue.md) with the PR, what to look at, and the gate it stands in for. The human reviews the queue at their own pace; a finding becomes a fix package.
+- **Gates no longer block, with two exceptions.** A gate that spends real money (a paid vendor plan, a real payment) or deploys to any cloud environment (WP-44, anything that creates cloud resources) still waits for the human. Every other gate becomes a queued review: the work goes ahead, and the PR adds its own item file, `docs/review-queue/pr-<N>.md`, with what to look at and the gates it stands in for ([review-queue/README.md](review-queue/README.md); the numbered items already in [human-review-queue.md](human-review-queue.md) stay there, and it no longer grows). The human reviews the queue at their own pace (`npm run review-queue` prints the open items as one table); a finding becomes a fix package.
 - **Human-owned tests (H5).** Until the human writes them, a test-author session that does not implement writes the approval and publishing tests on their own branch, the reviewer checks them against the docs, and they merge before the implementing session starts. The implementing session may not change them; a test it believes is wrong is reported, not edited. The tests are queued for the human.
 - **Human-authored content (H2, H3, H6, H7).** Sessions draft the Hebrew copy, templates, prompts, styles, and example set from the docs, mark them provisional, and queue them for the human.
-- **Reviewer session.** One long-running reviewer session, separate from every developer session, takes over loop steps 4 to 6: it verifies each pull request, reviews it by area, queues human-review items, approves, and squash-merges it into `dev`. It never writes product code beyond trivial fixes it states in the PR.
+- **Reviewer session.** A reviewer session, separate from every developer session, takes over loop steps 4 to 6 for a pull request ([reviewer brief](#reviewer-brief)): it reads every file, checks the PR's review-queue file, and posts one grouped review comment. If nothing blocks, it approves the exact SHA it reviewed by posting a `review` commit status on it and turns on auto-merge pinned to that SHA; GitHub squash-merges the PR the moment `check` and `review` are both green there, and refuses if the head moved. A commit status belongs to one SHA, so a new push needs a new review of the delta and a new status. It never writes product code beyond trivial fixes it states in the PR.
+- **Merge-queue session.** Its only job is the conflict scan: it lists open PRs that conflict with `dev` and tells each author's session (or the manager) to merge `dev` in. It no longer waits on CI or merges, except during the switch-over below.
+- **Switch-over order.** (1) The PR that wrote this rule merges. (2) From then on reviewers post the `review` status and run `gh pr merge --auto`. (3) The manager turns on the repository's "Allow auto-merge" setting and then adds `review` as a second required status check on `dev`, next to `check`. Until step 3 is done, `gh pr merge --auto` fails ("auto-merge is not allowed"), and the merge-queue session merges as before, `gh pr merge <N> --squash --delete-branch --match-head-commit <SHA>` once `check` is green at the approved SHA. Once `review` is required, a PR without a reviewer's status cannot merge; the human's own direct merges post the status themselves (`enforce_admins` is on).
+- **Plan status.** Feature PRs never edit this plan or its Hebrew summary. The live package status is on the manager's work board; the manager batches status changes and new packages into one docs-only PR per wave (or every few hours), so the status column here can lag the board by one batch.
 - **Vendor accounts.** Packages that need vendor test accounts or keys (WP-41) stay blocked until the human provides them, since agents do not create accounts.
 
 ## Human gates
@@ -58,7 +77,7 @@ Contract gaps found while building the simulators (WP-03). Each is a contract ch
 
 ## Work packages
 
-Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the manager edits the status column.
+Status values: `todo`, `blocked`, `in_progress`, `review`, `done`. Only the manager edits the status column, in its batched status PRs; the work board holds the live status.
 
 ### Phase 0: foundations
 
@@ -206,11 +225,11 @@ The manager is one long-running Claude session that owns this plan. It does not 
 ### Loop
 
 1. **Pick.** List packages whose dependencies are `done` and whose gates have passed. Take at most one core package if no core session is running, and fill free parallel slots (up to three) with parallel packages that touch disjoint files.
-2. **Start.** Start one session per package in its own worktree with the brief below. Set the package to `in_progress`.
+2. **Start.** Start one session per package in its own worktree with the brief below, naming its [lane](#change-size-lanes). For a hotfix, start its reviewer at the same time. Set the package to `in_progress` on the board.
 3. **Wait.** Do nothing until a session reports. Never poll.
-4. **Verify.** (Reviewer session under the [operating mode](#operating-mode).) On a report: run `npm run check` on the branch, open the end-to-end report, and start a separate review agent that did not write the code, split by area (security, tenant isolation, failure cases) where the package touches them.
-5. **Gate.** If the package touches a human-review area, or adds or changes an end-to-end test, show the human the diff summary, the test, and its report. Under the operating mode, add an entry to the review queue instead of waiting, unless the gate spends money or deploys. Set the package to `review`.
-6. **Merge.** After approval (the reviewer's, under the operating mode), squash-merge the pull request into `dev`. The manager then sets the package to `done` and commits the status change.
+4. **Verify.** (Reviewer session under the [operating mode](#operating-mode).) On a report: start a reviewer that did not write the code, with the [reviewer brief](#reviewer-brief). CI's `check` on the PR's head SHA is the full gate (nobody re-runs `npm run check` locally to verify); the reviewer opens the end-to-end report from the CI artifact and reviews by area (security, tenant isolation, failure cases) where the package touches them.
+5. **Gate.** If the package touches a human-review area, or adds or changes an end-to-end test, show the human the diff summary, the test, and its report. Under the operating mode, the PR's own review-queue file (`docs/review-queue/pr-<N>.md`) stands in for waiting, unless the gate spends money or deploys. Set the package to `review` on the board.
+6. **Merge.** After approval (the reviewer's, under the operating mode), the reviewer posts the `review` status on the approved SHA and turns on auto-merge; GitHub squash-merges into `dev` when `check` and `review` are green there (until the [switch-over](#operating-mode) is done, the merge-queue session merges instead). The manager then sets the package to `done` on the board, and in this plan in its next batched status PR.
 7. **Repeat** from step 1. When nothing is ready and nothing is running, list the open human gates and decisions to the human and stop.
 
 A session that reports a doc gap or a failing end-to-end test is not retried blindly: the manager brings it to the human, updates the docs and their Hebrew companions once decided, and then restarts the package.
@@ -218,13 +237,30 @@ A session that reports a doc gap or a failing end-to-end test is not retried bli
 ### Session brief template
 
 ```text
-Package: <id> <name> (lane: <core|parallel>)
+Package: <id> <name> (lane: <core|parallel>; change size: <normal|docs-only|hotfix>)
+Start: git fetch origin && git checkout -B <branch> origin/dev
 Read first: CLAUDE.md, PRD.md, technical-design.md, agentic-development.md, <contract doc>, implementation-plan.md (<id>).
-Scope: <files and folders this package may change>. Anything else: report, do not change.
-Steps: confirm the docs cover the work; write failing tests; implement; add or update the end-to-end test; run npm run check.
-Done when: <done criterion from the table>.
-Human gates: <gates>. Under the operating mode, queue them; stop only for money or deployment, or if the human-owned tests are not yet merged.
-Deliver: branch wp/<id>-<slug>, a pull request, the end-to-end report sent with SendUserFile, and a short report of anything left open.
+Scope: <files and folders this package may change>. Anything else: report, do not change. Never edit implementation-plan.md or its summary.
+Steps: confirm the docs cover the work; write failing tests; implement; add or update the end-to-end test and run that test locally; run npm run check:local before pushing (npm run fmt:infra first if you touched infra/). CI runs npm run check and is the gate.
+Done when: <done criterion from the table>, and check is green on the PR.
+Human gates: <gates>. Under the operating mode, queue them in docs/review-queue/pr-<N>.md (add it once the PR has its number); stop only for money or deployment, or if the human-owned tests are not yet merged.
+Deliver: branch wp/<id>-<slug>, a pull request with the template filled in (e2e report, gate areas, "needs terraform apply", "has a migration"), the end-to-end report sent with SendUserFile, and a short report of anything left open.
+```
+
+### Reviewer brief
+
+The manager starts a reviewer with this brief (for a hotfix, before the PR opens, with the diagnosis instead of the PR number). The reviewer is never the session that wrote the change.
+
+```text
+Review: PR #<N> <title>, lane <normal|docs-only|hotfix>. Review the head SHA you read: <SHA> = gh pr view <N> --json headRefOid.
+Read: CLAUDE.md, the three source-of-truth docs, the contract doc the PR touches, and every changed file.
+Check: the PR template is filled in and matches the diff ("needs terraform apply", "has a migration", gate areas); check is green on <SHA>; the e2e report (CI artifact e2e-report) for every e2e test added or changed; docs/review-queue/pr-<N>.md for every human-review area touched (npm run lint:review-queue checks its front matter); for the docs-only lane, npm run lane:docs-only -- --base origin/dev passes.
+Comment: one grouped review comment, blocking and non-blocking findings with file:line, starting "APPROVED <SHA>" or "CHANGES REQUESTED".
+If nothing blocks:
+  gh api repos/ShmuelRob/postly/statuses/<SHA> -f state=success -f context=review -f description="Approved by <reviewer>"
+  gh pr merge <N> --auto --squash --delete-branch --match-head-commit <SHA>
+If gh pr merge --auto is refused because auto-merge is not on yet, tell the merge-queue session the PR and the SHA instead.
+A new push to the PR has no review status: review the delta and post the status again on the new SHA.
 ```
 
 ## Recommended start
