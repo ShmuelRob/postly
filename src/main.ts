@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { loadConfig } from './config.js';
+import { CLOUD_PROCESSES, loadConfig, requiredCloudEnv } from './config.js';
 import { createPgBossQueue, createPostgresSimulatorStore, createSendOnlyQueue, provisionDatabase } from './db/index.js';
 import { INBOUND_BURST_JOB, type InboundBurstJob, jobBurstWake } from './modules/messaging/index.js';
 import { buildConsoleServer } from './console-server.js';
@@ -18,6 +18,15 @@ import { startTelemetry } from './shared/telemetry-gcp.js';
 // start (src/config.ts).
 
 async function main(command: string | undefined) {
+  // Deploy's pre-flight (docs/deployment.md): the variable names each process needs in a cloud
+  // environment, as one JSON object on stdout. Reads no configuration and starts nothing.
+  if (command === 'required-env') {
+    const env = process.argv[3];
+    if (env !== 'dev' && env !== 'stage' && env !== 'prod') throw new Error('usage: node dist/src/main.js required-env dev|stage|prod');
+    const processes = CLOUD_PROCESSES.filter((p) => p !== 'sandbox' || env === 'dev');
+    process.stdout.write(`${JSON.stringify(Object.fromEntries(processes.map((p) => [p, requiredCloudEnv(p, env)])))}\n`);
+    return;
+  }
   setLogLabels({ process: command ?? 'unknown' });
   if (command === 'migrate') {
     const adminUrl = process.env.MIGRATE_ADMIN_URL;
