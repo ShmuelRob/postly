@@ -11,7 +11,7 @@ import type { OnboardingBurst } from './onboarding.js';
 import { localWeek } from './week.js';
 import * as copy from './weekly-copy.js';
 import type { Workflow } from './workflow.js';
-import { asError, errorText, log } from '../../shared/logger.js';
+import { asError, errorDetail, log } from '../../shared/logger.js';
 
 // The weekly update (PRD, "Weekly update and content preparation" and "A week without an update";
 // technical-design.md, Weekly update flow; state-machines.md, Weekly update). Code owns the week;
@@ -343,7 +343,7 @@ export function createWeeklyUpdates(deps: WeeklyDeps): WeeklyUpdates {
       // Anything else that stops the plan: the week goes to the console instead of staying `received`.
       log.error('weekly plan failed', { businessId, weekId, error: asError(error) });
       await db.withBusiness('workflow', businessId, (tx) =>
-        tx.insert(schema.consoleItem).values({ businessId, kind: 'extraction_failed', referenceId: weekId, details: { error: errorText(error) } }),
+        tx.insert(schema.consoleItem).values({ businessId, kind: 'extraction_failed', referenceId: weekId, details: { error: errorDetail(error) } }),
       );
       await weekEvent(businessId, weekId, 'EXTRACTION_FAILED');
       await reply(copy.updateNeedsReview);

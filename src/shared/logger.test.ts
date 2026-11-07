@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm/errors';
-import { addLogContext, asError, errorText, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { addLogContext, asError, errorDetail, errorText, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
 
@@ -201,6 +201,16 @@ describe('one logger', () => {
     };
     for (const root of roots) walk(root);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('errorDetail, for a console item that stored String(error) before', () => {
+  it('is the error name and its safe message, as String(error) was, never the query params', () => {
+    expect(errorDetail(new Error('provider down'))).toBe('Error: provider down');
+    expect(errorDetail(Object.assign(new TypeError('bad'), {}))).toBe('TypeError: bad');
+    const query = new DrizzleQueryError('insert into "message" ("body") values ($1)', [CUSTOMER_TEXT], new Error('x'));
+    expect(errorDetail(query)).toBe('Error: Failed query: insert into "message" ("body") values ($1) (1 params)');
+    expect(errorDetail('plain text')).toBe('Error: plain text');
   });
 });
 

@@ -133,6 +133,16 @@ export function errorText(value: unknown, max = 500): string {
   return safeMessage(asError(value)).slice(0, max);
 }
 
+/**
+ * `Name: safe message`, cut at 500 characters: the text the console items that once stored
+ * `String(error)` keep (draft_failed, extraction_failed, payment_link_failed, the agent's error hand-off),
+ * so their details read as before, without a query's parameters.
+ */
+export function errorDetail(value: unknown, max = 500): string {
+  const error = asError(value);
+  return `${error.name}: ${safeMessage(error)}`.slice(0, max);
+}
+
 type ErrorLike = { message: string; name?: unknown; stack?: unknown; code?: unknown; cause?: unknown };
 
 /** An object with a string `message`: pg-boss emits some failures as plain copies of an error. */

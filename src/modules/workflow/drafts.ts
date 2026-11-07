@@ -21,7 +21,7 @@ import * as copy from './drafts-copy.js';
 import * as weeklyCopy from './weekly-copy.js';
 import { MAX_QUESTION_ATTEMPTS, type OnboardingBurst } from './onboarding.js';
 import type { Workflow } from './workflow.js';
-import { asError, errorText, log } from '../../shared/logger.js';
+import { asError, errorDetail, errorText, log } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 // Drafts (PRD, Weekly update and content preparation, Content safeguards; technical-design.md,
@@ -883,7 +883,7 @@ export function createDrafts(deps: DraftsDeps): Drafts {
         // conversation does not wait in processing_update answering every message with stillWorking.
         log.error('drafting failed', { businessId, weekId, error: asError(error) });
         await db.withBusiness('workflow', businessId, (tx) =>
-          tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: weekId, details: { error: errorText(error) } }),
+          tx.insert(schema.consoleItem).values({ businessId, kind: 'draft_failed', referenceId: weekId, details: { error: errorDetail(error) } }),
         );
         const loaded = await loadBusiness(businessId);
         if (loaded) await handOff(businessId, loaded.business.approverPhone, 'drafting failed', copy.draftsNeedReview);
