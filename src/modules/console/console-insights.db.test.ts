@@ -32,11 +32,17 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
  * A Saturday long ago: the range is its week, Sunday to Saturday. In the past, not the future, so the
  * overview test's rows stay the newest anywhere (console-views.db.test.ts).
  */
+// The insights count every business in the shared test database, so each test needs a week no other
+// test uses: a year of its own (a random start, then one year per call), never a random pick that two
+// tests can share.
+const FIRST_YEAR = 1900 + Math.floor(Math.random() * 40);
+let farWeeks = 0;
+
 function farWeek() {
   // In January, so Asia/Jerusalem (the default business timezone) is UTC+2 with no daylight saving:
   // Saturday 21:59 UTC is still Saturday there, and 22:00 UTC is Sunday 00:00, a new business week.
-  const base = Date.UTC(1950 + Math.floor(Math.random() * 40), 0, 2);
-  let d = new Date(base + Math.floor(Math.random() * 18) * DAY);
+  const base = Date.UTC(FIRST_YEAR + farWeeks++, 0, 2);
+  let d = new Date(base + 7 * DAY);
   while (d.getUTCDay() !== 6) d = new Date(d.getTime() + DAY);
   const saturday = d;
   const sunday = new Date(saturday.getTime() - 6 * DAY);

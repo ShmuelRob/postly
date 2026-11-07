@@ -315,12 +315,10 @@ e2eTest('an owner who answers everything at once: a wrong field value is refused
     turns: await tx.select().from(schema.agentTurn),
     items: await tx.select().from(schema.consoleItem),
   }));
-  expect(stored.business.profile).toMatchObject({
-    name: 'מאפיית בן עמי',
-    field: 'מאפייה שכונתית',
-    mainProducts: ['חלות', 'בורקס', 'עוגות שמרים'],
-    location: { city: 'חולון', address: 'רחוב הרצל 12' },
-  });
+  expect(stored.business.profile).toMatchObject({ name: 'מאפיית בן עמי', field: 'מאפייה שכונתית', mainProducts: ['חלות', 'בורקס', 'עוגות שמרים'] });
+  // A location part is saved only once all four parts are known (agent.md, Nested fields): the city and
+  // the address are held, and the agent is told it waits for the hours and pickup or delivery.
+  expect(stored.business.profile).not.toHaveProperty('location');
   type Steps = { calls: { call: { tool: string; field?: string }; result: { status: string; reason?: string; detail?: string } | null }[] }[];
   const second = stored.turns.find((t) => (t.steps as Steps).length === 2);
   expect(second).toMatchObject({ agent: 'onboarding', stopReason: 'waiting_for_owner' });
@@ -336,6 +334,8 @@ e2eTest('an owner who answers everything at once: a wrong field value is refused
   // The refusal tells the agent the field's shape, not the value it sent.
   expect(first!.calls[2]!.result!.detail).toBe('mainProducts must match {"minItems":1,"type":"array","items":{"type":"string","minLength":1}}');
   expect(fix!.calls.map((c) => c.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  const held = (fix!.calls[2]!.result as unknown as { data: { saved: boolean; waitingFor: string[] } }).data;
+  expect(held).toMatchObject({ saved: false, waitingFor: ['location.hours', 'location.fulfillment'] });
   // Nothing for the team: one model output per step, every one valid, and no console item.
   const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun));
   expect(runs.filter((r) => r.task === 'agent_onboarding').every((r) => r.valid)).toBe(true);
