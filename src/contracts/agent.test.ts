@@ -51,6 +51,7 @@ describe('agent contract lists', () => {
       'window_closed',
       'question_limit',
       'photo_request_limit',
+      'skipped',
     ]);
     expect([...AGENT_TURN_STOP_REASONS]).toEqual([
       'done',
@@ -98,12 +99,18 @@ describe('persona (agent.md, A1 and A2)', () => {
 describe('AgentStep', () => {
   const step = (calls: unknown[], confidence = 0.9) => AgentStep.safeParse({ calls, confidence });
 
-  it('takes 1 to 4 tool calls and a confidence of 0 to 1', () => {
+  // agent.md, Runtime: no limit per step since 2026-11-07; the turn's maxToolCalls bounds the calls.
+  it('takes one or more tool calls, with no upper limit, and a confidence of 0 to 1', () => {
     expect(step([{ tool: 'end_turn' }]).success).toBe(true);
     expect(step([]).success).toBe(false);
     expect(step(Array(4).fill({ tool: 'end_turn' })).success).toBe(true);
-    expect(step(Array(5).fill({ tool: 'end_turn' })).success).toBe(false);
+    expect(step(Array(6).fill({ tool: 'end_turn' })).success).toBe(true);
+    expect(step(Array(30).fill({ tool: 'end_turn' })).success).toBe(true);
     expect(step([{ tool: 'end_turn' }], 1.1).success).toBe(false);
+  });
+
+  it('has no maxItems anywhere in its JSON schema: a count never makes a model output invalid', () => {
+    expect(JSON.stringify(z.toJSONSchema(AgentStep))).not.toContain('maxItems');
   });
 
   it('rejects an unknown tool, such as an approval', () => {
@@ -138,6 +145,15 @@ describe('tool calls (agent.md, Tools)', () => {
     expect(call({ ...set, field: 'brand.logoAssetId', value: uuid })).toBe(false);
     expect(call({ ...set, field: 'persona', value: { agentName: 'רוני' } })).toBe(false);
     expect(call({ ...set, field: 'persona.agentName', value: 'רוני' })).toBe(false);
+  });
+
+  // agent.md, set_profile_field (2026-11-07): the value's shape is the tool's check, so a wrong value is a
+  // refusal the agent can fix, never an invalid output (on dev a bad mainProducts failed three attempts).
+  it("set_profile_field: a value of the wrong shape for its field is not the schema's concern", () => {
+    const set = { tool: 'set_profile_field', field: 'mainProducts', value: 'ספרים, קפה', sourceQuote: 'ספרים, קפה' };
+    expect(call(set)).toBe(true);
+    expect(call({ ...set, value: ['ספרים', ' '] })).toBe(true);
+    expect(call({ ...set, field: 'postsPerWeek', value: 'many' })).toBe(true);
   });
 
   it('set_profile_field: a quote is required for factual fields', () => {
@@ -186,7 +202,8 @@ describe('tool calls (agent.md, Tools)', () => {
     expect(call({ tool: 'plan_posts', mode: 'revise', posts: [post] })).toBe(false);
     expect(call({ tool: 'plan_posts', mode: 'revise', posts: [{ ...post, postId: uuid }], ownerQuote: 'קרוסלה' })).toBe(true);
     expect(call({ tool: 'plan_posts', mode: 'initial', posts: [] })).toBe(false);
-    expect(call({ tool: 'plan_posts', mode: 'initial', posts: Array(8).fill(post) })).toBe(false);
+    // "Never above 7 a week" is the plan tool's code check (plan_invalid), not the schema's.
+    expect(call({ tool: 'plan_posts', mode: 'initial', posts: Array(8).fill(post) })).toBe(true);
   });
 
   const design = { photos: [{ assetId: uuid, rotateDeg: 1.5 }], title: 'מבצע תמרים', badge: { kind: 'discount', text: '-15%', factId: 'f1' } };
@@ -197,6 +214,9 @@ describe('tool calls (agent.md, Tools)', () => {
     expect(call(draft)).toBe(true);
     expect(call({ ...draft, captions: {} })).toBe(false);
     expect(call({ ...draft, design: { ...design, photos: [{ assetId: uuid, rotateDeg: 45 }] } })).toBe(false);
+    // The photo count is the tool's code check (invalid_input), not the schema's.
+    expect(call({ ...draft, design: { ...design, photos: Array(11).fill({ assetId: uuid }) } })).toBe(true);
+    expect(call({ ...draft, design: { ...design, photos: [] } })).toBe(false);
   });
 
   it('apply_change: an owner quote and at least one change', () => {
