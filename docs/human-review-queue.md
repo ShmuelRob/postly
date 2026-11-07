@@ -1,6 +1,8 @@
 # Human Review Queue
 
-Items the human reviews at their own pace, under the [operating mode](implementation-plan.md#operating-mode). The work has already merged unless the item says it waits. The reviewer session adds items; the human marks them `ok` or writes a finding, and the manager turns each finding into a fix package.
+Items the human reviews at their own pace, under the [operating mode](implementation-plan.md#operating-mode). The work has already merged unless the item says it waits. The human marks items `ok` or writes a finding, and the manager turns each finding into a fix package.
+
+**This table no longer grows (2026-11-07).** New items are one file per PR in [review-queue/](review-queue/README.md), `docs/review-queue/pr-<N>.md`, so two open PRs never edit the same file. `npm run review-queue` prints the open items from both places, this table's and the directory's, as one table. The numbered items below keep their numbers and stay here; a status change to one of them is still an edit of its row.
 
 Status values: `open` (not reviewed yet), `ok` (reviewed, no change), `decided (Tn)` (the human decided; the change is task Tn in [Decisions from the 2026-11-04 review](#decisions-from-the-2026-11-04-review)), `finding` (needs a fix package), `waits` (blocked on the human: money or deployment).
 WhatsApp template bodies to submit to Meta (items 20, 27, 28, 29 and the billing ones) are collected in [whatsapp-templates.md](whatsapp-templates.md).
