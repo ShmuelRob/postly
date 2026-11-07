@@ -11,9 +11,11 @@ export const PUBLISHING_TICK_CRON = '* * * * *';
 /** The daily channel health check (technical-design.md, Failure handling): 04:00 UTC, 06:00 or 07:00 in Israel. */
 export const CHANNEL_HEALTH_JOB = 'channel-health-check';
 export const CHANNEL_HEALTH_CRON = '0 4 * * *';
-/** The daily data deletion (WP-43): cancelled businesses past `data_delete_after`. */
-export const DATA_DELETION_JOB = 'data-deletion';
-export const DATA_DELETION_CRON = '0 3 * * *';
+/** The daily business archive (2026-11-07): cancelled businesses past `archive_after` apply ARCHIVE. */
+export const BUSINESS_ARCHIVE_JOB = 'business-archive';
+export const BUSINESS_ARCHIVE_CRON = '0 3 * * *';
+/** WP-43's daily data deletion, replaced by the archive: its cron is removed at start, so nothing deletes on a schedule. */
+export const RETIRED_DATA_DELETION_JOB = 'data-deletion';
 /** The monthly report (WP-43): 06:00 UTC on the first of each month. */
 export const MONTHLY_REPORT_JOB = 'monthly-report';
 export const MONTHLY_REPORT_CRON = '0 6 1 * *';
@@ -26,7 +28,7 @@ export interface WorkerProcessOptions {
   weekly: Pick<WeeklyUpdates, 'tick'>;
   publishing: Pick<Publishing, 'tick'>;
   channelHealth: { tick(now: Date): Promise<void> };
-  dataDeletion?: { tick(now: Date): Promise<unknown> };
+  archive?: { tick(now: Date): Promise<unknown> };
   monthlyReport?: { tick(now: Date): Promise<unknown> };
   billingHold?: { tick(now: Date): Promise<unknown> };
   now?: () => Date;
@@ -43,8 +45,9 @@ export async function startWorkerProcess(options: WorkerProcessOptions): Promise
   await options.queue.schedule(WEEKLY_TICK_JOB, WEEKLY_TICK_CRON, () => options.weekly.tick(now()));
   await options.queue.schedule(PUBLISHING_TICK_JOB, PUBLISHING_TICK_CRON, async () => void (await options.publishing.tick(now())));
   await options.queue.schedule(CHANNEL_HEALTH_JOB, CHANNEL_HEALTH_CRON, () => options.channelHealth.tick(now()));
-  const { dataDeletion, monthlyReport, billingHold } = options;
-  if (dataDeletion) await options.queue.schedule(DATA_DELETION_JOB, DATA_DELETION_CRON, async () => void (await dataDeletion.tick(now())));
+  const { archive, monthlyReport, billingHold } = options;
+  await options.queue.unschedule(RETIRED_DATA_DELETION_JOB);
+  if (archive) await options.queue.schedule(BUSINESS_ARCHIVE_JOB, BUSINESS_ARCHIVE_CRON, async () => void (await archive.tick(now())));
   if (monthlyReport) await options.queue.schedule(MONTHLY_REPORT_JOB, MONTHLY_REPORT_CRON, async () => void (await monthlyReport.tick(now())));
   if (billingHold) await options.queue.schedule(BILLING_HOLD_JOB, BILLING_HOLD_CRON, async () => void (await billingHold.tick(now())));
   return options.queue;

@@ -28,6 +28,7 @@ const MATRIX = `
 | agent_turn |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
 | agent_config |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
 | console_action |  |  |  |  |  |  |  |  |  |  |  |  | SI |  |
+| erasure_request |  |  |  |  |  |  |  |  |  | I |  |  | S |  |
 `;
 
 export type Role = BusinessRole | SystemPurpose;

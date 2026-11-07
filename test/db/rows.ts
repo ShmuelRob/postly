@@ -80,6 +80,7 @@ export function rowsFor(b: string): [PgTable, Record<string, unknown>][] {
     [schema.consoleItem, { id: item, businessId: b, kind: 'handoff' }],
     [schema.workflowEvent, { id: k(), businessId: b, machine: 'conversation', rowId: b, event: 'UPDATE_RECEIVED', source: 'inbound', role: 'workflow', actor: 'owner', outcome: 'applied' }],
     [schema.agentTurn, { id: k(), businessId: b, agent: 'weekly', trigger: { kind: 'event', name: 'test' } }],
+    [schema.erasureRequest, { id: k(), businessId: b, requestedBy: 'owner', channel: 'whatsapp', requestedAt: new Date(), actor: 'test' }],
   ];
 }
 

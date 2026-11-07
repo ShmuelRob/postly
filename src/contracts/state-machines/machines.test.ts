@@ -31,12 +31,13 @@ const cases: Array<{
   {
     machine: businessMachine,
     initial: 'onboarding',
-    terminal: ['cancelled'],
+    terminal: ['archived'],
     rows: [
       ['onboarding', 'ONBOARDING_COMPLETED', 'active'],
       ['active', 'PAUSE', 'paused'],
       ['paused', 'RESUME', 'active'],
       ...expand(['onboarding', 'active', 'paused'], 'CANCEL', 'cancelled'),
+      ['cancelled', 'ARCHIVE', 'archived'],
     ],
   },
   {
