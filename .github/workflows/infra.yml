@@ -94,3 +94,16 @@ jobs:
       - run: terraform fmt -check -recursive infra
       - run: terraform -chdir=infra/${{ matrix.root }} init -backend=false -input=false
       - run: terraform -chdir=infra/${{ matrix.root }} validate
+
+  # One stable name to require in branch protection: passes only when `changes` passed and the image and
+  # Terraform jobs passed or were skipped by the path filter. A failed or cancelled job fails it, and a
+  # broken infra.yml produces no `infra-check` at all, which blocks the merge instead of passing silently.
+  infra-check:
+    if: always()
+    needs: [changes, image, terraform]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "${{ needs.changes.result }}" = success
+          case "${{ needs.image.result }}" in success|skipped) ;; *) exit 1 ;; esac
+          case "${{ needs.terraform.result }}" in success|skipped) ;; *) exit 1 ;; esac

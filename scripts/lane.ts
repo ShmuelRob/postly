@@ -16,6 +16,8 @@ export interface Blocker {
 const DOC = /^(docs\/.+|[^/]+)\.md$/;
 const CONTRACT = /^docs\/(state-machines|database-schema|contracts)\./;
 const GATE = /^docs\/(human-review-queue\.|review-queue\/)/;
+// The repository rules and the product spec: a change to them is a rule or product decision, never a docs-only one.
+const SOURCE_OF_TRUTH = /^(CLAUDE\.md|PRD\.md|docs\/product-spec\.he\.md)$/;
 const DOC_PATH = /docs\/[\w./-]+?\.md/g;
 
 /** Which changed files keep a change out of the docs-only lane, and why. An empty change is not docs-only. */
@@ -23,6 +25,7 @@ export function classify(files: readonly string[], readers: ReadonlyMap<string, 
   const blockers: Blocker[] = [];
   for (const file of files) {
     if (!DOC.test(file)) blockers.push({ file, reason: 'not docs/**/*.md or a top-level *.md' });
+    else if (SOURCE_OF_TRUTH.test(file)) blockers.push({ file, reason: 'a source-of-truth doc (rules or product spec)' });
     else if (CONTRACT.test(file)) blockers.push({ file, reason: 'a contract doc' });
     else if (GATE.test(file)) blockers.push({ file, reason: 'a gate decision (review queue)' });
     else if (readers.has(file)) blockers.push({ file, reason: `read by ${readers.get(file)!.join(', ')}` });
