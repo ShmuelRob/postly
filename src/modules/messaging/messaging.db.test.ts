@@ -5,7 +5,7 @@ import { WindowClosedError } from '../../contracts/providers/messaging.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { buildServer } from '../../server.js';
-import { setLogSink } from '../../shared/logger.js';
+import { setLogSink, withLogContext } from '../../shared/logger.js';
 import { MessagingSimulator } from '../../simulators/messaging.js';
 import { createMessaging, type InboundBurst, type Messaging, type Timers, WEBHOOK_PATH } from './index.js';
 
@@ -262,6 +262,20 @@ describe('sweep of unprocessed messages (review queue item 14)', () => {
     });
     await restarted.sweepUnprocessed();
     expect(mine.map((b) => b.text)).toEqual(['שלום']);
+  });
+
+  // docs/observability.md, "Following one message": a wake-up asked from a claim that waits keeps the job's correlationId.
+  it('carries the correlationId into the wake-up the webhook asks for, and into the one a waiting claim asks for', async () => {
+    const { businessId, owner, sim } = await setup();
+    const requested: Array<string | undefined> = [];
+    const wake = { request: async (_b: string, _f: string, _at: Date, correlationId?: string) => void requested.push(correlationId) };
+    const messaging = createMessaging({ db, provider: sim, businessNumber: BUSINESS_NUMBER, handler: { handleInbound: async () => {} }, wake });
+    await messaging.receive({ ...sim.inboundText(owner, 'שלום'), providerMessageId: `SM-${randomUUID()}` });
+    const [stored] = requested;
+    expect(stored).toMatch(/^[0-9a-f-]{36}$/);
+    // The job runs early (the burst is not quiet yet): its claim waits and asks again, in the job's correlation.
+    await withLogContext({ correlationId: stored }, () => messaging.processBurst(businessId, owner));
+    expect(requested).toEqual([stored, stored]);
   });
 
   it('leaves a burst still inside its quiet window alone', async () => {

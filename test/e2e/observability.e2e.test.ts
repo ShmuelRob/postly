@@ -9,6 +9,7 @@
 import { expect, inject, onTestFinished } from 'vitest';
 import type { ModelProvider, PaymentProvider, TemplateRenderer } from '../../src/contracts/providers/index.js';
 import type { Publishing } from '../../src/modules/publishing/index.js';
+import { setLogSink } from '../../src/shared/logger.js';
 import { memoryTelemetry } from '../../src/shared/telemetry-memory.js';
 import { MessagingSimulator, PublishingSimulator } from '../../src/simulators/index.js';
 import { createH5World, type H5World } from '../h5/world.js';
@@ -55,7 +56,19 @@ e2eTest('approvals and publications show on the metrics by outcome and network, 
   await run.owner.tapsButton(current.buttons.approve, { action: 'approve', postId: current.postId, versionHash: current.versionHash });
   await run.owner.sendsText('כן');
   now = new Date('2026-11-04T08:01:00.000Z');
+  // docs/observability.md, "Following one message": one `publication attempt` line per run.
+  const logLines: string[] = [];
+  setLogSink((line) => logLines.push(line));
+  onTestFinished(() => setLogSink(undefined));
   expect((await (world!.publishingJob as Publishing).tick(now, { businessId })).ran).toBe(2);
+  setLogSink(undefined);
+  const attempts = logLines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.message === 'publication attempt');
+  expect(attempts.map((l) => [l.severity, l.network, l.outcome, l.postId]).sort()).toEqual([
+    ['INFO', 'facebook', 'published', current.postId],
+    ['INFO', 'instagram', 'published', current.postId],
+  ]);
+  for (const line of attempts) expect(line).toMatchObject({ publicationId: expect.any(String), durationMs: expect.any(Number) });
+  for (const forbidden of [OWNER, CAPTION, CHANGED]) expect(logLines.join(' ')).not.toContain(forbidden);
   expect(run.networkPosts().map((p) => p.network).sort()).toEqual(['facebook', 'instagram']);
 
   expect(await telemetry.points('postly.approvals.count')).toEqual(

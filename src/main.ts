@@ -8,7 +8,7 @@ import { buildServer } from './server.js';
 import { createSimulatedApp } from './simulated.js';
 import { MemorySimulatorStore } from './simulators/index.js';
 import { startWorkerProcess } from './worker.js';
-import { asError, log, setLogLabels } from './shared/logger.js';
+import { asError, log, setLogLabels, setLogLevel } from './shared/logger.js';
 import { startTelemetry } from './shared/telemetry-gcp.js';
 
 // The image's entry point (docs/deployment.md): `node dist/src/main.js web|worker|console|migrate`, compiled
@@ -34,6 +34,7 @@ async function main(command: string | undefined) {
   if (command !== 'web' && command !== 'worker' && command !== 'console') throw new Error('usage: node dist/src/main.js web|worker|console|migrate');
 
   const config = loadConfig(process.env, command);
+  setLogLevel(config.logLevel);
   // Metrics and traces (docs/observability.md, WP-48): exported only in dev, stage and prod.
   const stopTelemetry = startTelemetry({
     service: command,

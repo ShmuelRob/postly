@@ -293,6 +293,8 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
             const result = await eraseBusiness(businessId, { ...request, actor: consoleActor(q) });
             if (result.outcome === 'not_found') throw new ConsoleActionError(404, 'not_found');
             if (result.outcome === 'not_cancelled') throw new ConsoleActionError(409, 'not_cancelled', 'cancel the business first');
+            // The rows are gone and recorded, but some files are not: never a 2xx, so the team finishes them by hand.
+            if (result.outcome === 'files_failed') throw new ConsoleActionError(500, 'files_failed', `the rows are erased; delete the files under ${businessId}/ by hand`);
             return result;
           }),
         );

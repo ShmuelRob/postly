@@ -9,6 +9,7 @@ import { eq, sql } from 'drizzle-orm';
 import { expect, inject } from 'vitest';
 import type { ModelProvider, PaymentProvider, TemplateRenderer } from '../../src/contracts/providers/index.js';
 import * as schema from '../../src/db/schema.js';
+import { createErasure } from '../../src/modules/business-data/index.js';
 import { createConsole, DEV_ACTOR, registerConsoleRoutes } from '../../src/modules/console/index.js';
 import type { Publishing } from '../../src/modules/publishing/index.js';
 import { cancellationCopy } from '../../src/modules/workflow/index.js';
@@ -185,13 +186,13 @@ const counts = (db: H5Db, businessId: string) =>
 const auditRows = (db: H5Db, businessId: string) => read(db, (tx) => tx.select().from(schema.workflowEvent).where(eq(schema.workflowEvent.businessId, businessId)));
 const businessFiles = (files: Map<string, Uint8Array>, businessId: string) => [...files.keys()].filter((p) => p.startsWith(`${businessId}/`));
 
-/** The console server with the cancel and erase actions wired, as main.ts wires them. */
-function consoleServer(ctx: Ctx) {
+/** The console server with the cancel and erase actions wired, as main.ts wires them; `erasure` replaces the app's (a failing store). */
+function consoleServer(ctx: Ctx, erasure = ctx.app.erasure) {
   const server = Fastify({ logger: false });
   registerConsoleRoutes(server, {
     console: createConsole(ctx.db.db, ctx.app.workflow),
     cancelBusiness: (id) => ctx.app.cancellation.cancel(id, 'console'),
-    eraseBusiness: (id, request) => ctx.app.erasure.erase(id, request),
+    eraseBusiness: (id, request) => erasure.erase(id, request),
   });
   return server;
 }
@@ -255,11 +256,23 @@ e2eTest('cancellation keeps the data: still readable through the retention perio
     const panel = await server.inject({ method: 'GET', url: `/console?tab=conversations&business=${businessId}&panel=client` });
     expect(panel.statusCode).toBe(200);
     expect(panel.body).toContain(name);
-    await server.close();
 
     // A later run finds nothing; the other business's own day comes ten days later.
     expect(await app.archive.tick(new Date(day30.getTime() + DAY), { businessIds: both })).toEqual([]);
     expect(await app.archive.tick(new Date(Date.parse(START) + 40 * DAY + 60 * 60_000), { businessIds: both })).toEqual([otherId]);
+
+    // Months later the owner asks to be erased: an archived business is erased like a cancelled one.
+    const erased = await server.inject({
+      method: 'POST',
+      url: `/console/api/businesses/${businessId}/erase`,
+      payload: { confirmName: name, requestedBy: 'owner', channel: 'email', requestedAt: '2027-02-01T09:00:00.000Z' },
+    });
+    await server.close();
+    expect(erased.statusCode).toBe(200);
+    expect(erased.json()).toEqual({ outcome: 'erased' });
+    expect(Object.values(await counts(db, businessId)).every((n) => n === 0)).toBe(true);
+    expect(businessFiles(files, businessId)).toEqual([]);
+    expect((await auditRows(db, businessId)).some((e) => e.event === 'ARCHIVE')).toBe(true);
   });
 });
 
@@ -308,6 +321,33 @@ e2eTest('erasure on request: the team erases a cancelled business from the conso
   });
 });
 
+
+e2eTest('erasure whose files cannot be deleted: the rows are erased and recorded, and the console answers 500 files_failed', { timeout: 90_000 }, async ({ e2e }) => {
+  await withBusiness(e2e, async (ctx) => {
+    const { app, db, files, businessId } = ctx;
+    await scheduledPost(ctx);
+    await app.cancellation.cancel(businessId, 'console');
+    const stored = businessFiles(files, businessId);
+    expect(stored.length).toBeGreaterThan(0);
+    // The storage refuses every delete (a Cloud Storage outage).
+    const outage = () => Promise.reject(new Error('storage unavailable'));
+    const server = consoleServer(ctx, createErasure({ db: db.db, storage: { removePrefix: outage, remove: outage } }));
+    const name = (await business(db, businessId))!.name;
+    const response = await server.inject({
+      method: 'POST',
+      url: `/console/api/businesses/${businessId}/erase`,
+      payload: { confirmName: name, requestedBy: 'representative', channel: 'letter', requestedAt: '2026-11-03T09:30:00.000Z' },
+    });
+    await server.close();
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ reason: 'files_failed' });
+    // The rows are gone and the request recorded; the files are left for the team.
+    expect(Object.values(await counts(db, businessId)).every((n) => n === 0)).toBe(true);
+    const records = await read(db, (tx) => tx.select().from(schema.erasureRequest).where(eq(schema.erasureRequest.businessId, businessId)));
+    expect(records).toEqual([expect.objectContaining({ requestedBy: 'representative', channel: 'letter', actor: DEV_ACTOR })]);
+    expect(businessFiles(files, businessId)).toEqual(stored);
+  });
+});
 
 e2eTest('the monthly report: the owner gets the previous month’s posts, reach and engagement, and nothing for a month without data', { timeout: 90_000 }, async ({ e2e }) => {
   await withBusiness(e2e, async (ctx) => {

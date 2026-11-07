@@ -2,7 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { asError, log } from '../../shared/logger.js';
 
 // Erasure on the owner's explicit request (2026-11-07; technical-design.md, Cancellation, archiving,
 // erasure and the monthly report; database-schema.md, erasure_request and Least privilege). The only
@@ -32,8 +32,6 @@ export interface Erasure {
 
 /** Only a business the cancellation already closed (channels, publications, subscription) is erased. */
 const ERASABLE = ['cancelled', 'archived'] as const;
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
 class NothingDeleted extends Error {}
 
@@ -82,7 +80,7 @@ export function createErasure(deps: { db: Database; storage?: ErasureStorage }):
         if (outside.length) await deps.storage.remove(outside);
       } catch (error) {
         // The rows are gone, so nothing can retry this: the team finishes the files by hand.
-        log.error('business files not erased', { businessId, error: errorText(error) });
+        log.error('business files not erased', { businessId, error: asError(error) });
         return { outcome: 'files_failed' };
       }
       return { outcome: 'erased' };

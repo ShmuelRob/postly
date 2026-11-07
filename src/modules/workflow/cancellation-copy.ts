@@ -1,6 +1,6 @@
 // Owner-facing templates for cancellation and the monthly report (WP-43). Provisional (H6): drafted
 // from the PRD and queued for the human. Since 2026-11-07 `subscription_cancelled` says the data is kept
-// (cancellation archives, it never deletes) and has no variables; review queue item 81. Bodies to submit for WhatsApp approval; the variables are
+// (cancellation archives, it never deletes) and has no variables; docs/review-queue/pr-150.md. Bodies to submit for WhatsApp approval; the variables are
 // named, the provider maps them to its placeholders.
 
 export const CANCELLED_TEMPLATE = 'subscription_cancelled';

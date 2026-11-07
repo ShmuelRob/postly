@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../../src/config.js';
 import { createPostgresSimulatorStore } from '../../src/db/index.js';
-import { asError, log, setLogLabels } from '../../src/shared/logger.js';
+import { asError, log, setLogLabels, setLogLevel } from '../../src/shared/logger.js';
 import { createSandbox } from './sandbox.js';
 
 // The dev sandbox service (WP-51, docs/deployment.md "The sandbox"), from its own image
@@ -18,6 +18,7 @@ const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.j
 async function main() {
   setLogLabels({ process: 'sandbox' });
   const config = loadConfig(process.env);
+  setLogLevel(config.logLevel);
   if (config.env !== 'dev' && config.env !== 'local') throw new Error(`the sandbox runs only in dev or local, not ${config.env}`);
   if (config.simulators.store !== 'postgres') throw new Error('the sandbox needs SIMULATOR_STORE=postgres, shared with web and worker');
   const ownerPhone = process.env.SANDBOX_OWNER_PHONE;

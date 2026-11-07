@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm/errors';
-import { asError, log, setLogLabels, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { addLogContext, asError, errorDetail, errorText, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
 
@@ -41,10 +41,12 @@ describe('logger format', () => {
 
   it('maps every level to a Cloud Logging severity', () => {
     capture();
+    setLogLevel('debug');
     log.debug('a');
     log.info('b');
     log.warn('c');
     log.error('d');
+    setLogLevel(undefined);
     expect(parsed().map((l) => l.severity)).toEqual(['DEBUG', 'INFO', 'WARNING', 'ERROR']);
   });
 
@@ -150,7 +152,8 @@ describe('no customer content or secret in a log line', () => {
 });
 
 describe('one logger', () => {
-  it('no code in src/ writes to the console except the logger', () => {
+  // Walks every source file: slow on a loaded machine, so a longer timeout.
+  it('no code in src/ writes to the console except the logger', { timeout: 30_000 }, () => {
     const root = join(import.meta.dirname, '..');
     const offenders: string[] = [];
     const walk = (dir: string) => {
@@ -168,6 +171,57 @@ describe('one logger', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+
+  // Review of PRs #136 and #143: an error turned into text by hand skips safeMessage (a query's
+  // parameters, a quoted value) and loses its code, stack and cause. Log fields take the error itself
+  // or asError(error); text stored in the database takes errorText(error).
+  it('no code turns an error into text by hand: no String(error), no error interpolated in a template, no error.message read raw', { timeout: 30_000 }, () => {
+    const roots = [join(import.meta.dirname, '..'), join(import.meta.dirname, '..', '..', 'playground', 'sandbox')];
+    const ERR = '(?:error|err|e|cause|recordError)';
+    const patterns = [
+      new RegExp(`\\bString\\(\\s*${ERR}\\s*\\)`),
+      new RegExp(`\\$\\{\\s*${ERR}(?:\\.message)?\\s*\\}`),
+      new RegExp(`\\b${ERR} instanceof Error \\? ${ERR}\\.message`),
+      /\bconsole\b\)?\.(?:log|info|warn|error|debug)\b|\?\? console\b/,
+    ];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !path.endsWith(join('shared', 'logger.ts'))) {
+          readFileSync(path, 'utf8')
+            .split('\n')
+            .forEach((text, i) => {
+              if (patterns.some((p) => p.test(text))) offenders.push(`${path}:${i + 1}: ${text.trim()}`);
+            });
+        }
+      }
+    };
+    for (const root of roots) walk(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('errorDetail, for a console item that stored String(error) before', () => {
+  it('is the error name and its safe message, as String(error) was, never the query params', () => {
+    expect(errorDetail(new Error('provider down'))).toBe('Error: provider down');
+    expect(errorDetail(Object.assign(new TypeError('bad'), {}))).toBe('TypeError: bad');
+    const query = new DrizzleQueryError('insert into "message" ("body") values ($1)', [CUSTOMER_TEXT], new Error('x'));
+    expect(errorDetail(query)).toBe('Error: Failed query: insert into "message" ("body") values ($1) (1 params)');
+    expect(errorDetail('plain text')).toBe('Error: plain text');
+  });
+});
+
+describe('errorText, for an error stored as text', () => {
+  it('is the safe message, cut at 500 characters, never the query params', () => {
+    expect(errorText(new Error('boom'))).toBe('boom');
+    const query = new DrizzleQueryError('insert into "message" ("body") values ($1)', [CUSTOMER_TEXT], new Error('x'));
+    expect(errorText(query)).toBe('Failed query: insert into "message" ("body") values ($1) (1 params)');
+    expect(errorText('plain text')).toBe('plain text');
+    expect(errorText({ message: 'a'.repeat(2000) })).toHaveLength(500);
+    expect(errorText({ text: CUSTOMER_TEXT })).toBe('non-error object thrown');
   });
 });
 
@@ -279,6 +333,50 @@ describe('error serialization', () => {
     const text = lines.join('\n');
     for (const secret of FORBIDDEN) expect(text).not.toContain(secret);
     expect(text).not.toContain(PASSWORD);
+  });
+});
+
+// docs/observability.md, "Following one message": the correlation ids, and LOG_LEVEL.
+describe('correlation and log level', () => {
+  it('carries correlationId and agentTurnId as labels', () => {
+    capture();
+    withLogContext({ businessId: 'b1', correlationId: 'm1', agentTurnId: 't1' }, () => log.info('agent tool call'));
+    const [line] = parsed();
+    expect(line!['logging.googleapis.com/labels']).toMatchObject({ businessId: 'b1', correlationId: 'm1', agentTurnId: 't1' });
+    expect(line).not.toHaveProperty('correlationId');
+  });
+
+  it('addLogContext adds ids to the current scope only', async () => {
+    capture();
+    await withLogContext({ businessId: 'b1' }, async () => {
+      addLogContext({ agentTurnId: 't1' });
+      await Promise.resolve();
+      log.info('inside');
+    });
+    log.info('outside');
+    addLogContext({ agentTurnId: 'nowhere' });
+    log.info('no scope');
+    const [inside, outside, none] = parsed().map((l) => l['logging.googleapis.com/labels'] as Record<string, string> | undefined);
+    expect(inside).toMatchObject({ businessId: 'b1', agentTurnId: 't1' });
+    expect(outside?.agentTurnId).toBeUndefined();
+    expect(none?.agentTurnId).toBeUndefined();
+  });
+
+  it('writes nothing below the log level; info by default', () => {
+    capture();
+    try {
+      log.debug('hidden by default');
+      log.info('shown');
+      setLogLevel('warn');
+      log.info('hidden');
+      log.warn('warned');
+      log.error('failed');
+      setLogLevel('debug');
+      log.debug('debugged');
+    } finally {
+      setLogLevel(undefined);
+    }
+    expect(parsed().map((l) => l.message)).toEqual(['shown', 'warned', 'failed', 'debugged']);
   });
 });
 

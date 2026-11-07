@@ -5,7 +5,7 @@ import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTas
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
 import type { Database } from '../../db/index.js';
 import { consoleItem, modelRun, modelTaskConfig, promptTemplate } from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { errorText, log } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** Resolves a business's media asset to a URL the model provider can fetch (voice notes, photos). */
@@ -74,11 +74,52 @@ export class ModelTaskFailedError extends Error {
 
 type Config = typeof modelTaskConfig.$inferSelect;
 type Target = { provider: string; model: string };
-type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string };
+/** `invalidPaths`: the Zod issue paths of an invalid output, never its values (docs/observability.md). */
+type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string; invalidPaths?: string };
+
+type SchemaDef = { type?: string; shape?: Record<string, z.ZodType>; valueType?: z.ZodType; element?: z.ZodType; innerType?: z.ZodType; in?: z.ZodType; items?: z.ZodType[]; getter?: () => z.ZodType };
+const defOf = (schema: z.ZodType | undefined): SchemaDef | undefined => (schema as unknown as { _zod?: { def?: SchemaDef } } | undefined)?._zod?.def;
+const WRAPPERS = new Set(['optional', 'nullable', 'default', 'prefault', 'readonly', 'catch', 'nonoptional']);
+
+/** One step down the schema along a path segment, and how to write that segment: a field name, `#` or `*`. */
+function stepInto(schema: z.ZodType | undefined, segment: PropertyKey): { next: z.ZodType | undefined; written: string } {
+  let def = defOf(schema);
+  for (let i = 0; def && i < 10; i++) {
+    if (def.type && WRAPPERS.has(def.type)) def = defOf(def.innerType);
+    else if (def.type === 'pipe') def = defOf(def.in);
+    else if (def.type === 'lazy' && def.getter) def = defOf(def.getter());
+    else break;
+  }
+  if (typeof segment === 'number') return { next: def?.type === 'array' ? def.element : def?.type === 'tuple' ? def.items?.[segment] : undefined, written: '#' };
+  const key = String(segment);
+  if (def?.type === 'object' && def.shape && key in def.shape) return { next: def.shape[key], written: key };
+  // A record key is what the model wrote, so it may be content; a key the schema cannot place is a
+  // plain identifier at most.
+  if (def?.type === 'record') return { next: def.valueType, written: '*' };
+  return { next: undefined, written: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(key) ? key : '*' };
+}
+
+/**
+ * Where an output was invalid, for `invalidPaths` (docs/observability.md, Timing lines): the issue
+ * paths as field names, array indexes as `#`, record keys as `*`, never the values.
+ */
+export function issuePaths(schema: z.ZodType, error: z.ZodError): string {
+  const paths = error.issues.map((issue) => {
+    if (issue.path.length === 0) return '(root)';
+    let at: z.ZodType | undefined = schema;
+    return issue.path
+      .map((segment) => {
+        const { next, written } = stepInto(at, segment);
+        at = next;
+        return written;
+      })
+      .join('.');
+  });
+  return [...new Set(paths)].join(',').slice(0, 200);
+}
 
 const attemptOutcome = (a: Attempt) => (a.valid ? 'valid' : a.result ? 'invalid' : 'provider_error');
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
   const providerNamed = (name: string): ModelProvider => {
@@ -122,7 +163,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
     }
     const check = modelTasks[task].output.safeParse(result.output);
     if (check.success) return { result, output: check.data, valid: true };
-    return { result, valid: false, error: z.prettifyError(check.error) };
+    return { result, valid: false, error: z.prettifyError(check.error), invalidPaths: issuePaths(modelTasks[task].output, check.error) };
   }
 
   return {
@@ -179,6 +220,8 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
       const errors: string[] = [];
       let spent = 0;
       let target = primary;
+      // Why the task failed, for its log line: the last attempt's outcome and paths, or the cost cap.
+      let lastFailure: { reason: 'invalid' | 'provider_error' | 'cost_limit'; invalidPaths?: string } = { reason: 'invalid' };
 
       for (let n = 1; n <= config.maxRetries + 1; n++) {
         const started = performance.now();
@@ -194,13 +237,16 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         metrics.count('postly.model.calls.count', { task, outcome: attemptOutcome(outcome) });
         metrics.record('postly.model.latency', durationMs, { task, outcome: attemptOutcome(outcome) });
         if (outcome.result) metrics.count('postly.model.cost_usd', { task }, outcome.result.costUsd);
-        // docs/observability.md, Timing lines: where a reply's time goes, with no input or output.
-        log.info('model call', {
+        // docs/observability.md, Timing lines: where a reply's time goes, with no input or output. An
+        // invalid output or a provider error is retried, so it is a WARNING.
+        (outcome.valid ? log.info : log.warn)('model call', {
           task,
           provider: target.provider,
           model: target.model,
+          promptVersion: config.activePromptVersion,
           attempt: n,
           outcome: attemptOutcome(outcome),
+          ...(outcome.invalidPaths ? { invalidPaths: outcome.invalidPaths } : {}),
           durationMs,
           inputTokens: outcome.result?.inputTokens,
           outputTokens: outcome.result?.outputTokens,
@@ -233,12 +279,14 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
         if (outcome.valid) return outcome.output as ModelTaskOutput<typeof task>;
 
         errors.push(outcome.error ?? 'invalid output');
+        lastFailure = { reason: outcome.result ? 'invalid' : 'provider_error', ...(outcome.invalidPaths ? { invalidPaths: outcome.invalidPaths } : {}) };
         const last = outcome.result?.costUsd ?? 0;
         spent += last;
         // The cap counts every attempt: a retry starts only when it would stay within the cap,
         // judged by the last attempt's cost (agent.md, Limits).
         if (spent >= maxCost || (n <= config.maxRetries && spent + last > maxCost)) {
           errors.push(`cost limit reached: ${spent.toFixed(6)} of ${maxCost.toFixed(6)} USD`);
+          lastFailure = { ...lastFailure, reason: 'cost_limit' };
           break;
         }
         // A provider failure (no output at all) moves the next attempt to the fallback, if any.
@@ -257,6 +305,16 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
           .returning({ id: consoleItem.id }),
       );
       if (!item) throw new Error('console_item insert returned no row');
+      // docs/observability.md, "Following one message": a person must look, so ERROR; codes and paths only.
+      log.error('model task failed', {
+        businessId,
+        task,
+        promptVersion: template.version,
+        attempts: runIds.length,
+        ...lastFailure,
+        consoleItemId: item.id,
+        ...(options.agentTurnId ? { agentTurnId: options.agentTurnId } : {}),
+      });
       throw new ModelTaskFailedError(task, runIds.length, item.id, errors.at(-1) ?? 'invalid output');
     },
   };

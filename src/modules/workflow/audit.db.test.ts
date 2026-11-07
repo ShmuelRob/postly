@@ -4,6 +4,7 @@ import { afterAll, describe, expect, inject, it } from 'vitest';
 import { expectDbError } from '../../../test/db/rows.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
+import { withLogContext } from '../../shared/logger.js';
 import { createWorkflow } from './index.js';
 
 // WP-46: every applied and every rejected workflow event leaves one workflow_event row, written in the
@@ -50,6 +51,28 @@ describe('workflow audit trail', () => {
         correlationId,
       }),
     ]);
+  });
+
+  // docs/observability.md, "Following one message": the inbound message's correlationId reaches the audit row.
+  it('takes the correlation id from the log context when the caller passes none, and the caller wins over it', async () => {
+    const b = await newBusiness();
+    const fromContext = randomUUID();
+    const explicit = randomUUID();
+    await withLogContext({ correlationId: fromContext }, async () => {
+      await workflow.apply(b, { machine: 'conversation', id: b, event: 'UPDATE_RECEIVED', source: 'inbound' });
+      await workflow.apply(b, { machine: 'conversation', id: b, event: 'QUESTION_ASKED', source: 'system', correlationId: explicit });
+    });
+    await workflow.apply(b, { machine: 'conversation', id: b, event: 'SCHEDULE_CONFIRMED', source: 'system' });
+    expect((await auditOf(b)).map((r) => r.correlationId)).toEqual([fromContext, explicit, null]);
+  });
+
+  it('logs every applied event with its machine, states and event, and no content', async () => {
+    const b = await newBusiness();
+    const applied: unknown[] = [];
+    const logged = createWorkflow(db, { rejected: () => {}, applied: (entry) => void applied.push(entry) });
+    await logged.apply(b, { machine: 'conversation', id: b, event: 'UPDATE_RECEIVED', source: 'inbound' });
+    await logged.apply(b, { machine: 'conversation', id: b, event: 'SCHEDULE_CONFIRMED', source: 'system' });
+    expect(applied).toEqual([{ businessId: b, machine: 'conversation', id: b, event: 'UPDATE_RECEIVED', source: 'inbound', from: 'idle', to: 'processing_update' }]);
   });
 
   it('records each kind of rejection', async () => {

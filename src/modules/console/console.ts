@@ -28,10 +28,10 @@ import type {
 // The team console (technical-design.md, "Console (Phase 1)"): reads and writes only through
 // withSystem('console') and the workflow module's public API.
 
-/** A refused console action: 404 when the row is missing, 409 when its state does not allow it. */
+/** A refused console action: 404 when the row is missing, 409 when its state does not allow it, 500 when it ran only in part (an erasure whose files failed). */
 export class ConsoleActionError extends Error {
   constructor(
-    readonly status: 400 | 404 | 409,
+    readonly status: 400 | 404 | 409 | 500,
     readonly reason: string,
     readonly detail?: string,
   ) {

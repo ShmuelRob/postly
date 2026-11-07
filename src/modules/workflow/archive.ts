@@ -1,7 +1,7 @@
 import { and, eq, inArray, lte } from 'drizzle-orm';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { asError, log } from '../../shared/logger.js';
 import type { Workflow } from './workflow.js';
 
 // The business archive (2026-11-07, the human's "Keep, archive it"; technical-design.md, Cancellation,
@@ -12,8 +12,6 @@ export interface BusinessArchive {
   /** Archives every cancelled business due at `now`; `businessIds` limits it (tests share a database). Returns the archived ids. */
   tick(now: Date, options?: { businessIds?: string[] }): Promise<string[]>;
 }
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
 export function createBusinessArchive(deps: { db: Database; workflow: Workflow }): BusinessArchive {
   const { db, workflow } = deps;
@@ -44,7 +42,7 @@ export function createBusinessArchive(deps: { db: Database; workflow: Workflow }
           });
           if (result.ok) archived.push(id);
         } catch (error) {
-          log.error('business archive failed', { businessId: id, error: errorText(error) });
+          log.error('business archive failed', { businessId: id, error: asError(error) });
         }
       }
       return archived;

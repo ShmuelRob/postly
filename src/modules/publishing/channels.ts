@@ -3,7 +3,7 @@ import type { Network } from '../../contracts/common.js';
 import type { PublishingProvider } from '../../contracts/providers/publishing.js';
 import type { Database, Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { log } from '../../shared/logger.js';
+import { errorText, log } from '../../shared/logger.js';
 
 /**
  * The structured line the channel-disconnected alert counts (docs/observability.md, "Log-based
@@ -153,7 +153,7 @@ export function createChannels(deps: { db: Database; provider: PublishingProvide
           try {
             await provider.disconnectAccount({ providerAccountId: row.providerAccountId, network: row.network });
           } catch (error) {
-            providerError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+            providerError = errorText(error);
           }
         }
         const result = await deps.apply(businessId, {
