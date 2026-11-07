@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Phone } from './contracts/common.js';
-import { type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
+import { ALL_LOGINS, type DatabaseUrls, databaseUrls, JOBS_LOGIN, poolConnections, PROCESS_LOGINS, SIMULATOR_LOGIN } from './db/index.js';
 import { IAP_AUDIENCE_FORMS, IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
 import { DEFAULT_BURST_QUIET_MS } from './modules/messaging/index.js';
 import { realModelsRefused } from './modules/model-layer/index.js';
@@ -91,6 +91,37 @@ export interface Config {
 export const SIMULATED_ENVS: readonly string[] = ['local', 'test', 'dev'];
 
 export const passwordVar = (login: string) => `DB_PASSWORD_${login.toUpperCase()}`;
+
+/** The cloud environments, and the processes deployed to them (the sandbox only to dev). */
+export type CloudEnv = 'dev' | 'stage' | 'prod';
+export const CLOUD_PROCESSES = ['web', 'worker', 'console', 'migrate', 'sandbox'] as const;
+export type CloudProcess = (typeof CLOUD_PROCESSES)[number];
+
+/**
+ * The environment variable names a process needs to start in a cloud environment (docs/deployment.md,
+ * "Environment variables: checked before a deploy"): what loadConfig (and `main.ts migrate`, and the
+ * sandbox) refuse to start without there. Names only. CI checks Terraform sets each of them
+ * (src/required-env-infra.test.ts); Deploy checks the live services have them before the migration.
+ */
+export function requiredCloudEnv(process: CloudProcess, env: CloudEnv): string[] {
+  const simulated = SIMULATED_ENVS.includes(env);
+  const simulator = simulated ? [passwordVar(SIMULATOR_LOGIN)] : [];
+  if (process === 'migrate') return ['MIGRATE_ADMIN_URL', ...ALL_LOGINS.map(passwordVar), ...simulator];
+  const logins = PROCESS_LOGINS[process === 'sandbox' ? 'web' : process];
+  return [
+    'POSTLY_ENV',
+    'POSTLY_PROVIDERS',
+    'DATABASE_URL',
+    'PUBLIC_BASE_URL',
+    'BUSINESS_NUMBER',
+    'MESSAGING_WEBHOOK_SECRET',
+    // Every cloud environment runs on Vertex AI.
+    'VERTEX_PROJECT',
+    ...logins.map(passwordVar),
+    ...(simulated ? ['SIMULATOR_STORE', ...simulator] : []),
+    ...(process === 'sandbox' ? ['SANDBOX_OWNER_PHONE'] : []),
+  ];
+}
 
 function loginUrl(serverUrl: string, login: string, password: string): string {
   const url = new URL(serverUrl);
