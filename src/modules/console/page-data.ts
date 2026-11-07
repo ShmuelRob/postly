@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type * as schema from '../../db/schema.js';
 import { ConsoleActionError, type ConsoleService, type PlanPriceRow } from './console.js';
+import { lastDays } from './insights.js';
 import type {
   AgentConfigRow,
   BusinessDetail,
@@ -8,6 +9,7 @@ import type {
   ConsoleActionRow,
   ModelRunRow,
   ModelRunSummary,
+  Insights,
   ModelTaskRow,
   Overview,
   PostDetail,
@@ -17,7 +19,8 @@ import type {
 // What the console page needs for one request (technical-design.md, "Console (Phase 1)"): the query
 // picks the tab and the selection, and only that tab's data is read.
 
-export const TABS = ['overview', 'manage', 'conversations'] as const;
+/** In the order of the tab bar (technical-design.md, "Console (Phase 1)"). */
+export const TABS = ['overview', 'insights', 'manage', 'businesses', 'conversations'] as const;
 export type Tab = (typeof TABS)[number];
 
 export const PageQuery = z.object({
@@ -27,6 +30,10 @@ export const PageQuery = z.object({
   panel: z.enum(['client', 'profile']).optional().catch(undefined),
   q: z.string().trim().max(100).optional().catch(undefined),
   kind: z.string().trim().max(60).optional().catch(undefined),
+  /** Insights: a preset of the last 7, 30 or 90 days, or `from` and `to` (UTC days). */
+  range: z.enum(['7d', '30d', '90d']).optional().catch(undefined),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().catch(undefined),
 });
 export type PageQuery = z.infer<typeof PageQuery>;
 
@@ -41,6 +48,8 @@ export interface ConsolePageData {
   settings: SystemSettings;
   businesses: BusinessRow[];
   items: Item[];
+  /** The Insights tab, for its range; `rangeError` when the chosen range was refused (the default is shown instead). */
+  insights?: { data: Insights; rangeError?: string };
   /** The run view (`run=`); null when the id is unknown. */
   run?: ModelRunRow | null;
   manage?: {
@@ -78,6 +87,16 @@ export async function loadPageData(c: ConsoleService, rawQuery: unknown, actor: 
   if (query.run) {
     data.run = await orNull(c.modelRun(query.run));
     return data;
+  }
+  if (query.tab === 'insights') {
+    const preset = { '7d': 7, '30d': 30, '90d': 90 }[query.range ?? '30d'];
+    const chosen = query.from && query.to ? { from: query.from, to: query.to } : lastDays(preset);
+    try {
+      data.insights = { data: await c.insights(chosen) };
+    } catch (error) {
+      if (!(error instanceof ConsoleActionError)) throw error;
+      data.insights = { data: await c.insights(lastDays(30)), rangeError: error.detail ?? error.reason };
+    }
   }
   if (query.tab === 'manage') {
     const [modelTasks, agentConfigs, price, actions, profile] = await Promise.all([
