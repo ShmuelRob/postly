@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { observeRequests } from './http-telemetry.js';
@@ -54,6 +55,25 @@ describe('route errors (web and console)', () => {
     expect((await server.inject({ method: 'GET', url: '/bad' })).statusCode).toBe(400);
     expect((await server.inject({ method: 'GET', url: '/teapot' })).statusCode).toBe(404);
     expect(parsed().filter((l) => l.severity === 'ERROR')).toEqual([]);
+    await server.close();
+  });
+});
+
+// Review of PR #136: a failing query on the webhook route must not put the owner's text in the log.
+describe('a failing query on a route', () => {
+  it('logs the SQL and the parameter count, never the parameters', async () => {
+    const text = 'מבצע 1+1 על כל הקרואסונים רק השבוע';
+    lines = [];
+    setLogSink((line) => lines.push(line));
+    const server = Fastify({ logger: false });
+    observeRequests(server);
+    server.post('/webhooks/whatsapp', async () => {
+      throw new DrizzleQueryError('insert into "message" ("body") values ($1)', [text], new Error('connection terminated'));
+    });
+    expect((await server.inject({ method: 'POST', url: '/webhooks/whatsapp', payload: { text } })).statusCode).toBe(500);
+    const [line] = parsed().filter((l) => l.severity === 'ERROR');
+    expect(line).toMatchObject({ route: '/webhooks/whatsapp', error: 'Failed query: insert into "message" ("body") values ($1) (1 params)', errorCause: 'Error: connection terminated' });
+    expect(lines.join(' ')).not.toContain(text);
     await server.close();
   });
 });
