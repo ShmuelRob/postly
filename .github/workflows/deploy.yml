@@ -276,6 +276,35 @@ jobs:
           if [ "$ENV_NAME" = dev ] && [ "$(svc sandbox)" != "$SANDBOX_IMAGE" ]; then live=false; fi
           if [ "$live" = true ]; then echo "::notice::$ENV_NAME already runs $IMAGE; nothing to roll out"; fi
           echo "live=$live" >> "$GITHUB_OUTPUT"
+      # The pre-flight (docs/deployment.md, "Environment variables: checked before a deploy"): every
+      # live service and the migrate job already has each variable this image requires, so a release
+      # whose Terraform is not applied yet stops here, before anything changes. Only names are read
+      # (jq keeps `.name`); no value reaches the log.
+      - name: Check the live services have every variable the image requires
+        if: steps.live.outputs.live != 'true'
+        run: |
+          gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
+          required="$(docker run --rm --entrypoint node "$IMAGE" dist/src/main.js required-env "$ENV_NAME")"
+          live_names() {
+            if [ "$1" = migrate ]; then
+              gcloud run jobs describe "$PREFIX-migrate" --region "$REGION" --format json \
+                | jq -r '.spec.template.spec.template.spec.containers[0].env // [] | .[].name'
+            else
+              gcloud run services describe "$PREFIX-$1" --region "$REGION" --format json \
+                | jq -r '.spec.template.spec.containers[0].env // [] | .[].name'
+            fi
+          }
+          missing=0
+          for p in $(jq -r 'keys[]' <<< "$required"); do
+            have="$(live_names "$p")"
+            for v in $(jq -r --arg p "$p" '.[$p][]' <<< "$required"); do
+              if ! grep -qx "$v" <<< "$have"; then
+                echo "::error::$PREFIX-$p lacks $v, which this image requires: apply Terraform first"
+                missing=1
+              fi
+            done
+          done
+          exit "$missing"
       - name: Run the migration job (migrations first, then code)
         if: steps.live.outputs.live != 'true'
         run: |
