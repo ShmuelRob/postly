@@ -288,6 +288,28 @@ describe('end_turn and the owner who waits for a reply', () => {
     expect(await consoleItems()).toHaveLength(0);
   });
 
+  // docs/observability.md, "Following one message": a hand-off logs its kind and reason code, never free text.
+  it('logs each hand-off with its kind and reason code, and drops a reason that is not a code word', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      const turnId = randomUUID();
+      await handOff({ db, messaging }, { businessId, turnId, kind: 'agent_limit', details: { reason: 'max_steps', agent: 'onboarding' }, approverPhone: approver, personaName: 'פוסטלי', language: 'he', now: new Date() });
+      await handOff({ db, messaging }, { businessId, turnId, kind: 'handoff', details: { reason: 'הלקוח כועס מאוד' }, approverPhone: approver, personaName: 'פוסטלי', language: 'he', now: new Date() });
+      await handOff({ db, messaging }, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', error: 'Error: boom' }, approverPhone: approver, personaName: 'פוסטלי', language: 'he', now: new Date() });
+    } finally {
+      setLogSink(undefined);
+    }
+    const handoffs = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.message === 'agent hand-off');
+    expect(handoffs.map((l) => [l.severity, l.kind, l.reason, l.agent])).toEqual([
+      ['WARNING', 'agent_limit', 'max_steps', 'onboarding'],
+      ['WARNING', 'handoff', undefined, undefined],
+      ['ERROR', 'agent_limit', 'error', undefined],
+    ]);
+    expect(lines.join(' ')).not.toContain('הלקוח כועס');
+    expect(lines.join(' ')).not.toContain(approver);
+  });
+
   it('the hand-off line reaches the approver even when the turn never read the context', async () => {
     await handOff(
       { db, messaging },

@@ -98,7 +98,7 @@ describe('model layer run', () => {
     expect(calls[0]).toMatchObject({ task: 'intent_detection', provider: 'google', model: 'gemini-3.5-flash-lite', attempt: 1, outcome: 'invalid' });
     expect(calls[1]).toMatchObject({ attempt: 2, outcome: 'valid' });
     // docs/observability.md, "Following one message": the prompt version, and the Zod issue paths only.
-    expect(calls[0]).toMatchObject({ severity: 'WARNING', promptVersion: 1, invalidPaths: 'confidence' });
+    expect(calls[0]).toMatchObject({ severity: 'WARNING', promptVersion: 1, invalidPaths: 'intent,confidence' });
     expect(calls[1]).toMatchObject({ severity: 'INFO', promptVersion: 1 });
     expect(calls[1]).not.toHaveProperty('invalidPaths');
     for (const call of calls) {
@@ -119,6 +119,23 @@ describe('model layer run', () => {
     expect(runs[0]?.output).toEqual({ intent: 'approve', confidence: 1 });
     expect(runs[0]?.error).toMatch(/intent/);
     expect(await consoleOf(businessId)).toHaveLength(0);
+  });
+
+  // docs/observability.md, "Following one message": a task that fails every attempt is one ERROR line, with codes only.
+  it('logs a task that fails every attempt as model task failed, with its reason and paths, and nothing of the output', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      sim.scriptInvalid('intent_detection', { intent: 'approve' }, { intent: 'approve' }, { intent: 'approve' });
+      await layer().run(businessId, 'intent_detection', intent).catch(() => undefined);
+    } finally {
+      setLogSink(undefined);
+    }
+    const failed = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.message === 'model task failed');
+    expect(failed).toEqual([
+      expect.objectContaining({ severity: 'ERROR', task: 'intent_detection', promptVersion: 1, attempts: 3, reason: 'invalid', invalidPaths: 'intent,confidence', consoleItemId: expect.any(String) }),
+    ]);
+    expect(lines.join(' ')).not.toContain(intent.text);
   });
 
   it('after max_retries routes the task to console_item and throws', async () => {

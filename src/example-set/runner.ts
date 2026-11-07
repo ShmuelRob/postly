@@ -10,6 +10,7 @@ type VisualStyle = (typeof VISUAL_STYLES)[number];
 import { BADGE_KINDS, type BadgeKind, stickerText } from '../contracts/design-spec.js';
 import type { RenderRequest, TemplateRenderer } from '../contracts/providers/renderer.js';
 import type { AssetLoader, BusinessRenderContext, FileStore } from '../modules/design/index.js';
+import { asError, errorText } from '../shared/logger.js';
 import { type ExampleEntry, loadExampleSet } from './loader.js';
 import { OverlayText } from './schema.js';
 
@@ -148,7 +149,7 @@ export async function buildGallery(deps: GalleryDeps): Promise<GalleryResult> {
               for (const file of result[network] ?? []) cell.images.push({ network, file: file.storagePath });
             }
           } catch (error) {
-            cell.failures.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+            cell.failures.push(`${asError(error).name}: ${errorText(error)}`);
           }
           cells.push(cell);
         }

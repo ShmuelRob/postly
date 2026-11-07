@@ -33,6 +33,17 @@ export async function handOff(
       .where(and(eq(t.businessId, businessId), isNull(t.handoffAt)));
     await tx.insert(schema.consoleItem).values({ businessId, kind: input.kind, referenceId: input.turnId, details: { ...input.details, agentTurnId: input.turnId } });
   });
+  // docs/observability.md, "Following one message": a person takes over. Only code words: the agent's
+  // own reason for a hand-off may be free text, and is then left out. A hand-off after an error is ERROR.
+  const code = (value: unknown) => (typeof value === 'string' && /^[a-z][a-z0-9_]{0,40}$/.test(value) ? value : undefined);
+  const reason = code(input.details.reason);
+  (reason === 'error' ? log.error : log.warn)('agent hand-off', {
+    businessId,
+    agentTurnId: input.turnId,
+    kind: input.kind,
+    ...(reason ? { reason } : {}),
+    ...(code(input.details.agent) ? { agent: code(input.details.agent) } : {}),
+  });
   // A turn that failed before its context was read has no number yet: the approver's, from the business.
   const to =
     input.approverPhone ||

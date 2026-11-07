@@ -58,7 +58,10 @@ export function withLogContext<T>(fields: LogContext, fn: () => T): T {
 
 /**
  * Adds ids to the current scope, for an id known only part way through it (an agent turn's id once
- * its row exists). Only inside a withLogContext scope; outside one it does nothing.
+ * its row exists). Only inside a withLogContext scope; outside one it does nothing. It mutates the
+ * scope's store in place, so it reaches every later line of that scope, including code that runs
+ * concurrently in it; open a scope of your own (withLogContext({}, fn)) so an id never leaks to the
+ * caller's later lines, as the agent runtime does per turn.
  */
 export function addLogContext(fields: LogContext): void {
   const store = storage.getStore();
@@ -119,6 +122,15 @@ function safeMessage(error: Error): string {
     message = Array.isArray(params) ? `${sqlText} (${params.length} params)` : sqlText;
   }
   return message.replace(/: "(?:[^"\\]|\\.)*"/g, ': "[redacted]"');
+}
+
+/**
+ * Anything thrown, as text to store (a console item's details, `last_error`, `model_run.error`, a
+ * refusal's detail): the safe message, never a query's parameters, cut at 500 characters. Log fields
+ * take the error itself (`{ error }` or `asError(error)`), never this text (docs/observability.md, Errors).
+ */
+export function errorText(value: unknown, max = 500): string {
+  return safeMessage(asError(value)).slice(0, max);
 }
 
 type ErrorLike = { message: string; name?: unknown; stack?: unknown; code?: unknown; cause?: unknown };

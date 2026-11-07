@@ -12,7 +12,7 @@ import {
 } from '../../contracts/providers/messaging.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import { addLogContext, asError, log, withLogContext } from '../../shared/logger.js';
+import { addLogContext, asError, currentLogContext, log, withLogContext } from '../../shared/logger.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** technical-design.md, Operational defaults: a burst ends after 20 seconds without a new message. */
@@ -272,7 +272,8 @@ export function createMessaging(options: MessagingOptions): Messaging {
       if (step.kind === 'none') return delivered;
       if (step.kind === 'wait') {
         log.debug('inbound burst waiting', { businessId, waitMs: step.at.getTime() - now().getTime() });
-        await wake.request(businessId, from, step.at);
+        // The next job keeps this one's correlation (docs/observability.md, "Following one message").
+        await wake.request(businessId, from, step.at, currentLogContext().correlationId);
         return delivered;
       }
       const ids = step.burst.messages.map((x) => x.id);

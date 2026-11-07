@@ -3,7 +3,7 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { ApprovalRefusal } from '../contracts/approval.js';
 import { NETWORKS } from '../contracts/common.js';
 import { MODEL_TASK_NAMES } from '../contracts/model-tasks.js';
-import { scrub } from './logger.js';
+import { errorText, scrub } from './logger.js';
 
 // Metrics and spans (docs/observability.md, Metrics and Tracing, WP-48). Code records only through
 // `metrics` and `withSpan`; only the OpenTelemetry API is used here, so nothing is exported until a
@@ -162,7 +162,7 @@ export async function withSpan<T>(name: string, attributes: SpanAttributes, fn: 
       span.setStatus({ code: SpanStatusCode.OK });
       return result;
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: scrub(error instanceof Error ? error.message : String(error)) });
+      span.setStatus({ code: SpanStatusCode.ERROR, message: scrub(errorText(error)) });
       throw error;
     } finally {
       span.end();

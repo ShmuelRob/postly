@@ -8,7 +8,7 @@ import {
   type AgentTurnStopReason,
 } from '../../contracts/agent.js';
 import * as schema from '../../db/schema.js';
-import { addLogContext, asError, log, withLogContext } from '../../shared/logger.js';
+import { addLogContext, asError, errorText, log, withLogContext } from '../../shared/logger.js';
 import { ModelTaskFailedError } from '../model-layer/index.js';
 import { agents as defaultAgents } from './agents/index.js';
 import { buildContext } from './context.js';
@@ -276,7 +276,7 @@ export function createAgent(input: AgentDeps): Agent {
         await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: stop, agent: agentName }, approverPhone, personaName, language, now: ended });
       } else if (failed !== null) {
         // An unexpected error still leaves the conversation with a person, never silent.
-        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: String(failed) }, approverPhone, personaName, language, now: ended }).catch(
+        await handOff(deps, { businessId, turnId, kind: 'agent_limit', details: { reason: 'error', agent: agentName, error: errorText(failed) }, approverPhone, personaName, language, now: ended }).catch(
           (error: unknown) => log.error('agent hand-off failed', { businessId, agentTurnId: turnId, error: asError(error) }),
         );
       }

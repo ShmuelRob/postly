@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DrizzleQueryError } from 'drizzle-orm/errors';
-import { addLogContext, asError, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
+import { addLogContext, asError, errorText, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
 
@@ -152,7 +152,8 @@ describe('no customer content or secret in a log line', () => {
 });
 
 describe('one logger', () => {
-  it('no code in src/ writes to the console except the logger', () => {
+  // Walks every source file: slow on a loaded machine, so a longer timeout.
+  it('no code in src/ writes to the console except the logger', { timeout: 30_000 }, () => {
     const root = join(import.meta.dirname, '..');
     const offenders: string[] = [];
     const walk = (dir: string) => {
@@ -170,6 +171,47 @@ describe('one logger', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+
+  // Review of PRs #136 and #143: an error turned into text by hand skips safeMessage (a query's
+  // parameters, a quoted value) and loses its code, stack and cause. Log fields take the error itself
+  // or asError(error); text stored in the database takes errorText(error).
+  it('no code turns an error into text by hand: no String(error), no error interpolated in a template, no error.message read raw', { timeout: 30_000 }, () => {
+    const roots = [join(import.meta.dirname, '..'), join(import.meta.dirname, '..', '..', 'playground', 'sandbox')];
+    const ERR = '(?:error|err|e|cause|recordError)';
+    const patterns = [
+      new RegExp(`\\bString\\(\\s*${ERR}\\s*\\)`),
+      new RegExp(`\\$\\{\\s*${ERR}(?:\\.message)?\\s*\\}`),
+      new RegExp(`\\b${ERR} instanceof Error \\? ${ERR}\\.message`),
+      /\bconsole\b\)?\.(?:log|info|warn|error|debug)\b|\?\? console\b/,
+    ];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !path.endsWith(join('shared', 'logger.ts'))) {
+          readFileSync(path, 'utf8')
+            .split('\n')
+            .forEach((text, i) => {
+              if (patterns.some((p) => p.test(text))) offenders.push(`${path}:${i + 1}: ${text.trim()}`);
+            });
+        }
+      }
+    };
+    for (const root of roots) walk(root);
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('errorText, for an error stored as text', () => {
+  it('is the safe message, cut at 500 characters, never the query params', () => {
+    expect(errorText(new Error('boom'))).toBe('boom');
+    const query = new DrizzleQueryError('insert into "message" ("body") values ($1)', [CUSTOMER_TEXT], new Error('x'));
+    expect(errorText(query)).toBe('Failed query: insert into "message" ("body") values ($1) (1 params)');
+    expect(errorText('plain text')).toBe('plain text');
+    expect(errorText({ message: 'a'.repeat(2000) })).toHaveLength(500);
+    expect(errorText({ text: CUSTOMER_TEXT })).toBe('non-error object thrown');
   });
 });
 
