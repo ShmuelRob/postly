@@ -97,10 +97,28 @@ function stackTrace(error: Error): string {
   for (let depth = 0; depth < 3 && current !== undefined && current !== null; depth++) {
     const e = asError(current);
     const frames = (e.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line)).slice(0, depth === 0 ? 30 : 10);
-    parts.push(`${depth === 0 ? '' : 'Caused by: '}${e.name}: ${scrub(e.message)}`, ...frames);
+    parts.push(`${depth === 0 ? '' : 'Caused by: '}${e.name}: ${scrub(safeMessage(e))}`, ...frames);
     current = e.cause;
   }
   return parts.join('\n');
+}
+
+/**
+ * An error's message without the values it may quote (review of PR #136). A Drizzle query error reads
+ * "Failed query: <sql>\nparams: <params>", and the params are what the query wrote (a message body,
+ * a caption): only the SQL and the parameter count are kept. A Postgres message quotes a bad value
+ * after a colon (`invalid input value for enum x: "<value>"`); the value is redacted, the names it
+ * quotes elsewhere (`column "x"`) are kept.
+ */
+function safeMessage(error: Error): string {
+  let message = error.message;
+  if (message.startsWith('Failed query: ')) {
+    const cut = message.indexOf('\nparams:');
+    const params = (error as { params?: unknown }).params;
+    const sqlText = cut === -1 ? message : message.slice(0, cut);
+    message = Array.isArray(params) ? `${sqlText} (${params.length} params)` : sqlText;
+  }
+  return message.replace(/: "(?:[^"\\]|\\.)*"/g, ': "[redacted]"');
 }
 
 type ErrorLike = { message: string; name?: unknown; stack?: unknown; code?: unknown; cause?: unknown };
@@ -135,11 +153,11 @@ export function asError(value: unknown): Error {
 function errorFields(key: string, value: Error | ErrorLike): Record<string, unknown> {
   const error = asError(value);
   const code = (error as { code?: unknown }).code;
-  const fields: Record<string, unknown> = { [key]: error.message, [`${key}Name`]: error.name };
+  const fields: Record<string, unknown> = { [key]: safeMessage(error), [`${key}Name`]: error.name };
   if (scalarCode(code)) fields[`${key}Code`] = code;
   if (error.cause !== undefined && error.cause !== null) {
     const cause = asError(error.cause);
-    fields[`${key}Cause`] = `${cause.name}: ${cause.message}`;
+    fields[`${key}Cause`] = `${cause.name}: ${safeMessage(cause)}`;
     const causeCode = (cause as { code?: unknown }).code;
     if (scalarCode(causeCode)) fields[`${key}CauseCode`] = causeCode;
   }

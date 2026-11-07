@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { addLogContext, asError, log, setLogLabels, setLogLevel, setLogSink, withLogContext, traceFromHeaders } from './logger.js';
 import { withSpan } from './telemetry.js';
 import { memoryTelemetry } from './telemetry-memory.js';
@@ -324,5 +325,44 @@ describe('correlation and log level', () => {
       setLogLevel(undefined);
     }
     expect(parsed().map((l) => l.message)).toEqual(['shown', 'warned', 'failed', 'debugged']);
+
+// Review of PR #136: a Drizzle query error's message is "Failed query: <sql>\nparams: <params>", and the
+// params hold what the query wrote (a message body, a caption). Only the SQL and the parameter count
+// are logged, in the message, the stack and every cause; a Postgres message's quoted value is redacted.
+describe('database errors', () => {
+  const failed = () => new DrizzleQueryError('insert into "message" ("body", "from_phone") values ($1, $2)', [CUSTOMER_TEXT, PHONES[0]!], Object.assign(new Error('value too long for type character varying(10)'), { code: '22001' }));
+
+  it('logs a query error as its SQL and parameter count, with the database cause and code', () => {
+    capture();
+    log.error('request failed', { error: failed() });
+    const [line] = parsed();
+    expect(line).toMatchObject({
+      error: 'Failed query: insert into "message" ("body", "from_phone") values ($1, $2) (2 params)',
+      errorCause: 'Error: value too long for type character varying(10)',
+      errorCauseCode: '22001',
+    });
+    expect(String(line!.stack_trace)).toMatch(/^Error: Failed query: insert into "message" .* \(2 params\)\n\s+at /);
+    expect(lines[0]).not.toContain(CUSTOMER_TEXT);
+    expect(lines[0]).not.toContain('params:');
+  });
+
+  it('strips the params from a query error that is a cause, or a plain object, too', () => {
+    capture();
+    log.error('inbound burst failed', { error: new Error('burst failed', { cause: failed() }) });
+    log.warn('job failed', { error: { message: `Failed query: select 1\nparams: ${CUSTOMER_TEXT}` } as never });
+    const [first, second] = parsed();
+    expect(first!.errorCause).toBe('Error: Failed query: insert into "message" ("body", "from_phone") values ($1, $2) (2 params)');
+    expect(String(first!.stack_trace)).toContain('Caused by: Error: Failed query: insert into "message"');
+    expect(second!.error).toBe('Failed query: select 1');
+    expect(lines.join(' ')).not.toContain(CUSTOMER_TEXT);
+  });
+
+  it('redacts the value a Postgres message quotes, and keeps the names it quotes', () => {
+    capture();
+    log.error('x', { error: new Error(`invalid input value for enum message_kind: "${CUSTOMER_TEXT}"`) });
+    log.error('y', { error: new Error('column "agent_flows" does not exist') });
+    const [first, second] = parsed();
+    expect(first!.error).toBe('invalid input value for enum message_kind: "[redacted]"');
+    expect(second!.error).toBe('column "agent_flows" does not exist');
   });
 });
