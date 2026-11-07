@@ -59,6 +59,8 @@ const processOptions = (role: 'web' | 'worker') => ({
   // The database is shared with the other e2e tests; the sweep would take their pending messages.
   sweep: false,
   now: clock,
+  // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+  oneShotFlows: true,
 });
 
 beforeAll(async () => {
