@@ -204,7 +204,11 @@ export interface InsightsRange {
  */
 export interface Insights {
   range: InsightsRange & { days: number };
-  /** Businesses created in the range: per UTC day (zero-filled, oldest first) and per week (weeks start on Sunday). */
+  /**
+   * Businesses created in the range: per UTC day (zero-filled, oldest first), and per business week:
+   * Sunday 00:00 in each business's own timezone (localWeek in the workflow module), zero-filled from the
+   * Asia/Jerusalem week of the range's start to that of its end.
+   */
   newBusinesses: { total: number; perDay: Array<{ day: string; n: number }>; perWeek: Array<{ weekStart: string; n: number }> };
   /** Businesses per business_status now (every status, zeros included). */
   statuses: Record<string, number>;
@@ -224,8 +228,8 @@ export interface Insights {
    */
   posts: { drafted: number; approved: number; published: number; byNetwork: Array<{ network: string; scheduled: number; published: number; failed: number }> };
   /**
-   * This week's weekly update for businesses active now. The week starts on the Sunday on or before
-   * `now` (UTC date). done = received, needs_review or planned; reminded = reminded with no reply yet;
+   * This week's weekly update for businesses active now: each business's current week, Sunday 00:00
+   * in its own timezone (`weekStart` shows the Asia/Jerusalem one). done = received, needs_review or planned; reminded = reminded with no reply yet;
    * awaiting; skipped; noRow = active businesses without a row for the week.
    */
   weekly: { weekStart: string; active: number; done: number; reminded: number; awaiting: number; skipped: number; noRow: number };

@@ -1132,7 +1132,7 @@ function InsightsTab({ data }: { data: ConsolePageData }) {
           </div>
           <div className="sect-h" style={{ marginTop: 16 }}>
             <h2>New businesses per week</h2>
-            <span className="meta">weeks start on Sunday</span>
+            <span className="meta">business weeks: Sunday 00:00 in each business's timezone</span>
           </div>
           <div className="box">
             <HBars rows={i.newBusinesses.perWeek.map((w) => ({ label: w.weekStart, n: w.n }))} />

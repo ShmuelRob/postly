@@ -3,6 +3,7 @@ import { BUSINESS_STATES } from '../../contracts/state-machines/business.js';
 import { CONVERSATION_STATES } from '../../contracts/state-machines/conversation.js';
 import { ONBOARDING_STEPS } from '../../contracts/state-machines/onboarding.js';
 import type { Tx } from '../../db/index.js';
+import { localWeek } from '../workflow/index.js';
 import * as schema from '../../db/schema.js';
 import type { Insights, InsightsRange } from './views.js';
 
@@ -35,11 +36,15 @@ export function lastDays(days: number, now = new Date()): InsightsRange {
   return { from: isoDay(new Date(new Date(`${to}T00:00:00Z`).getTime() - (days - 1) * DAY_MS)), to };
 }
 
-/** The Sunday on or before a UTC day. */
-const sundayOf = (day: string) => {
-  const d = new Date(`${day}T00:00:00Z`);
-  return isoDay(new Date(d.getTime() - d.getUTCDay() * DAY_MS));
-};
+/** The default business timezone (database-schema.md, business.timezone). */
+const DEFAULT_TIMEZONE = 'Asia/Jerusalem';
+
+/**
+ * The business week of an instant in the business's own timezone, as a date: the local Sunday
+ * (Sunday 00:00 local, the same week as the workflow's localWeek).
+ */
+const localSunday = (instant: unknown, timezone: unknown) =>
+  sql`((${instant} at time zone ${timezone})::date - extract(dow from (${instant} at time zone ${timezone}))::int)`;
 
 export async function readInsights(tx: Tx, range: InsightsRange, bounds: NonNullable<ReturnType<typeof parseRange>>, now: Date): Promise<Insights> {
   const from = bounds.start.toISOString();
@@ -56,8 +61,15 @@ export async function readInsights(tx: Tx, range: InsightsRange, bounds: NonNull
     .groupBy(dayOf(b.createdAt));
   const createdOn = new Map(created.map((r) => [r.day, r.n]));
   const perDay = bounds.days.map((day) => ({ day, n: createdOn.get(day) ?? 0 }));
+  // Per business week, Sunday 00:00 in each business's timezone, zero-filled over the default
+  // timezone's weeks of the range.
+  const weekOf = sql<string>`to_char(${localSunday(b.createdAt, b.timezone)}, 'YYYY-MM-DD')`;
+  const createdWeeks = await tx.select({ week: weekOf, n: sql<number>`count(*)::int` }).from(b).where(within(b.createdAt)).groupBy(weekOf);
   const weeks = new Map<string, number>();
-  for (const d of perDay) weeks.set(sundayOf(d.day), (weeks.get(sundayOf(d.day)) ?? 0) + d.n);
+  const firstWeek = localWeek(bounds.start, DEFAULT_TIMEZONE).weekStart;
+  const lastWeek = localWeek(new Date(bounds.end.getTime() - 1), DEFAULT_TIMEZONE).weekStart;
+  for (let t = new Date(`${firstWeek}T00:00:00Z`).getTime(); isoDay(new Date(t)) <= lastWeek; t += 7 * DAY_MS) weeks.set(isoDay(new Date(t)), 0);
+  for (const r of createdWeeks) weeks.set(r.week, (weeks.get(r.week) ?? 0) + r.n);
 
   // Statuses and the funnel, now.
   const statusRows = await tx.select({ status: b.status, n: sql<number>`count(*)::int` }).from(b).groupBy(b.status);
@@ -139,13 +151,14 @@ export async function readInsights(tx: Tx, range: InsightsRange, bounds: NonNull
   const byNetwork = networks.map((r) => ({ network: r.network as string, scheduled: r.scheduled, published: r.published, failed: r.failed }));
 
   // This week's weekly update.
-  const weekStart = sundayOf(isoDay(now));
+  // Each business's current week by its own timezone; the label shows the default timezone's week.
+  const weekStart = localWeek(now, DEFAULT_TIMEZONE).weekStart;
   const w = schema.weeklyUpdate;
   const weekRows = await tx
     .select({ status: w.status, n: sql<number>`count(*)::int` })
     .from(w)
     .innerJoin(b, eq(b.id, w.businessId))
-    .where(and(eq(w.weekStart, weekStart), eq(b.status, 'active')))
+    .where(and(sql`${w.weekStart} = ${localSunday(sql`${now.toISOString()}::timestamptz`, b.timezone)}`, eq(b.status, 'active')))
     .groupBy(w.status);
   const weekly = (statuses: string[]) => weekRows.filter((r) => statuses.includes(r.status)).reduce((s, r) => s + r.n, 0);
   const active = statusOf.get('active') ?? 0;
@@ -178,7 +191,7 @@ export async function readInsights(tx: Tx, range: InsightsRange, bounds: NonNull
 
   return {
     range: { ...range, days: bounds.days.length },
-    newBusinesses: { total: perDay.reduce((s, d) => s + d.n, 0), perDay, perWeek: [...weeks].map(([weekStart, n]) => ({ weekStart, n })) },
+    newBusinesses: { total: perDay.reduce((s, d) => s + d.n, 0), perDay, perWeek: [...weeks].sort(([x], [y]) => x.localeCompare(y)).map(([weekStart, n]) => ({ weekStart, n })) },
     statuses: Object.fromEntries(BUSINESS_STATES.map((s) => [s, statusOf.get(s) ?? 0])),
     funnel: { onboarding: funnelOf('onboarding', ONBOARDING_STEPS), conversation: funnelOf('active', CONVERSATION_STATES) },
     messages: {

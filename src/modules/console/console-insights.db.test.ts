@@ -33,8 +33,10 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
  * overview test's rows stay the newest anywhere (console-views.db.test.ts).
  */
 function farWeek() {
+  // In January, so Asia/Jerusalem (the default business timezone) is UTC+2 with no daylight saving:
+  // Saturday 21:59 UTC is still Saturday there, and 22:00 UTC is Sunday 00:00, a new business week.
   const base = Date.UTC(1950 + Math.floor(Math.random() * 40), 0, 2);
-  let d = new Date(base + Math.floor(Math.random() * 300) * DAY);
+  let d = new Date(base + Math.floor(Math.random() * 18) * DAY);
   while (d.getUTCDay() !== 6) d = new Date(d.getTime() + DAY);
   const saturday = d;
   const sunday = new Date(saturday.getTime() - 6 * DAY);
@@ -162,7 +164,12 @@ describe('insights', () => {
     expect(i.newBusinesses.perDay).toHaveLength(7);
     expect(i.newBusinesses.perDay.map((d) => d.day)).toEqual(Array.from({ length: 7 }, (_, n) => iso(new Date(w.sunday.getTime() + n * DAY))));
     expect(i.newBusinesses.perDay.map((d) => d.n)).toEqual([1, 0, 0, 0, 0, 0, 1]);
-    expect(i.newBusinesses.perWeek).toEqual([{ weekStart: range.from, n: 2 }]);
+    // Business weeks start on Sunday 00:00 in Jerusalem: b joined Saturday 23:00 UTC, which is Sunday
+    // 01:00 there, so it counts in the next week (the UTC days above still put it on Saturday).
+    expect(i.newBusinesses.perWeek).toEqual([
+      { weekStart: range.from, n: 1 },
+      { weekStart: iso(new Date(w.sunday.getTime() + 7 * DAY)), n: 1 },
+    ]);
 
     expect(i.messages).toMatchObject({ inbound: 2, outbound: 2, businessesWriting: 1 });
     expect(i.messages.top[0]).toEqual({ businessId: a.id, name: expect.any(String), inbound: 2, outbound: 1 });
@@ -212,6 +219,28 @@ describe('insights', () => {
     expect(i.weekly).toMatchObject({ weekStart, done: 2, reminded: 1, awaiting: 1, skipped: 1 });
     expect(i.weekly.active).toBeGreaterThanOrEqual(5);
     expect(i.weekly.noRow).toBe(i.weekly.active - 5);
+  });
+
+  it("counts this week by the business's timezone: Saturday night in Jerusalem is still the old week, until Sunday 00:00", async () => {
+    const w = farWeek();
+    const next = iso(new Date(w.sunday.getTime() + 7 * DAY));
+    const id = await newBusiness(db);
+    await sys((tx) => tx.update(schema.business).set({ status: 'active', timezone: 'Asia/Jerusalem' }).where(eq(schema.business.id, id)));
+    await as('weekly_update', id, (tx) =>
+      tx.insert(schema.weeklyUpdate).values([
+        { businessId: id, weekStart: iso(w.sunday), status: 'received' },
+        { businessId: id, weekStart: next, status: 'awaiting' },
+      ]),
+    );
+    const range = { from: iso(w.sunday), to: iso(w.saturday) };
+
+    // Saturday 23:59 in Jerusalem (21:59 UTC): this business's week is still the one it answered.
+    const saturdayNight = await c.insights(range, new Date(w.saturday.getTime() + 21 * 3_600_000 + 59 * 60_000));
+    expect(saturdayNight.weekly).toMatchObject({ weekStart: iso(w.sunday), done: 1, awaiting: 0 });
+
+    // Sunday 00:00 in Jerusalem (Saturday 22:00 UTC): the new week, not answered yet.
+    const sunday = await c.insights(range, new Date(w.saturday.getTime() + 22 * 3_600_000));
+    expect(sunday.weekly).toMatchObject({ weekStart: next, done: 0, awaiting: 1 });
   });
 
   it('shows every status and every funnel step in contract order', async () => {
