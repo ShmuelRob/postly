@@ -19,6 +19,10 @@ export interface ReportTest {
   state: 'passed' | 'failed' | 'skipped' | 'pending';
   durationMs?: number;
   errors: string[];
+  /** Failed, then passed on a retry (CI's one e2e retry, vitest.config.ts): still passed, but marked. */
+  flaky?: boolean;
+  /** How many times the test was retried. */
+  retries?: number;
   record?: E2eRecord;
 }
 
@@ -44,6 +48,7 @@ export function renderReport(run: ReportRun): string {
     `${count('failed')} failed`,
     ...(count('skipped') ? [`${count('skipped')} skipped`] : []),
     ...(count('pending') ? [`${count('pending')} not finished`] : []),
+    ...(flakyCount(run) ? [`${flakyCount(run)} flaky`] : []),
   ].join(' · ');
   const overall = count('failed') > 0 ? 'failed' : 'passed';
 
@@ -69,14 +74,33 @@ ${run.tests.map(renderTest).join('\n')}
 `;
 }
 
+const flakyCount = (run: ReportRun) => run.tests.filter((t) => t.flaky).length;
+
+/**
+ * The run as Markdown for the CI job summary (GITHUB_STEP_SUMMARY): the counts, then every flaky and
+ * every failed test with its file (agentic-development.md, "Timeouts and flaky end-to-end tests").
+ */
+export function renderJobSummary(run: ReportRun): string {
+  const count = (state: ReportTest['state']) => run.tests.filter((t) => t.state === state).length;
+  const counts = [`${count('passed')} passed`, `${count('failed')} failed`, ...(flakyCount(run) ? [`${flakyCount(run)} flaky`] : [])];
+  const line = (t: ReportTest, extra = '') => `- \`${t.file}\`: ${t.name}${extra}\n`;
+  const flaky = run.tests.filter((t) => t.flaky);
+  const failed = run.tests.filter((t) => t.state === 'failed');
+  let md = `## End-to-end tests\n\n${counts.join(' · ')}\n`;
+  if (flaky.length) md += `\n### Flaky (passed on retry)\n\n${flaky.map((t) => line(t, ` (retries: ${t.retries ?? 1})`)).join('')}`;
+  if (failed.length) md += `\n### Failed\n\n${failed.map((t) => line(t)).join('')}`;
+  return md;
+}
+
 function renderTest(test: ReportTest): string {
-  const duration = test.durationMs === undefined ? '' : ` · ${Math.round(test.durationMs)} ms`;
+  const duration =
+    (test.durationMs === undefined ? '' : ` · ${Math.round(test.durationMs)} ms`) + (test.flaky ? ` · passed on retry ${test.retries ?? 1}` : '');
   const errors = test.errors.length
     ? `<section><h3>Errors</h3>${test.errors.map((e) => `<pre class="error">${esc(e)}</pre>`).join('')}</section>`
     : '';
   const r = test.record;
-  return `<article class="test" data-state="${test.state}">
-  <h2><span class="badge">${esc(test.state)}</span> ${esc(test.name)}</h2>
+  return `<article class="test" data-state="${test.state}"${test.flaky ? ' data-flaky="true"' : ''}>
+  <h2><span class="badge">${esc(test.state)}</span>${test.flaky ? ' <span class="badge flaky">flaky</span>' : ''} ${esc(test.name)}</h2>
   <p class="meta">${esc(test.file)}${esc(duration)}</p>
   ${errors}
   ${
@@ -267,7 +291,7 @@ h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: v
 .test[data-state="passed"] { border-left-color: var(--pass); } .test[data-state="failed"] { border-left-color: var(--fail); }
 .test[data-state="skipped"], .test[data-state="pending"] { border-left-color: var(--skip); }
 .badge { font-size: 12px; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; color: #fff; background: var(--muted); vertical-align: 2px; }
-[data-state="passed"] > h2 .badge { background: var(--pass); } [data-state="failed"] > h2 .badge { background: var(--fail); }
+[data-state="passed"] > h2 .badge { background: var(--pass); } h2 .badge.flaky { background: #b26a00; } [data-state="failed"] > h2 .badge { background: var(--fail); }
 pre.error { white-space: pre-wrap; overflow-x: auto; background: var(--bg); border: 1px solid var(--fail); border-radius: 6px; padding: 8px; color: var(--fail); }
 .chat { background: var(--chat); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .bubble { max-width: min(420px, 85%); background: var(--postly); border-radius: 8px; padding: 6px 10px; box-shadow: 0 1px 1px rgba(0,0,0,.08); }
@@ -315,8 +339,9 @@ export function writeRunsIndex(root: string): void {
     const html = readFileSync(join(root, name, 'index.html'), 'utf8');
     const passed = /(\d+) passed/.exec(html)?.[1] ?? '?';
     const failed = /(\d+) failed/.exec(html)?.[1] ?? '?';
+    const flaky = /(\d+) flaky/.exec(html)?.[1];
     const state = failed === '0' ? 'passed' : 'failed';
-    return `<tr data-state="${state}"><td><a href="${esc(name)}/index.html">${esc(name)}</a>${i === 0 ? ' (latest)' : ''}</td><td>${passed} passed · ${failed} failed</td></tr>`;
+    return `<tr data-state="${state}"><td><a href="${esc(name)}/index.html">${esc(name)}</a>${i === 0 ? ' (latest)' : ''}</td><td>${passed} passed · ${failed} failed${flaky ? ` · ${flaky} flaky` : ''}</td></tr>`;
   });
   writeFileSync(
     join(root, 'index.html'),
