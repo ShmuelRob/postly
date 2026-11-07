@@ -89,8 +89,7 @@ describe('set_profile_field', () => {
     const results = await turnResults(result.turnId!);
     expect(results.map((r) => r.reason ?? r.status)).toEqual(['invalid_input', 'ok', 'ok']);
     const detail = (results[0] as { detail?: string }).detail!;
-    expect(detail).toMatch(/^mainProducts must match \{"type":"array"/);
-    expect(detail).toContain('"minItems":1');
+    expect(detail).toBe('mainProducts must match {"minItems":1,"type":"array","items":{"type":"string","minLength":1}}');
     // The refusal names the field and its shape, never the value.
     expect(detail).not.toContain('ספרים');
     expect((await profile()).profile).toMatchObject({ mainProducts: ['ספרים', 'קפה'] });

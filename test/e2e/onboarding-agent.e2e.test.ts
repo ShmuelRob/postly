@@ -334,7 +334,7 @@ e2eTest('an owner who answers everything at once: a wrong field value is refused
     ['ask_owner', 'skipped'],
   ]);
   // The refusal tells the agent the field's shape, not the value it sent.
-  expect(first!.calls[2]!.result!.detail).toMatch(/^mainProducts must match \{"type":"array"/);
+  expect(first!.calls[2]!.result!.detail).toBe('mainProducts must match {"minItems":1,"type":"array","items":{"type":"string","minLength":1}}');
   expect(fix!.calls.map((c) => c.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
   // Nothing for the team: one model output per step, every one valid, and no console item.
   const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun));
