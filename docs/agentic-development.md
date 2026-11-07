@@ -48,6 +48,15 @@ End-to-end tests are the most trusted tests. They run a full flow through the re
 - End-to-end tests assert on what the owner and the networks would see: the WhatsApp messages sent, the rendered images, and what reached the publishing simulator. They do not assert on internal state alone.
 - A human sees every end-to-end test. When an agent adds or changes one, it shows the human the test and a run of it: the conversation as sent and received, screenshots of rendered posts, and the pass or fail result. Runs produce a report a human can open and read without running the code.
 - An end-to-end test that fails is not skipped, weakened, or deleted to make a change pass. The agent reports the failure to the human instead.
+- Timing-dependent tests (debounce windows, schedules, races between workers) use the injected clock and an explicit wait-until helper (`vi.waitFor`, or a loop that polls a condition against a deadline), never a fixed sleep. A sleep passes on an idle machine and fails under load. This is the rule for new tests; an existing sleep is fixed when the flaky report names its test.
+
+### Timeouts and flaky end-to-end tests
+
+Decided by the human on 2026-11-07 (item 10 of the workflow proposal in PR #142).
+
+- **One timeout table.** Every project's default test and hook timeouts sit in one table at the top of `vitest.config.ts`. The values are the same locally and in CI: no timeout, in the table or in a test file, depends on the environment, and no test file reads `CI`. A suite known to be slower (a browser render, an example-set run) may give itself a larger budget in its file, the same everywhere.
+- **One retry, in CI, for the end-to-end suite only.** In CI (`CI` set) the `e2e` and `e2e-browser` projects run with Vitest `retry: 1`. Locally, and in every other project, there are no retries. A test that fails twice fails the build as before. No assertion is changed or loosened, and the rule above still holds: a failing end-to-end test is never skipped, weakened, or deleted.
+- **Flaky is visible.** A test that failed and then passed on its retry is marked **flaky** in the end-to-end report (a badge on the test and a count in the summary) and in the CI job summary. The manager makes a fix task for a test marked flaky twice in a week. The fix goes to the cause, usually a sleep or a race (see the rule above), not to the timeout.
 
 ## Environment safety
 

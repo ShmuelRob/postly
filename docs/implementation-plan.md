@@ -22,8 +22,11 @@ This plan splits Phase 1 into work packages that coding-agent sessions build one
 | Lane | Meaning | Concurrency |
 | --- | --- | --- |
 | Core | State machines, data model, workflow runtime, main flows | One session at a time, across all core packages; from 2026-11-03 the human allows several when their files are disjoint (for example `src/db/` vs one module) and each merges the base branch into its own when the others land (never rebase) |
+| Migration | Any package whose PR adds or changes a file in `drizzle/` | One open PR with a migration at a time, across all lanes; see below |
 | Parallel | Independent modules behind a set contract: design engine, adapters, console | Up to three sessions at once, each in its own worktree, never two on the same files |
 | Human | Decisions and approvals only the human can give | Blocks every package that depends on it |
+
+**Migrations: one in flight, generated last** (decided 2026-11-07, item 7 of the workflow proposal in PR #142). Migration numbers, `drizzle/meta/_journal.json` and the snapshot chain (each snapshot's `prevId`) are first-merged-wins, so two open PRs with a migration always clash. The manager holds one migration token and hands it out in the brief of the session it starts for such a package. A package that needs a migration while the token is taken waits, or does its other files first and adds the migration once the token is free. The session writes its schema change and its tests first, and runs `npm run db:generate` (or adds its hand-written migration) as its last step, right after merging `origin/dev`, so the number and the chain are current when the PR opens. The token returns to the manager when the PR merges or closes. CI's static job runs `npm run db:check` (`drizzle-kit check`), which fails a PR whose snapshots no longer form one chain.
 
 ### Change-size lanes
 

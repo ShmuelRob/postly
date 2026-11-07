@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { type AgentProfileField, profileFieldValueSchema, QUOTED_PROFILE_FIELDS } from '../../../contracts/agent.js';
 import { BusinessProfileDraft } from '../../../contracts/business-profile.js';
@@ -61,6 +62,28 @@ function earlierParts(ctx: ToolContext, top: string): Record<string, unknown> {
   return parts;
 }
 
+/** A field's expected shape for a refusal: its JSON schema, short (agent.md, set_profile_field). */
+function expectedShape(field: AgentProfileField): string {
+  const { $schema: _ignored, ...shape } = z.toJSONSchema(profileFieldValueSchema(field), { unrepresentable: 'any' }) as Record<string, unknown>;
+  return JSON.stringify(shape).slice(0, 200);
+}
+
+/**
+ * The value checked against its field's own schema. One lossless fix in code: a single non-empty
+ * string for a list field becomes a one-item list (never split on commas). Otherwise a refusal whose
+ * detail names the field and its expected shape, and never echoes the value.
+ */
+export function fieldValue(field: AgentProfileField, raw: unknown): { ok: true; value: unknown } | { ok: false; detail: string } {
+  const schema = profileFieldValueSchema(field);
+  const direct = schema.safeParse(raw);
+  if (direct.success) return { ok: true, value: direct.data };
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const listed = schema.safeParse([raw.trim()]);
+    if (listed.success) return { ok: true, value: listed.data };
+  }
+  return { ok: false, detail: `${field} must match ${expectedShape(field)}`.slice(0, 300) };
+}
+
 export const profileTools: ToolHandlers = {
   async set_profile_field(call, ctx) {
     const field = call.field as AgentProfileField;
@@ -85,7 +108,9 @@ export const profileTools: ToolHandlers = {
       }
     }
 
-    let value: unknown = profileFieldValueSchema(field).parse(call.value);
+    const checked = fieldValue(field, call.value);
+    if (!checked.ok) return refused('invalid_input', checked.detail);
+    let value: unknown = checked.value;
     if (sub) {
       const existing = current[top];
       const base = existing && typeof existing === 'object' ? (existing as Record<string, unknown>) : earlierParts(ctx, top);

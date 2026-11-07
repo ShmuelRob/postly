@@ -90,7 +90,8 @@ async function contentProblem(
     }
   }
   if (post.format === 'single' && content.design.photos.length !== 1) return refused('invalid_input', 'a single post has exactly one photo');
-  if (post.format === 'carousel' && content.design.photos.length < 2) return refused('invalid_input', 'a carousel has 2 to 10 photos');
+  // The schema no longer bounds the photos (agent.md, Array limits), so the upper limit is checked here too.
+  if (post.format === 'carousel' && (content.design.photos.length < 2 || content.design.photos.length > 10)) return refused('invalid_input', 'a carousel has 2 to 10 photos');
 
   const forbidden = (profile.forbiddenTopics ?? []).find((t) => customerText(content.captions, content.design).includes(t.toLowerCase()));
   if (forbidden) return refused('forbidden_content', `the post mentions "${forbidden}", which the owner asked us to avoid`);

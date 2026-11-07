@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { emptyRecord, type E2eRecord } from './record.js';
-import { renderReport, writeReport, type ReportRun, type ReportTest } from './report.js';
+import { renderJobSummary, renderReport, writeReport, type ReportRun, type ReportTest } from './report.js';
 
 const at = '2026-11-02T10:00:00.000Z';
 const png = 'data:image/png;base64,iVBORw0KGgo=';
@@ -212,5 +212,54 @@ describe('versioned runs', () => {
     expect(index.indexOf('def5678')).toBeLessThan(index.indexOf('abc1234'));
     expect(index).toContain('href="2026-11-03T10-00-00Z-def5678/index.html"');
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('flaky tests (agentic-development.md, Timeouts and flaky end-to-end tests)', () => {
+  it('marks a test that passed on its retry as flaky, and counts flaky tests in the summary', () => {
+    const html = renderReport(run([test(), test({ name: 'debounce window closes', flaky: true, retries: 1 })]));
+    expect(html).toMatch(/2 passed/);
+    expect(html).toMatch(/1 flaky/);
+    expect(html).toContain('data-flaky="true"');
+    expect(html).toContain('<span class="badge flaky">flaky</span> debounce window closes');
+    expect(html).toContain('passed on retry 1');
+  });
+
+  it('does not mention flaky when no test was', () => {
+    const html = renderReport(run([test(), test({ name: 'b', state: 'failed', errors: ['x'] })]));
+    expect(html).not.toMatch(/\d+ flaky/);
+    expect(html).not.toContain('data-flaky');
+    expect(html).not.toContain('passed on retry');
+  });
+
+  it('lists the runs index with its flaky count', async () => {
+    const { writeRunReport } = await import('./report.js');
+    const root = mkdtempSync(join(tmpdir(), 'runs-'));
+    writeRunReport(root, run([test({ flaky: true, retries: 1 })]), '2026-11-07T10-00-00Z', 'abc1234');
+    expect(readFileSync(join(root, 'index.html'), 'utf8')).toContain('1 passed · 0 failed · 1 flaky');
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('renderJobSummary (the CI job summary)', () => {
+  it('counts the run and names every failed and every flaky test with its file', () => {
+    const md = renderJobSummary(
+      run([
+        test(),
+        test({ name: 'debounce window closes', file: 'test/e2e/messaging.e2e.test.ts', flaky: true, retries: 1 }),
+        test({ name: 'publishing fails', state: 'failed', errors: ['expected 1 post, got 0'] }),
+      ]),
+    );
+    expect(md).toContain('## End-to-end tests');
+    expect(md).toContain('2 passed · 1 failed · 1 flaky');
+    expect(md).toContain('### Flaky (passed on retry)\n\n- `test/e2e/messaging.e2e.test.ts`: debounce window closes (retries: 1)\n');
+    expect(md).toContain('### Failed\n\n- `test/e2e/sample.e2e.test.ts`: publishing fails\n');
+  });
+
+  it('says so when nothing was flaky or failed', () => {
+    const md = renderJobSummary(run([test()]));
+    expect(md).toContain('1 passed · 0 failed');
+    expect(md).not.toContain('### Flaky');
+    expect(md).not.toContain('### Failed');
   });
 });
