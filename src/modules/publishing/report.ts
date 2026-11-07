@@ -4,7 +4,7 @@ import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
 import { zonedTime } from './times.js';
 
-// The monthly report (WP-43; technical-design.md, Cancellation, data deletion and the monthly report).
+// The monthly report (WP-43; technical-design.md, Cancellation, archiving, erasure and the monthly report).
 // Only the metrics of Postly's own publications that went live in the month count.
 
 export interface MonthlyFigures {

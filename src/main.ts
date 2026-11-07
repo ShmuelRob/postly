@@ -82,6 +82,8 @@ async function main(command: string | undefined) {
       console: createConsole(db, app.workflow),
       // The cancellation keeps its reason; the actor is in the console action log line (WP-46 audit rows later).
       cancelBusiness: (id) => app.cancellation.cancel(id, 'console'),
+      // The erasure on the owner's request records the signed-in actor in erasure_request.
+      eraseBusiness: (id, request) => app.erasure.erase(id, request),
       auth,
       // security.md, "Media in the console": the bytes come from the app's media store, behind the sign-in.
       readMedia: async (storagePath) => {
@@ -95,7 +97,7 @@ async function main(command: string | undefined) {
     stops.push(() => server.close());
     await server.listen({ host: '0.0.0.0', port: config.port });
   } else {
-    await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, dataDeletion: app.dataDeletion, monthlyReport: app.monthlyReport, ...(app.billingHold ? { billingHold: app.billingHold } : {}) });
+    await startWorkerProcess({ queue, weekly: app.weekly, publishing: app.publishing, channelHealth: app.channelHealth, archive: app.archive, monthlyReport: app.monthlyReport, ...(app.billingHold ? { billingHold: app.billingHold } : {}) });
     // Cloud Run services need a port to probe; the worker serves only its health check.
     const health = Fastify({ logger: false });
     health.get('/healthz', async () => ({ ok: true }));

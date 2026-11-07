@@ -18,7 +18,7 @@ export type { ConsolePageData } from './page-data.js';
 type Tone = 'good' | 'info' | 'progress' | 'human' | 'warn' | 'bad' | 'neutral';
 
 const TONE: Record<string, Tone> = {
-  onboarding: 'info', active: 'good', paused: 'warn', cancelled: 'neutral',
+  onboarding: 'info', active: 'good', paused: 'warn', cancelled: 'neutral', archived: 'neutral',
   planned: 'neutral', drafting: 'progress', awaiting_clarification: 'warn', awaiting_approval: 'info',
   needs_review: 'warn', approved: 'good', scheduled: 'info', publishing: 'progress', published: 'good',
   partially_published: 'warn', failed: 'bad',
@@ -915,9 +915,12 @@ function ManageTab({ data, names, now }: { data: ConsolePageData; names: Map<str
 
 // ---------- conversations ----------
 
-const LIST_FILTERS = ['all', 'onboarding', 'active', 'paused', 'cancelled', 'handoff', 'open_items'] as const;
+const LIST_FILTERS = ['all', 'onboarding', 'active', 'paused', 'cancelled', 'archived', 'handoff', 'open_items'] as const;
 
+/** An archived business is hidden from every list but its own filter, and its panel still opens (2026-11-07). */
 function listFilter(b: BusinessRow, kind: string | undefined) {
+  if (kind === 'archived') return b.status === 'archived';
+  if (b.status === 'archived') return false;
   if (!kind || kind === 'all') return true;
   if (kind === 'handoff') return Boolean(b.handoffAt);
   if (kind === 'open_items') return b.openItems > 0;

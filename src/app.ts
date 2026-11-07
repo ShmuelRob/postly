@@ -3,7 +3,7 @@ import type { ModelProvider } from './contracts/providers/model.js';
 import type { PaymentProvider, PaymentWebhooks } from './contracts/providers/payment.js';
 import type { PublishingProvider } from './contracts/providers/publishing.js';
 import { createBilling, type Billing } from './modules/billing/index.js';
-import { createDataDeletion, type DataDeletion, type DeletionStorage } from './modules/business-data/index.js';
+import { createErasure, type Erasure, type ErasureStorage } from './modules/business-data/index.js';
 import type { TemplateRenderer } from './contracts/providers/renderer.js';
 import type { Database } from './db/index.js';
 import { type BusinessRenderContext, renderStyleSamples } from './modules/design/index.js';
@@ -27,8 +27,10 @@ import {
 } from './modules/publishing/index.js';
 import {
   createApprovals,
+  createBusinessArchive,
   createCancellation,
   cancellationCopy,
+  type BusinessArchive,
   type Cancellation,
   createScheduleFlow,
   draftsCopy,
@@ -64,8 +66,8 @@ export interface AppOptions {
   /** The design module's renderer factory (`createDesignRenderer(...).forBusiness`). */
   design: { forBusiness(business: BusinessRenderContext): TemplateRenderer };
   /** File storage for inbound media and renders, with the URLs providers fetch them from. */
-  media: MediaStorage & { read(path: string): Promise<{ data: Uint8Array } | undefined> } & Partial<DeletionStorage>;
-  /** From cancellation to data deletion (default 30 days, WP-43). */
+  media: MediaStorage & { read(path: string): Promise<{ data: Uint8Array } | undefined> } & Partial<ErasureStorage>;
+  /** From cancellation to the archive (default 30 days, WP-43); nothing is deleted. */
   retentionMs?: number;
   businessNumber: string;
   /** The photo used for the onboarding style samples when the owner sent none. */
@@ -111,8 +113,10 @@ export interface App {
   billingHold?: { tick(now: Date, options?: { businessId?: string }): Promise<unknown> };
   /** Cancellation (WP-43): channels disconnected at once, then publications, posts and the subscription. */
   cancellation: Cancellation;
-  /** The daily data deletion job (WP-43). */
-  dataDeletion: DataDeletion;
+  /** The daily archive job (2026-11-07): cancelled businesses past `archive_after` apply ARCHIVE. */
+  archive: BusinessArchive;
+  /** Erasure on the owner's explicit request, from the console: the only path that deletes a business. */
+  erasure: Erasure;
   /** The monthly report job (WP-43): the previous month's figures, in each business's time zone, to every active business. */
   monthlyReport: { tick(now: Date, options?: { businessId?: string }): Promise<{ sent: string[] }> };
   /**
@@ -307,7 +311,8 @@ export function createApp(options: AppOptions): App {
   });
 
   const { removePrefix, remove } = options.media;
-  const dataDeletion = createDataDeletion({
+  const archive = createBusinessArchive({ db, workflow });
+  const erasure = createErasure({
     db,
     ...(removePrefix && remove ? { storage: { removePrefix: (p: string) => removePrefix.call(options.media, p), remove: (p: string[]) => remove.call(options.media, p) } } : {}),
   });
@@ -403,7 +408,8 @@ export function createApp(options: AppOptions): App {
     channelHealth,
     ...(billing ? { billing, billingHold: { tick: (at: Date, o?: { businessId?: string }) => billing.holdTick(at, o) } } : {}),
     cancellation,
-    dataDeletion,
+    archive,
+    erasure,
     monthlyReport,
     start: () => messaging.startSweep(),
   };

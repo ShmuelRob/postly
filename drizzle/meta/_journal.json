@@ -183,6 +183,13 @@
       "when": 1794614408000,
       "tag": "0025_console_action",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794700800000,
+      "tag": "0026_archive_and_erasure",
+      "breakpoints": true
     }
   ]
 }

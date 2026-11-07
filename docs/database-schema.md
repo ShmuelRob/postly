@@ -36,7 +36,7 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `model` | `app_model` | Model layer | Model settings, prompt versions, `model_run` records, console routing |
 | `billing` | `app_billing` | Billing | Subscriptions |
 | `business_data` | `app_business_data` | Business data | Profile edits, preference rules, the media library, post history |
-| `deletion` | `app_deletion` | Business data (data deletion) | Deleting a cancelled business past `data_delete_after` (WP-43): reads its media paths and deletes its `business` row; the cascade removes the rest |
+| `deletion` | `app_deletion` | Business data (erasure) | Erasure on the owner's explicit request (2026-11-07; it replaced WP-43's deletion 30 days after cancellation): reads the business's media paths, records the request in `erasure_request` and deletes the `business` row of a `cancelled` or `archived` business; the cascade removes the rest |
 
 **System roles** (bypass RLS; opened with `withSystem(purpose, fn)`, one per purpose):
 
@@ -73,13 +73,14 @@ Every kind of operation has its own database role (decided 2026-11-03, built in 
 | `agent_turn` |  | SIU |  |  |  |  |  |  |  |  |  |  | S |  |
 | `agent_config` |  | S |  |  |  |  |  |  |  |  |  |  | SU |  |
 | `console_action` |  |  |  |  |  |  |  |  |  |  |  |  | SI |  |
+| `erasure_request` |  |  |  |  |  |  |  |  |  | I |  |  | S |  |
 
 - **No temporary tables:** `TEMPORARY` on the database is revoked from `PUBLIC` and from every login. A temporary table outlives its transaction on a pooled connection and shadows the real table of the same name (`pg_temp` comes first in the search path), so one business's later writes could land in a table another business reads. No role can create one.
 - **Immutability:** no role may update or delete `post_version`, and the only update on `approval` is `invalidated_at`, by the `approval` role. The `approval` role may change only a post's `status` and `updated_at`.
 - **Audit trail:** `workflow_event` is append-only. The roles that apply workflow events (`workflow`, `approval`, `publishing`, `billing`) may only insert into it, in the same transaction as the event; no role may update or delete it, and only `console` reads it.
 - **Console updates by column:** the `console` login bypasses RLS, so on business-owned tables it gets `UPDATE` on every column except `id` and `business_id` (on `business`, except `id`). A console write, a bug or a crafted call cannot move a row to another business or re-key it; Postgres refuses the statement (T11, security.md D5). `model_task_config` and `system_control` hold no business data and keep a table-wide `UPDATE`. A new column on these tables needs its own console grant in the migration that adds it.
 - **Role attributes:** each migration that creates a login with `CREATE ROLE ... IF NOT EXISTS` is followed by an `ALTER ROLE` that sets its attributes again: `LOGIN NOINHERIT NOCREATEROLE NOCREATEDB`, plus `BYPASSRLS` for the system logins and `NOBYPASSRLS` for the rest. A login that already existed (made by hand or by an older migration) cannot keep stronger attributes (T11, security.md D6). `SUPERUSER` and `REPLICATION` are not named: only a real superuser may set them, which the Cloud SQL admin is not, and that admin cannot grant them either.
-- **Deletes:** `business_data` deletes only preference rules and media. The `deletion` role deletes only `business` rows, and its code deletes only a `cancelled` business past `data_delete_after` (the condition is in the `delete` itself). Every business-owned table references `business` with `on delete cascade`, and the cascade runs with the table owner's rights, so it also removes `post_version` and `approval` rows, which no role may delete directly (WP-43).
+- **Deletes:** `business_data` deletes only preference rules and media. The `deletion` role deletes only `business` rows, and its code deletes only a `cancelled` or `archived` business, and only for an erasure request it records in the same transaction (the status condition is in the `delete` itself). Nothing deletes a business on a schedule (2026-11-07). Every business-owned table references `business` with `on delete cascade`, and the cascade runs with the table owner's rights, so it also removes `post_version` and `approval` rows, which no role may delete directly (WP-43).
 - **Creating a business:** `workflow` inserts the `business` row inside `withBusiness('workflow', newId, ...)`, so RLS checks the new row against the new id. No system role inserts businesses.
 - A module that needs a table or verb its role lacks changes this matrix first (docs first), then a new migration.
 
@@ -152,7 +153,8 @@ Postgres cannot stop a role from changing its own custom settings, so SQL run th
 | `approver_phone` | text | Unique; the only number whose approvals count |
 | `timezone` | text | Default `Asia/Jerusalem` |
 | `cancelled_at` | timestamptz | Null unless cancelled |
-| `data_delete_after` | timestamptz | Set on cancellation: `cancelled_at` plus the retention period (30 days by default); the data deletion job deletes the business after it |
+| `archive_after` | timestamptz | Set on cancellation: `cancelled_at` plus the retention period (30 days by default); the daily archive job applies `ARCHIVE` after it. Named `data_delete_after` until migration `0026` (2026-11-07) |
+| `archived_at` | timestamptz | Null unless archived; set by the `ARCHIVE` guard |
 
 ### `channel_connection`
 
@@ -383,6 +385,20 @@ The workflow audit trail (WP-46): one row for every event the workflow runtime a
 | `reason` | text | Rejection reason (`not_found`, `invalid_transition`, `guard_failed`, `handoff`); null when applied |
 | `detail` | text | The guard's reason code when blocked |
 | `correlation_id` | text | For example the inbound message id; null when none |
+
+### `erasure_request`
+
+One row per erasure on the owner's explicit request (2026-11-07, [technical-design.md](technical-design.md#cancellation-archiving-erasure-and-the-monthly-report)), inserted by the `deletion` role in the same transaction as the delete of the `business` row, so a row exists exactly when the erasure ran. Like `workflow_event`, `business_id` is **not** a foreign key: the row is the record that the business was erased, so it stays after the business is gone. Append-only: no role may update or delete it; only `console` reads it. FORCE RLS with the same `tenant_isolation` policy. It holds no customer content: no names, phones or the request's text, only who asked as a kind, the channel, the times and the team member who ran it.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | Primary key |
+| `business_id` | uuid | Not null; no foreign key |
+| `requested_by` | text | Who asked: `owner` (the business's owner or approver) or `representative` (someone acting for the owner) |
+| `channel` | text | How the request came in: `whatsapp`, `email`, `phone`, `letter` or `other` |
+| `requested_at` | timestamptz | When the owner asked |
+| `actor` | text | The signed-in team member who ran the erasure (the IAP email, or the dev actor locally) |
+| `created_at` | timestamptz | When the erasure ran |
 
 ### `agent_turn`
 

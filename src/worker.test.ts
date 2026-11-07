@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryQueue } from './db/index.js';
-import { BILLING_HOLD_JOB, CHANNEL_HEALTH_JOB, DATA_DELETION_JOB, MONTHLY_REPORT_JOB, PUBLISHING_TICK_JOB, WEEKLY_TICK_JOB, startWorkerProcess } from './worker.js';
+import { BILLING_HOLD_JOB, BUSINESS_ARCHIVE_JOB, CHANNEL_HEALTH_JOB, MONTHLY_REPORT_JOB, PUBLISHING_TICK_JOB, RETIRED_DATA_DELETION_JOB, WEEKLY_TICK_JOB, startWorkerProcess } from './worker.js';
 
 const publishing = { tick: async () => ({ ran: 0 }) };
 const channelHealth = { tick: async () => {} };
@@ -43,7 +43,7 @@ describe('worker process', () => {
     expect(ticks).toEqual([at]);
   });
 
-  it('schedules the daily data deletion and the monthly report, each with the current time (WP-43)', async () => {
+  it('schedules the daily business archive and the monthly report, each with the current time, and removes the old data deletion schedule (2026-11-07)', async () => {
     const queue = createMemoryQueue();
     const at = new Date('2026-12-01T06:00:00Z');
     const ran: [string, Date][] = [];
@@ -52,18 +52,19 @@ describe('worker process', () => {
       weekly: { tick: async () => {} },
       publishing,
       channelHealth,
-      dataDeletion: { tick: async (now) => void ran.push(['deletion', now]) },
+      archive: { tick: async (now) => void ran.push(['archive', now]) },
       monthlyReport: { tick: async (now) => void ran.push(['report', now]) },
       now: () => at,
     });
     expect(queue.schedules().slice(3)).toEqual([
-      { name: DATA_DELETION_JOB, cron: '0 3 * * *', singleton: true },
+      { name: BUSINESS_ARCHIVE_JOB, cron: '0 3 * * *', singleton: true },
       { name: MONTHLY_REPORT_JOB, cron: '0 6 1 * *', singleton: true },
     ]);
-    await queue.fire(DATA_DELETION_JOB);
+    expect(queue.unscheduled()).toEqual([RETIRED_DATA_DELETION_JOB]);
+    await queue.fire(BUSINESS_ARCHIVE_JOB);
     await queue.fire(MONTHLY_REPORT_JOB);
     expect(await queue.drain()).toBe(2);
-    expect(ran).toEqual([['deletion', at], ['report', at]]);
+    expect(ran).toEqual([['archive', at], ['report', at]]);
   });
 
   it('schedules the daily billing hold with the current time (T16)', async () => {

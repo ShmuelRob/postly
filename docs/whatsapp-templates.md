@@ -13,7 +13,7 @@ Variables are named in code (`{{businessName}}`). Meta uses positional placehold
 | `publication_confirmation` | Utility | `topic`, `networks` | All publications of a post went live | `src/modules/workflow/schedule-copy.ts` |
 | `publication_failed` | Utility | `topic`, `failed` | A publication failed for good | `src/modules/workflow/schedule-copy.ts` |
 | `channel_disconnected` | Utility | `networks` | The channel health check finds a lost connection | `src/modules/workflow/schedule-copy.ts` |
-| `subscription_cancelled` | Utility | `deleteAfter` | The subscription is cancelled | `src/modules/workflow/cancellation-copy.ts` |
+| `subscription_cancelled` | Utility | none (until 2026-11-07: `deleteAfter`) | The subscription is cancelled | `src/modules/workflow/cancellation-copy.ts` |
 | `monthly_report` | Utility | `month`, `posts`, `reach`, `engagement` | First days of the month, last month's figures | `src/modules/workflow/cancellation-copy.ts` |
 | `payment_link` (proposed, T1) | Utility | `businessName`, `link` (URL button) | Onboarding ends and the owner must pay, window closed | not in code yet |
 | `payment_reminder` | Utility | `businessName`, `holdOn`, `link` (URL button) | Billing hold: days 1, 3 and 6 of an unpaid `pending` subscription | `src/modules/billing/hold.ts` |
@@ -38,7 +38,9 @@ Variables are named in code (`{{businessName}}`). Meta uses positional placehold
 > החיבור של Postly ל{{networks}} נותק, ולכן לא נוכל לפרסם שם עד שיחובר מחדש. הצוות שלנו ייצור איתך קשר עם קישור לחיבור.
 
 **subscription_cancelled**
-> המנוי שלך ל-Postly בוטל, והחיבור לרשתות החברתיות נותק. הנתונים של העסק יימחקו ב-{{deleteAfter}}. אם זו טעות, כתבו לנו כאן.
+> המנוי שלך ל-Postly בוטל, והחיבור לרשתות החברתיות נותק. הנתונים של העסק נשמרים, ואפשר לבקש מאיתנו למחוק אותם. אם זו טעות או שתרצו שנמחק את הנתונים, כתבו לנו כאן.
+
+Changed 2026-11-07 (cancellation keeps the data; H6, review queue item 76): the body no longer promises deletion and the `deleteAfter` variable is gone. If the old body was already submitted to Meta, the template must be edited and approved again before it is used (removing a variable changes its structure); otherwise submit this body.
 
 **monthly_report**
 > הסיכום של Postly ל{{month}}: {{posts}} פוסטים פורסמו, חשיפה {{reach}}, מעורבות {{engagement}} (לייקים, תגובות ושיתופים).
@@ -63,7 +65,7 @@ Button: URL, "לתשלום", dynamic suffix `{{link}}`.
 
 - Every template is **Utility**: it is about the owner's own account, posts or subscription and is never promotional. Meta re-categorises a utility template as Marketing if it contains offers or sales wording, which costs more and needs opt-in; keep that wording out.
 - A variable may not start or end the body, and two variables may not sit side by side. `publication_confirmation` ends with an emoji after the variable for that reason. If Meta rejects a body for variable placement, add fixed words around the variable rather than changing the variable.
-- Sample values are required at submission. Use realistic ones: `businessName` = "מאפיית שושנה", `topic` = "חלות לשבת", `networks` = "אינסטגרם ופייסבוק", `deleteAfter` = "4 בדצמבר 2026", `holdOn` = "10.11.2026", `month` = "אוקטובר", `posts` = "8", `reach` = "1,240", `engagement` = "96".
+- Sample values are required at submission. Use realistic ones: `businessName` = "מאפיית שושנה", `topic` = "חלות לשבת", `networks` = "אינסטגרם ופייסבוק", `holdOn` = "10.11.2026", `month` = "אוקטובר", `posts` = "8", `reach` = "1,240", `engagement` = "96".
 - Links go in a URL button with a dynamic suffix, not in the body, so the domain is fixed and reviewable.
 
 ## Getting a template approved

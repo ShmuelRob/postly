@@ -129,7 +129,9 @@ export const business = pgTable(
     approverPhone: text('approver_phone').notNull().unique(),
     timezone: text('timezone').notNull().default('Asia/Jerusalem'),
     cancelledAt: tz('cancelled_at'),
-    dataDeleteAfter: tz('data_delete_after'),
+    /** Set on cancellation; the daily archive job applies ARCHIVE after it (named data_delete_after until 0026). */
+    archiveAfter: tz('archive_after'),
+    archivedAt: tz('archived_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -480,6 +482,28 @@ export const consoleAction = pgTable(
     index('console_action_created_idx').on(t.createdAt),
     index('console_action_business_created_idx').on(t.businessId, t.createdAt),
   ],
+);
+
+/**
+ * One row per erasure on the owner's explicit request (2026-11-07), inserted by the deletion role in
+ * the transaction that deletes the business. Like workflow_event, business_id has no foreign key, so
+ * the record stays after the business is gone (database-schema.md, "erasure_request").
+ */
+export const erasureRequest = pgTable(
+  'erasure_request',
+  {
+    id: id(),
+    businessId: uuid('business_id').notNull(),
+    /** `owner` or `representative`. */
+    requestedBy: text('requested_by').notNull(),
+    /** `whatsapp`, `email`, `phone`, `letter` or `other`. */
+    channel: text('channel').notNull(),
+    requestedAt: tz('requested_at').notNull(),
+    /** The signed-in team member who ran it. */
+    actor: text('actor').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [tenantIsolation(t.businessId)],
 );
 
 /**

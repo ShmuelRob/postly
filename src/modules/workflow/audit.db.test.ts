@@ -101,11 +101,11 @@ describe('workflow audit trail', () => {
     await expectDbError(insert, /row-level security/);
   });
 
-  it('keeps the audit rows after the business is deleted', async () => {
+  it('keeps the audit rows after the business is erased', async () => {
     const b = await newBusiness();
     await workflow.apply(b, { machine: 'conversation', id: b, event: 'UPDATE_RECEIVED', source: 'inbound' });
     await db.withSystem('console', (tx) =>
-      tx.update(schema.business).set({ status: 'cancelled', dataDeleteAfter: sql`now() - interval '1 day'` }).where(eq(schema.business.id, b)),
+      tx.update(schema.business).set({ status: 'cancelled', archiveAfter: sql`now() - interval '1 day'` }).where(eq(schema.business.id, b)),
     );
     await db.withBusiness('deletion', b, (tx) =>
       tx.delete(schema.business).where(and(eq(schema.business.id, b), eq(schema.business.status, 'cancelled'))),

@@ -36,6 +36,8 @@ export interface JobQueue {
    * pg-boss creates each cron job once however many instances run. A failed run is retried.
    */
   schedule(name: string, cron: string, handler: JobHandler<null>): Promise<void>;
+  /** Removes the cron of a job no worker runs any more, so pg-boss stops creating its jobs. A name never scheduled is a no-op. */
+  unschedule(name: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -121,6 +123,9 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
       });
       await boss.schedule(name, cron, null, { tz: 'UTC' });
     },
+    async unschedule(name) {
+      await boss.unschedule(name);
+    },
     async stop() {
       await boss.stop({ graceful: true });
     },
@@ -131,12 +136,15 @@ export async function createPgBossQueue(options: PgBossQueueOptions): Promise<Jo
 export function createMemoryQueue(): JobQueue & {
   drain(): Promise<number>;
   schedules(): ScheduledJob[];
+  /** Names passed to `unschedule`, in order. */
+  unscheduled(): string[];
   /** Queues one run of a scheduled job, as its cron firing would. */
   fire(name: string): Promise<void>;
 } {
   const handlers = new Map<string, JobHandler<never>>();
   const pending: Array<{ name: string; data: unknown }> = [];
   const scheduled: ScheduledJob[] = [];
+  const removed: string[] = [];
   return {
     async register(name, handler) {
       if (handlers.has(name)) throw new Error(`job already registered: ${name}`);
@@ -151,6 +159,12 @@ export function createMemoryQueue(): JobQueue & {
       scheduled.push({ name, cron, singleton: true });
     },
     schedules: () => [...scheduled],
+    async unschedule(name) {
+      removed.push(name);
+      const at = scheduled.findIndex((s) => s.name === name);
+      if (at >= 0) scheduled.splice(at, 1);
+    },
+    unscheduled: () => [...removed],
     async fire(name) {
       if (!scheduled.some((s) => s.name === name)) throw new Error(`not scheduled: ${name}`);
       pending.push({ name, data: null });
