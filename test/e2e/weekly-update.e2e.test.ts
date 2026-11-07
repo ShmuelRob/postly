@@ -107,6 +107,8 @@ function setup(time: ReturnType<typeof clock>) {
   const app: AppFactory = ({ messaging, publishing, model }) => {
     ref.postly = createApp({
       db,
+      // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging, publishing, models: { google: model } },
       design: { forBusiness: () => fakeRenderer(storage) },
       media: storage,
