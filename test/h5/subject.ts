@@ -75,6 +75,8 @@ export const createH5World: H5WorldFactory = async ({ messaging, publishing, now
 
   const app = createApp({
     db,
+    // The H5 subject drives the one-shot drafts flow (agent.md, A9), which only tests compose.
+    oneShotFlows: true,
     providers: { messaging, publishing, models: { google: model }, payment },
     design: {
       forBusiness: ({ storagePrefix }) => ({

@@ -30,6 +30,8 @@ export interface PlaygroundOptions {
    * database is shared with other tests, whose pending messages the sweep would otherwise take.
    */
   sweep?: boolean;
+  /** The one-shot flows instead of the agents (AppOptions.oneShotFlows): only tests set it. Local play runs the agents. */
+  oneShotFlows?: boolean;
 }
 
 export type { ChatMessage, FeedPost, OwnerInput, PlaygroundState } from './api-types.js';
@@ -104,6 +106,7 @@ export async function createPlayground(options: PlaygroundOptions): Promise<Play
     ...(options.burstQuietMs === undefined ? {} : { burstQuietMs: options.burstQuietMs }),
     logger: { rejected: (entry) => console.warn('[playground] rejected', entry) },
     now: clock,
+    oneShotFlows: options.oneShotFlows ?? false,
   });
   const server = buildServer({ messaging: app.messaging, publicBaseUrl: 'https://postly.example.test' });
   await freePhone(db, ownerPhone);

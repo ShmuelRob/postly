@@ -94,6 +94,8 @@ e2eTest('the team sees a real Hebrew conversation, its posts and model runs in t
   const app: AppFactory = ({ messaging, publishing, model, design: recordedDesign }) => {
     ref.postly = createApp({
       db,
+      // This test drives the one-shot onboarding (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging, publishing, models: { google: model } },
       design: recordedDesign!,
       media: storage,

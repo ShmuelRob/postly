@@ -101,6 +101,8 @@ e2eTest('a new owner onboards in Hebrew, partly by voice, and the business becom
   const app: AppFactory = ({ messaging: messagingProvider, publishing, model, design: recordedDesign }) => {
     const postly = createApp({
       db,
+      // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging: messagingProvider, publishing, models: { google: model }, payment: paymentSim },
       design: recordedDesign!,
       media: storage,
@@ -254,6 +256,8 @@ e2eTest('a profile question unanswered three times hands the conversation to a p
   const app: AppFactory = ({ messaging, publishing, model }) => {
     const postly = createApp({
       db,
+      // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging, publishing, models: { google: model } },
       design: { forBusiness: () => ({ render: async () => ({}) }) },
       media: storage,
@@ -337,6 +341,8 @@ function plainApp(storage: ReturnType<typeof memoryStorage>, hold?: () => Promis
       : messaging;
     ref.postly = createApp({
       db,
+      // This test drives the one-shot flows (agent.md, A9), which only tests compose.
+      oneShotFlows: true,
       providers: { messaging: slowMessaging, publishing, models: { google: model }, ...(payment ? { payment } : {}) },
       design: { forBusiness: () => ({ render: async () => ({}) }) },
       media: storage,
