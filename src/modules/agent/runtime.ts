@@ -69,6 +69,9 @@ export interface Agent {
   runTurn(businessId: string, agent: AgentName, trigger: TurnTrigger, options?: RunTurnOptions): Promise<TurnResult>;
 }
 
+/** The result of a call its step did not run (agent.md, Runtime). */
+const SKIPPED = { status: 'refused', reason: 'skipped', detail: 'not run: an earlier call in this step was refused or ended the turn; send it again if it is still needed' } as const;
+
 export function createAgent(input: AgentDeps): Agent {
   const { onTurnEnd, agents: _agents, ...rest } = input;
   const deps = { ...rest, now: input.now ?? (() => new Date()) };
@@ -231,6 +234,15 @@ export function createAgent(input: AgentDeps): Agent {
               break;
             }
             if (outcome.result.status === 'refused') {
+              // docs/observability.md: the tool, the reason code and the field; never the detail or a value.
+              log.warn('agent tool refused', {
+                businessId,
+                agent: agentName,
+                agentTurnId: turnId,
+                tool: call.tool,
+                reason: outcome.result.reason,
+                ...(call.tool === 'set_profile_field' ? { field: call.field } : {}),
+              });
               refusals += 1;
               if (refusals >= limits.maxRefusals) stop = 'refusals';
               // A refused call stops the step: its later calls are skipped (agent.md, Runtime).
@@ -241,6 +253,25 @@ export function createAgent(input: AgentDeps): Agent {
               stop = 'timeout';
               break;
             }
+          }
+          // Never drop a call silently (agent.md, Runtime): what the step did not run is recorded and goes
+          // back to the agent as refused `skipped`, so it can send the call again.
+          const notRun = step.calls.slice(recorded.calls.length);
+          if (notRun.length > 0) {
+            for (const call of notRun) {
+              recorded.calls.push({ call, result: SKIPPED });
+              toolResults.push({ tool: call.tool, result: SKIPPED });
+            }
+            await save();
+            log.warn('agent calls skipped', {
+              businessId,
+              agent: agentName,
+              agentTurnId: turnId,
+              step: steps.length,
+              skipped: notRun.length,
+              tools: notRun.map((c) => c.tool).join(','),
+              after: stop ?? 'refused',
+            });
           }
           if (stop === null && (await definition.isDone({ businessId, db: deps.db, turnId }))) stop = 'done';
           // docs/observability.md, Timing lines: where a turn's time goes (tool names only, no text).
@@ -294,7 +325,7 @@ export function createAgent(input: AgentDeps): Agent {
         status,
         stopReason: stop,
         steps: steps.length,
-        toolCalls: steps.reduce((n, s) => n + s.calls.length, 0),
+        toolCalls: steps.reduce((n, s) => n + s.calls.filter((c) => c.result !== SKIPPED).length, 0),
         durationMs: ended.getTime() - started.getTime(),
         costUsd: Number(costUsd.toFixed(6)),
       });

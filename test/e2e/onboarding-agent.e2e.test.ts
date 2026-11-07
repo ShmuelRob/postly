@@ -239,3 +239,105 @@ e2eTest('a new owner onboards through the agent: follow-up questions, brand asse
   expect(stored.turns.every((t) => t.agent === 'onboarding' && t.status !== 'failed' && t.status !== 'handed_off')).toBe(true);
   expect(run.networkPosts()).toEqual([]);
 });
+
+// agent.md, set_profile_field and Array limits (2026-11-07). On dev an onboarding step carried a
+// mainProducts value of the wrong shape; the check sat in the output schema, so all three attempts were
+// invalid and the owner was handed off. Now the value is the tool's check: the call is refused with the
+// expected shape, the calls after it come back as skipped, and the agent's next step fixes it. The steps
+// carry six and four calls, past the old limit of four.
+e2eTest('an owner who answers everything at once: a wrong field value is refused, the agent fixes it in its next step, and onboarding goes on', { timeout: 120_000 }, async ({ e2e }) => {
+  const owner = '+972501230093';
+  const businessPhone = '+972521111193';
+  const storage = memoryStorage();
+  const messagingSim = new MessagingSimulator({ businessNumber: businessPhone });
+  const modelSim = new ModelSimulator({ strictAgents: true });
+  const ALL_AT_ONCE = 'קוראים לנו מאפיית בן עמי, מאפייה שכונתית. אנחנו אופים חלות, בורקס ועוגות שמרים. אנחנו בחולון, רחוב הרצל 12';
+  modelSim.scriptAgent(
+    'onboarding',
+    [step(call.askOwner(ASK.business, { topic: 'profile:name' }))],
+    [
+      // Six calls: mainProducts has a blank item, so it is refused and the three calls after it are skipped.
+      step(
+        call.setProfileField('name', 'מאפיית בן עמי', 'מאפיית בן עמי'),
+        call.setProfileField('field', 'מאפייה שכונתית', 'מאפייה שכונתית'),
+        call.setProfileField('mainProducts', ['חלות', ' ', 'עוגות שמרים'], 'חלות, בורקס ועוגות שמרים'),
+        call.setProfileField('location.city', 'חולון', 'בחולון'),
+        call.setProfileField('location.address', 'רחוב הרצל 12', 'רחוב הרצל 12'),
+        call.askOwner(ASK.address, { topic: 'profile:location' }),
+      ),
+      // The next step of the same turn, after the refusal and the skipped calls came back: four calls.
+      step(
+        call.setProfileField('mainProducts', ['חלות', 'בורקס', 'עוגות שמרים'], 'חלות, בורקס ועוגות שמרים'),
+        call.setProfileField('location.city', 'חולון', 'בחולון'),
+        call.setProfileField('location.address', 'רחוב הרצל 12', 'רחוב הרצל 12'),
+        call.askOwner(ASK.address, { topic: 'profile:location' }),
+      ),
+    ],
+  );
+  await db.withSystem('console', (tx) => tx.update(schema.business).set({ approverPhone: `+9720${Date.now()}1` }).where(eq(schema.business.approverPhone, owner)));
+
+  let onboarding: ReturnType<typeof createApp>['onboarding'] | undefined;
+  let record: (turn: AgentTurnReport) => void = () => {};
+  const providers = { messaging: messagingSim, publishing: new PublishingSimulator(), model: modelSim, payment: new PaymentSimulator(), renderer: { render: async () => ({}) } } satisfies Providers;
+  const app: AppFactory = ({ messaging: messagingProvider, publishing, model }) => {
+    const postly = createApp({
+      db,
+      providers: { messaging: messagingProvider, publishing, models: { google: model } },
+      design: { forBusiness: () => ({ render: async () => { throw new Error('nothing renders in this test'); } }) },
+      media: storage,
+      businessNumber: businessPhone,
+      samplePhotoUrl: storage.urlFor('bundled/sample.jpg'),
+      onAgentTurnEnd: (turn) => record(turn as AgentTurnReport),
+    });
+    onboarding = postly.onboarding;
+    const server = buildServer({ messaging: postly.messaging, publicBaseUrl: 'https://postly.example.test' });
+    return {
+      async deliverInbound(message) {
+        const hook = messagingSim.webhook(message);
+        const res = await server.inject({ method: 'POST', url: WEBHOOK_PATH, headers: hook.headers, payload: hook.body });
+        expect(res.statusCode).toBe(200);
+        await postly.messaging.flushBursts();
+      },
+      close: () => server.close(),
+    };
+  };
+  const run = await e2e.start({ providers, app, ownerPhone: owner, businessPhone, readMedia: storage.read });
+  record = (turn) => run.recordAgentTurn(turn);
+  const businessId = await onboarding!.createBusiness({ approverPhone: owner });
+
+  await run.owner.sendsText(SAY.hello);
+  await run.owner.sendsText(ALL_AT_ONCE);
+  // The owner gets the next question, once, and no hand-off line.
+  expect(run.owner.received().map((m) => m.text)).toEqual([copy.intro('פוסטלי'), ASK.business, ASK.address]);
+
+  const stored = await db.withBusiness('workflow', businessId, async (tx) => ({
+    business: (await tx.select().from(schema.business))[0]!,
+    turns: await tx.select().from(schema.agentTurn),
+    items: await tx.select().from(schema.consoleItem),
+  }));
+  expect(stored.business.profile).toMatchObject({
+    name: 'מאפיית בן עמי',
+    field: 'מאפייה שכונתית',
+    mainProducts: ['חלות', 'בורקס', 'עוגות שמרים'],
+    location: { city: 'חולון', address: 'רחוב הרצל 12' },
+  });
+  type Steps = { calls: { call: { tool: string; field?: string }; result: { status: string; reason?: string; detail?: string } | null }[] }[];
+  const second = stored.turns.find((t) => (t.steps as Steps).length === 2);
+  expect(second).toMatchObject({ agent: 'onboarding', stopReason: 'waiting_for_owner' });
+  const [first, fix] = second!.steps as Steps;
+  expect(first!.calls.map((c) => [c.call.field ?? c.call.tool, c.result?.reason ?? c.result?.status])).toEqual([
+    ['name', 'ok'],
+    ['field', 'ok'],
+    ['mainProducts', 'invalid_input'],
+    ['location.city', 'skipped'],
+    ['location.address', 'skipped'],
+    ['ask_owner', 'skipped'],
+  ]);
+  // The refusal tells the agent the field's shape, not the value it sent.
+  expect(first!.calls[2]!.result!.detail).toMatch(/^mainProducts must match \{"type":"array"/);
+  expect(fix!.calls.map((c) => c.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  // Nothing for the team: one model output per step, every one valid, and no console item.
+  const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun));
+  expect(runs.filter((r) => r.task === 'agent_onboarding').every((r) => r.valid)).toBe(true);
+  expect(stored.items).toEqual([]);
+});

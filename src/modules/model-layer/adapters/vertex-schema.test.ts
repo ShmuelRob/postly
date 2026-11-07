@@ -35,7 +35,7 @@ function propertyNames(node: unknown, path = '$'): string[] {
 describe('forVertex: the schema Vertex receives', () => {
   it('found the case it guards: some task output schemas do use maxItems', () => {
     const using = MODEL_TASK_NAMES.filter((t) => keywordPaths(z.toJSONSchema(modelTasks[t].output), 'maxItems').length > 0);
-    expect(using).toContain('agent_onboarding');
+    expect(using).toContain('profile_extraction');
   });
 
   it.each(MODEL_TASK_NAMES)('%s: no maxItems keyword and no $schema remain; every property and every other keyword is kept', (task) => {

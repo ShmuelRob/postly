@@ -75,7 +75,8 @@ describe('the script builder', () => {
 
   it('refuses a step that the AgentStep schema refuses, when the script is written', () => {
     expect(() => step()).toThrow();
-    expect(() => step(call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn())).toThrow();
+    // No limit per step (agent.md, Runtime): five calls are a valid step.
+    expect(() => step(call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn(), call.endTurn())).not.toThrow();
     expect(() => stepWith(1.5, call.endTurn())).toThrow();
     expect(() => step({ tool: 'approve', postId: POST } as unknown as AgentToolCall)).toThrow();
   });
