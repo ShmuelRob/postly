@@ -152,14 +152,16 @@ jobs:
           target: sandbox
           provenance: false
           sbom: false
-          outputs: type=image,name=${{ env.REGISTRY }}/postly-sandbox,push-by-digest=true,name-canonical=true,push=true
+          outputs: |
+            type=image,name=${{ env.REGISTRY }}/postly-sandbox,push-by-digest=true,name-canonical=true,push=true
+            type=docker,name=postly-sandbox:ci
           cache-from: |
             type=gha,scope=postly-sandbox
             type=gha,scope=postly
           cache-to: type=gha,mode=max,scope=postly-sandbox
       - name: Image checks (non-root, no test or playground code, local stack on the simulators)
         if: steps.existing.outputs.found != 'true'
-        run: scripts/check-image.sh postly:ci
+        run: scripts/check-image.sh postly:ci postly-sandbox:ci
         env:
           COMPOSE_BAKE: "false"
       # Tags are immutable in the repository: tree-<key> is added once, to a checked image, and never moves.

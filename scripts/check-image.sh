@@ -3,11 +3,16 @@
 # the image it pushes, before that image gets its `tree-<key>` tag: the product image runs as
 # non-root and holds no test or playground code and no vitest, and the local stack (docker-compose.yml:
 # Postgres, migrate, web, worker, on the simulators) starts from it and schedules the weekly tick as a
-# singleton. Usage: scripts/check-image.sh <local image>. It never builds: compose runs that image.
+# singleton; the sandbox image, when given, runs as non-root too.
+# Usage: scripts/check-image.sh <local image> [<local sandbox image>]. It never builds: compose runs that image.
 set -euo pipefail
 image="$1"
+sandbox="${2:-}"
 
 test "$(docker run --rm --entrypoint id "$image" -u)" != "0" || { echo "::error::the image runs as root"; exit 1; }
+if [ -n "$sandbox" ]; then
+  test "$(docker run --rm --entrypoint id "$sandbox" -u)" != "0" || { echo "::error::the sandbox image runs as root"; exit 1; }
+fi
 # `if`, not `! cmd`: bash's errexit ignores a negated command, so `! cmd` could never fail the script.
 if docker run --rm --entrypoint sh "$image" -c 'find dist -name "*.test.*" -o -name playground | grep -q .'; then
   echo "::error::the image holds test or playground code"; exit 1
