@@ -6,6 +6,9 @@ import { defineConfig } from 'vitest/config';
 const browserTests = ['src/modules/design/render.test.ts', 'src/modules/design/styles/*.test.ts'];
 // End-to-end suites that drive Chromium (the playground UI): same reason, plus the database.
 const browserE2eTests = ['test/e2e/playground.e2e.test.ts', 'test/e2e/console.e2e.test.ts'];
+// On the shared local test Postgres (TEST_PG_SERVER_URL, technical-design.md, Local test database) roles are
+// global to the server, so the test that reads role attributes runs in CI, where the server is its own.
+const serverWideTests = process.env.TEST_PG_SERVER_URL ? ['src/db/least-privilege.db.test.ts'] : [];
 
 export default defineConfig({
   test: {
@@ -33,7 +36,8 @@ export default defineConfig({
           // Against a real Postgres, started once per run by test/db/global-setup.ts.
           name: 'db',
           // Also the H5 human-owned approval and publishing tests.
-          include: ['src/**/*.db.test.ts', 'playground/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
+          include: ['src/**/*.db.test.ts', 'playground/**/*.db.test.ts', 'test/db/**/*.db.test.ts', 'test/h5/**/*.h5.test.ts'],
+          exclude: serverWideTests,
           globalSetup: ['./test/db/global-setup.ts'],
           hookTimeout: 120_000,
           // The H5 worlds run one at a time (a database lock, test/h5/subject.ts), so an H5 case
