@@ -5,7 +5,7 @@ import { z } from 'zod';
 import * as schema from './schema.js';
 
 import { JOBS_POOL } from './jobs.js';
-export { createMemoryQueue, createPgBossQueue, JOBS_POOL, pgBossConstructorOptions, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
+export { createMemoryQueue, createPgBossQueue, createSendOnlyQueue, JOBS_POOL, pgBossConstructorOptions, startWorker, type JobHandler, type JobQueue, type PgBossQueueOptions, type ScheduledJob } from './jobs.js';
 export { passwordStatements, provisionDatabase, quoteLiteral, type ProvisionOptions } from './provision.js';
 export { createPostgresSimulatorStore, provisionSimulatorStore, SIMULATOR_LOGIN, SIMULATOR_SCHEMA } from './simulator-store.js';
 
