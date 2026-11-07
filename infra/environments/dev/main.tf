@@ -47,10 +47,10 @@ module "postly" {
   cloud_run_iap   = var.cloud_run_iap
   console_members = var.console_members != null ? var.console_members : var.sandbox_invokers
   # Sizes: docs/deployment.md, Sizing (same in every environment).
-  sql_tier                  = "db-custom-2-7680"
-  sql_high_availability     = false
-  deletion_protection       = false
-  worker_max_instances      = 1
+  sql_tier              = "db-custom-2-7680"
+  sql_high_availability = false
+  deletion_protection   = false
+  worker_max_instances  = 1
   # A short quiet window so the sandbox answers quickly (technical-design.md, Operational defaults).
   burst_quiet_ms            = 2000
   media_noncurrent_days     = 7
