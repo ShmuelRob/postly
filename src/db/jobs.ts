@@ -191,6 +191,7 @@ export function createSendOnlyQueue(start: () => Promise<JobQueue>): JobQueue {
   return {
     register: refuse,
     schedule: refuse,
+    unschedule: refuse,
     async send(name, data, options) {
       await (await queue()).send(name, data, options);
     },
