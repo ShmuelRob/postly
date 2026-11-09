@@ -97,7 +97,7 @@ resource "github_branch_protection" "this" {
 
   required_status_checks {
     strict   = false
-    contexts = ["check"]
+    contexts = ["check", "infra-check"]
   }
 
   required_pull_request_reviews {
