@@ -15,7 +15,7 @@ import { DesignSpec, PhotoEdit } from '../../contracts/design-spec.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { Tx } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
-import type { AgentDefinition, PastCall } from './types.js';
+import { toolsFor, type AgentDefinition, type PastCall } from './types.js';
 
 /** The model sees the last 20 messages within 14 days (agent.md, A10). */
 export const CONTEXT_MESSAGES = 20;
@@ -172,7 +172,7 @@ export async function buildContext(tx: Tx, input: ContextInput): Promise<BuiltCo
       const plan = PlannedPost.safeParse(t.plan);
       return plan.success ? [plan.data.topic] : [];
     }),
-    tools: agent.tools,
+    tools: toolsFor(agent, conversation.step),
     doneRule: agent.doneRule,
     budget: input.budget,
     toolResults: input.toolResults,

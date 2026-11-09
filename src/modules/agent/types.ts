@@ -90,11 +90,20 @@ export interface AgentDefinition {
   name: AgentName;
   task: AgentTask;
   tools: readonly AgentToolName[];
+  /**
+   * The tools allowed in a conversation step, when the agent narrows `tools` by step (agent.md,
+   * request_photo: the onboarding agent asks for photos only in brand_assets). A tool left out is not
+   * in the context's tool list and a call to it is refused `not_allowed`.
+   */
+  toolsIn?(step: string): readonly AgentToolName[];
   /** The done rule in words, for the model's context. */
   doneRule: string;
   /** Code decides "done" after each step; stubs return false until their package lands. */
   isDone(input: { businessId: string; db: Database; turnId: string }): Promise<boolean>;
 }
+
+/** The tools an agent may call in this conversation step (agent.md, Tools: allowed for the agent and the state). */
+export const toolsFor = (agent: AgentDefinition, step: string): readonly AgentToolName[] => agent.toolsIn?.(step) ?? agent.tools;
 
 /** The limits of one agent (agent_config) and the global cap (system_control), agent.md, Limits. */
 export interface AgentLimits {

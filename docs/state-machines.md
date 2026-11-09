@@ -60,7 +60,7 @@ Proposed 2026-11-05 with the hybrid agent ([agent.md](agent.md)), queued for the
 | Machine and step | Agent | Event and who applies it |
 | --- | --- | --- |
 | Onboarding `profile_questions` | Onboarding | `PROFILE_FIELDS_COMPLETE`: code, after a turn's step, when `missingRequiredProfileFields` is empty (except `style`) and the closing "anything else?" question was answered or declined |
-| Onboarding `brand_assets` | Onboarding | `BRAND_ASSETS_DONE`: code, when the logo request and the business-photo request each have an image or a recorded decline (`record_decline`) |
+| Onboarding `brand_assets` | Onboarding | `BRAND_ASSETS_DONE`: code, when the logo request and the business-photo request each have an image or a recorded decline (`record_decline`). Images the owner sent before `brand_assets` count: code carries them in on `PROFILE_FIELDS_COMPLETE` (the first is the logo when none is set) and applies `BRAND_ASSETS_DONE` at once when they answer both requests ([agent.md](agent.md#the-onboarding-agent-in-the-flow-wp-92)) |
 | Onboarding `profile_review` | Onboarding (corrections only) | `PROFILE_CORRECTED`: code, after the agent's `set_profile_field` calls, when it resends the summary. `PROFILE_APPROVED` stays a code reading of the owner's text, as today |
 | Conversation `processing_update` / `awaiting_answer` | Weekly, Drafts | `QUESTION_ASKED`: code, when an `ask_owner` with `expects: answer` or a `request_photo` is sent; `ANSWER_RECEIVED`: code, on the owner's next burst |
 | Weekly update `received` | Weekly | `FACTS_EXTRACTED`: code, when `plan_posts` (`initial`) passes; `EXTRACTION_FAILED`: code, on a hand-off or limit before a plan |

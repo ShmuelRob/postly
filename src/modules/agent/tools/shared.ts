@@ -18,6 +18,8 @@ const refused = (reason: Extract<AgentToolResult, { status: 'refused' }>['reason
 const MAX_MESSAGES_PER_TURN = 2;
 /** At most two photo requests per post (agent.md, request_photo). */
 const MAX_PHOTO_REQUESTS_PER_POST = 2;
+/** At most two requests for the logo, and two for the business photos, in one onboarding (agent.md, request_photo). */
+const MAX_PHOTO_REQUESTS_PER_ONBOARDING_PURPOSE = 2;
 
 async function postExists(ctx: ToolContext, postId: string): Promise<boolean> {
   const rows = await ctx.deps.db.withBusiness('workflow', ctx.businessId, (tx) =>
@@ -64,6 +66,13 @@ export const sharedTools: ToolHandlers = {
       if (!(await postExists(ctx, call.postId))) return refused('unknown_id', 'no such post in this business');
       const requested = ctx.history.filter((h) => h.call.tool === 'request_photo' && h.call.postId === call.postId).length;
       if (requested >= MAX_PHOTO_REQUESTS_PER_POST) return refused('photo_request_limit', 'at most two photo requests for one post');
+    } else if (call.purpose === 'logo' || call.purpose === 'business') {
+      // At most two requests per onboarding purpose (agent.md, request_photo), so brand assets never loop.
+      const requested = ctx.history.filter((h) => h.call.tool === 'request_photo' && h.call.purpose === call.purpose && !h.call.postId).length;
+      if (requested >= MAX_PHOTO_REQUESTS_PER_ONBOARDING_PURPOSE) {
+        const what = call.purpose === 'logo' ? 'logo' : 'business_photos';
+        return refused('photo_request_limit', `the ${call.purpose} photo was already asked for twice; record_decline "${what}" with the owner's words, or go on without it`);
+      }
     }
     const problem = await sendToOwner(ctx, call.text, true);
     if (problem) return problem;
