@@ -15,7 +15,7 @@ import { buildContext } from './context.js';
 import { handOff } from './handoff.js';
 import { loadLimits, localMidnight, localWeekStart, utcMidnight } from './limits.js';
 import { handlerFor } from './registry.js';
-import type { AgentDeps, AgentLimits, PastCall, RunTurnOptions, ToolContext, ToolOutcome, TurnResult, TurnTrigger } from './types.js';
+import { toolsFor, type AgentDeps, type AgentLimits, type PastCall, type RunTurnOptions, type ToolContext, type ToolOutcome, type TurnResult, type TurnTrigger } from './types.js';
 
 /** One recorded step of a turn: what the model asked for and what code answered (agent_turn.steps). */
 interface RecordedStep {
@@ -225,7 +225,7 @@ export function createAgent(input: AgentDeps): Agent {
               break;
             }
             toolCalls += 1;
-            const outcome = await runTool(call, definition.tools, ctx);
+            const outcome = await runTool(call, toolsFor(definition, context.step), ctx);
             recorded.calls.push({ call, result: outcome.result });
             toolResults.push({ tool: call.tool, result: outcome.result });
             if (outcome.result.status === 'ok') history.push({ turnId, call, result: outcome.result });
