@@ -3,8 +3,8 @@
  * separate compositions, each with its own simulator objects, sharing one outside world through the
  * Postgres simulator store, as the separate Cloud Run services do. The human plays the owner in the
  * dev sandbox: every message is signed and posted over HTTP to the web service's webhook, the payment
- * link opens the sandbox's mock checkout, and the worker's publishing job puts the approved posts on
- * the mock feed. The web service restarts midway and nothing is lost.
+ * link opens the sandbox's mock checkout, the sandbox's "publish now (dev)" button brings the scheduled
+ * posts forward, and the worker's publishing job puts the approved posts on the mock feed. The web service restarts midway and nothing is lost.
  */
 import { mkdirSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
@@ -36,9 +36,8 @@ const NAMESPACE = `e2e-${Date.now()}`;
 
 const store = createPostgresSimulatorStore(inject('simulatorStoreUrl'));
 const db = createDatabase(inject('databaseUrls'), { max: 3 });
-/** The dev clock: real time, moved forward to the scheduled time so the posts can go live in the test. */
-let skewMs = 0;
-const clock = () => new Date(Date.now() + skewMs);
+/** The dev clock: real time; the sandbox's publish-now button, not a time jump, brings the posts forward. */
+const clock = () => new Date();
 
 let web: SimulatedProcess;
 let worker: SimulatedProcess;
@@ -158,10 +157,25 @@ e2eTest('dev on the simulators: onboarding, payment, drafts, approval and publis
   await expect.poll(lastReply, timeout).toContain('מתוזמן');
   expect(Object.values((await sandbox.state()).feed).flat()).toEqual([]);
 
-  // 5. The scheduled time comes; the worker (a separate composition) publishes to the shared simulator.
+  // 5. The human presses "publish now (dev)" in the sandbox: the scheduled publications move to now,
+  // and the worker's publishing job (every minute; here one tick of it) publishes them through the normal
+  // path, hash check and confirmation template included.
   const scheduled = await db.withSystem('console', (tx) => tx.select().from(schema.publication).where(eq(schema.publication.businessId, businessId)));
-  const last = Math.max(...scheduled.map((p) => new Date(p.scheduledFor).getTime()));
-  skewMs = last + 60_000 - Date.now();
+  expect(scheduled.length).toBe(2 * approveButtons.length);
+  expect(scheduled.every((p) => p.status === 'scheduled' && p.scheduledFor.getTime() > Date.now())).toBe(true);
+  await page.goto(ui.url);
+  const publishNow = page.getByTestId('publish-now');
+  await publishNow.waitFor(timeout);
+  expect(await publishNow.innerText()).toContain('פרסום המתוזמנים עכשיו (dev)');
+  expect(await page.getByTestId('publish-now-note').innerText()).toContain('תוך דקה');
+  await shot(page, record, 'publish-now', 'The approved posts are scheduled days ahead; the sandbox offers publish now (dev)');
+  await publishNow.click();
+  await expect
+    .poll(async () => {
+      const rows = await db.withSystem('console', (tx) => tx.select().from(schema.publication).where(eq(schema.publication.businessId, businessId)));
+      return rows.every((p) => p.scheduledFor.getTime() <= Date.now());
+    }, timeout)
+    .toBe(true);
   // The publishing pause is global to the shared database: another e2e file that holds it (the
   // console's pause test) would defer these publications and the feed would be short. Hold the shared
   // lock, as every H5 world does, for the tick and the read of the feed.
@@ -176,9 +190,10 @@ e2eTest('dev on the simulators: onboarding, payment, drafts, approval and publis
   expect({ instagram: feed.instagram.length, facebook: feed.facebook.length }).toEqual({ instagram: approveButtons.length, facebook: approveButtons.length });
   expect([...feed.instagram, ...feed.facebook].every((p) => p.status === 'published')).toBe(true);
   await expect.poll(async () => (await replies()).some((r) => r.text?.includes(scheduleCopy.PUBLISHED_TEMPLATE)), timeout).toBe(true);
+  // Nothing is scheduled any more: the button is gone.
+  await expect.poll(() => publishNow.isVisible(), timeout).toBe(false);
 
   // 6. The sandbox UI shows the conversation and the feed, read from the shared store.
-  await page.goto(ui.url);
   await expect.poll(() => page.getByTestId('chat').getByTestId('bubble-to_owner').count(), timeout).toBeGreaterThan(10);
   await page.getByTestId('feed').getByRole('button', { name: 'Instagram' }).click();
   await expect.poll(() => page.getByTestId('feed').getByTestId('feed-post').count(), timeout).toBe(approveButtons.length);
@@ -204,8 +219,7 @@ e2eTest('the mock checkout reports a failed payment and a cancelled one', async 
   try {
     const businessId = (await other.state()).business.id;
     const { customerId } = (await other.state()).payment!;
-    // The first test moved the clock days ahead to publish, which closed the 24-hour window; the
-    // owner writes first, so Postly may answer in free text (technical-design.md, Failure handling).
+    // The owner writes first, so Postly may answer in free text (technical-design.md, Failure handling).
     await other.send({ kind: 'text', text: 'שאלה על התשלום' });
     expect(await other.checkout(customerId, 'fail')).toEqual({ status: 'past_due', webhookStatus: 200 });
     await expect.poll(async () => (await other.state()).messages.some((m) => m.text === BILLING_COPY.past_due), { timeout: 30_000 }).toBe(true);

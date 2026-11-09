@@ -215,6 +215,68 @@ describe('a turn', () => {
     expect(lines.join('\n')).not.toContain('עוד ציטוט');
   });
 
+  // agent.md, One bad call does not sink the step (2026-11-09).
+  it('one call that does not match its schema is refused invalid_input, and the rest of the step still runs', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    let result: Awaited<ReturnType<ReturnType<typeof agentWith>['runTurn']>>;
+    const badDecline = { tool: 'record_decline', what: 'anything_else', ownerQuote: '' };
+    try {
+      // The model layer accepts the step: two of its three calls match their tools.
+      sim.scriptInvalid('agent_weekly', { calls: [decline(), badDecline, ask('עוד משהו?', 'anything_else', 'none')], confidence: 0.9 });
+      sim.script('agent_weekly', step([END]));
+      result = await agentWith().runTurn(businessId, 'weekly', trigger);
+    } finally {
+      setLogSink(undefined);
+    }
+    expect(result).toMatchObject({ status: 'done', stopReason: 'end_turn' });
+    expect(sent).toEqual([{ to: approver, text: 'עוד משהו?' }]);
+    // Valid output, so no retry and no console item.
+    const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun).where(eq(schema.modelRun.businessId, businessId)));
+    expect(runs.map((r) => r.valid)).toEqual([true, true]);
+    expect(await consoleItems()).toEqual([]);
+    const turn = await turnRow(result.turnId!);
+    const calls = (turn.steps as { calls: { call: { tool: string }; result: { status: string; reason?: string } | null }[] }[])[0]!.calls;
+    expect(calls.map((c) => [c.call.tool, c.result?.status, c.result?.reason])).toEqual([
+      ['record_decline', 'ok', undefined],
+      ['record_decline', 'refused', 'invalid_input'],
+      ['ask_owner', 'ok', undefined],
+    ]);
+    // The refusal goes back to the agent with the Zod issue, so it can resend the call fixed.
+    expect(contextOf(1).input.toolResults[1]).toEqual({ tool: 'record_decline', result: expect.objectContaining({ status: 'refused', reason: 'invalid_input', detail: expect.stringContaining('ownerQuote') }) });
+    // The log names the call and the field, never a value.
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.filter((l) => l.message === 'agent tool refused')).toEqual([
+      expect.objectContaining({ tool: 'record_decline', reason: 'invalid_input', path: 'calls.1(record_decline).ownerQuote' }),
+    ]);
+    expect(parsed.find((l) => l.message === 'agent tool call' && l.reason === 'invalid_input')).toMatchObject({ path: 'calls.1(record_decline).ownerQuote' });
+  });
+
+  it("a step's schema refusals count as one refusal toward the turn's limit", async () => {
+    await setLimits({ maxRefusals: 2 });
+    const bad = (n: number) => ({ tool: 'record_decline', what: 'anything_else', ownerQuote: '', n });
+    sim.scriptInvalid('agent_onboarding', { calls: [bad(1), bad(2), bad(3), decline()], confidence: 0.9 });
+    sim.script('agent_onboarding', step([END]));
+    const result = await agentWith().runTurn(businessId, 'onboarding', trigger);
+    expect(result).toMatchObject({ stopReason: 'end_turn' });
+  });
+
+  it('a step in which no call matches its schema is an invalid output, logged with each failing call', async () => {
+    const lines: string[] = [];
+    setLogSink((line) => lines.push(line));
+    try {
+      const bad = { calls: [{ tool: 'record_decline', what: 'anything_else', ownerQuote: '' }, { tool: 'ask_owner', text: 'שאלה', topic: 'nope', expects: 'none' }], confidence: 0.9 };
+      sim.scriptInvalid('agent_weekly', bad, bad, bad);
+      await agentWith().runTurn(businessId, 'weekly', trigger);
+    } finally {
+      setLogSink(undefined);
+    }
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.find((l) => l.message === 'model call')).toMatchObject({ outcome: 'invalid', invalidPaths: 'calls.0(record_decline).ownerQuote,calls.1(ask_owner).topic' });
+    expect(parsed.find((l) => l.message === 'model task failed')).toMatchObject({ invalidPaths: 'calls.0(record_decline).ownerQuote,calls.1(ask_owner).topic' });
+    expect(lines.join('\n')).not.toContain('שאלה');
+  });
+
   it('refuses a tool the agent may not use, and one whose package has not landed', async () => {
     sim.script(
       'agent_weekly',
@@ -468,8 +530,8 @@ describe('limits', () => {
 
   it('turn_budget: a step starts only when the turn can still pay its full cap', async () => {
     sim.script('agent_onboarding', step([decline()]), step([decline()]), step([decline()]), step([END]));
-    // Each step spends its whole 0.02 cap here: three steps fit the 0.06 turn, a fourth does not start.
-    const fullSteps = { ...models, spentOnTurn: async () => 0.02 * sim.callsFor('agent_onboarding').length };
+    // Each step spends its whole 0.05 cap here: three steps fit the 0.15 turn, a fourth does not start.
+    const fullSteps = { ...models, spentOnTurn: async () => 0.05 * sim.callsFor('agent_onboarding').length };
     await expectLimit('turn_budget', agentWith({ models: fullSteps }).runTurn(businessId, 'onboarding', trigger));
     expect(sim.callsFor('agent_onboarding')).toHaveLength(3);
   });

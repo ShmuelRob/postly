@@ -5,7 +5,7 @@ import { BusinessProfile, BusinessProfileDraft, missingRequiredProfileFields } f
 import { type Network, VISUAL_STYLES } from '../../contracts/common.js';
 
 type VisualStyle = (typeof VISUAL_STYLES)[number];
-import type { ModelTaskInput, ModelTaskName, ModelTaskOutput } from '../../contracts/model-tasks.js';
+import type { ModelTaskInput, ModelTaskName, ModelTaskResult } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database, Tx } from '../../db/index.js';
@@ -30,7 +30,7 @@ export interface OnboardingDeps {
   db: Database;
   workflow: Workflow;
   messaging: { sendText(businessId: string, request: SendTextRequest): Promise<unknown> };
-  model: { run<T extends ModelTaskName>(businessId: string, task: T, input: ModelTaskInput<T>): Promise<ModelTaskOutput<T>> };
+  model: { run<T extends ModelTaskName>(businessId: string, task: T, input: ModelTaskInput<T>): Promise<ModelTaskResult<T>> };
   /** URL of a business media asset (messaging's `mediaUrl`). */
   mediaUrl(businessId: string, mediaAssetId: string): Promise<string>;
   /** Renders one sample per style (the design module's `renderStyleSamples`), returning image URLs. */
@@ -294,8 +294,40 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
       return left.length === 0 ? null : `missing profile fields: ${left.join(', ')}`;
     });
     if (!done.ok) return;
-    await setQuestion(burst.businessId, null);
+    if (await carryEarlyAssets(burst)) {
+      // The early images answer both requests: brand_assets is done without a turn (agent.md, Images before brand_assets).
+      const brandDone = await event(burst.businessId, 'BRAND_ASSETS_DONE');
+      if (!brandDone.ok) return;
+      const { draft, question } = await load(burst.businessId);
+      return sendSamples(burst, draft, question);
+    }
     return afterBrandTurn(burst, await deps.agent!.runTurn(burst.businessId, 'onboarding', eventTrigger('brand_assets'), MUST_REPLY));
+  }
+
+  /** Before brand_assets an image is kept as a pending asset in the open question (agent.md, Images before brand_assets). */
+  async function keepEarlyAssets(burst: OnboardingBurst, question: OpenQuestion | null) {
+    const images = imagesIn(burst);
+    if (images.length === 0) return;
+    await setQuestion(burst.businessId, {
+      ...(question ?? { key: 'pending_assets', askedFields: [], attempts: 1 }),
+      photoAssetIds: [...(question?.photoAssetIds ?? []), ...images],
+    });
+  }
+
+  /**
+   * On entering brand_assets: the pending images by the logo-then-photos rule (the first is the logo when
+   * none is set, the rest are business photos), in a fresh open question. True when they answer both requests.
+   */
+  async function carryEarlyAssets(burst: OnboardingBurst): Promise<boolean> {
+    const { draft, question } = await load(burst.businessId);
+    let photos = question?.photoAssetIds ?? [];
+    let logo = draft.brand?.logoAssetId;
+    if (!logo && photos.length > 0) {
+      [logo, ...photos] = photos as [string, ...string[]];
+      await saveDraft(burst.businessId, BusinessProfileDraft.parse({ ...draft, brand: { colors: draft.brand?.colors ?? [], logoAssetId: logo } }));
+    }
+    await setQuestion(burst.businessId, photos.length > 0 ? { key: 'brand_assets', askedFields: [], attempts: 1, photoAssetIds: photos } : null);
+    return Boolean(logo) && photos.length > 0;
   }
 
   /** brand_assets with the agent: once the agent is done, code applies BRAND_ASSETS_DONE and sends the style samples. */
@@ -307,12 +339,15 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     return sendSamples(burst, draft, question);
   }
 
-  /** brand_assets: an image answers the open photo request; code sets the logo (agent.md, request_photo). */
+  /**
+   * brand_assets: an image is a brand asset whichever tool asked for it; while no logo is set and the
+   * open request is not for business photos, the first image is the logo (agent.md, brand_assets).
+   */
   async function storeAssetAnswer(burst: OnboardingBurst, draft: BusinessProfileDraft, question: OpenQuestion | null) {
     const images = imagesIn(burst);
     if (images.length === 0) return;
     let photos = images;
-    if (question?.key === 'photo_request:logo' && !draft.brand?.logoAssetId) {
+    if (question?.key !== 'photo_request:business' && !draft.brand?.logoAssetId) {
       const [logo, ...rest] = images;
       photos = rest;
       await saveDraft(burst.businessId, BusinessProfileDraft.parse({ ...draft, brand: { colors: draft.brand?.colors ?? [], logoAssetId: logo } }));
@@ -333,6 +368,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
     const { businessId } = burst;
     switch (step) {
       case 'profile_questions':
+        await keepEarlyAssets(burst, question);
         await afterProfileTurn(burst, await agent.runTurn(businessId, 'onboarding', burstTrigger(burst), MUST_REPLY));
         return true;
       case 'brand_assets':
@@ -367,6 +403,7 @@ export function createOnboarding(deps: OnboardingDeps): Onboarding {
         if (!sent.ok) return;
         await reply(burst, copy.intro(persona));
         if (deps.agent) {
+          await keepEarlyAssets(burst, question);
           return afterProfileTurn(burst, await deps.agent.runTurn(businessId, 'onboarding', eventTrigger('intro_sent'), MUST_REPLY));
         }
         return askNextProfileQuestion(burst, draft, null);

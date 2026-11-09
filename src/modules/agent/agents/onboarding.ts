@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { AgentToolCall, AgentToolResult } from '../../../contracts/agent.js';
+import { AgentToolCall, AgentToolResult, type AgentToolName } from '../../../contracts/agent.js';
 import { BusinessProfileDraft, missingRequiredProfileFields } from '../../../contracts/business-profile.js';
 import { OpenQuestion } from '../../../contracts/open-question.js';
 import type { Database } from '../../../db/index.js';
@@ -73,13 +73,18 @@ export async function onboardingDone(db: Database, businessId: string, turnId: s
   }
 }
 
+const ONBOARDING_TOOLS = ['ask_owner', 'set_profile_field', 'request_photo', 'record_decline', 'hand_off_to_console', 'end_turn'] as const satisfies readonly AgentToolName[];
+
 export const onboardingAgent: AgentDefinition = {
   name: 'onboarding',
   task: 'agent_onboarding',
-  tools: ['ask_owner', 'set_profile_field', 'request_photo', 'record_decline', 'hand_off_to_console', 'end_turn'],
+  tools: ONBOARDING_TOOLS,
+  // agent.md, request_photo: the logo and photos are asked for only in brand_assets (2026-11-09).
+  toolsIn: (step) => (step === 'brand_assets' ? ONBOARDING_TOOLS : ONBOARDING_TOOLS.filter((t) => t !== 'request_photo')),
   doneRule:
-    'profile_questions: every required field (name, field, mainProducts, location, differentiator, channels) is set, and you asked "anything else customers should know?" once and read the answer, or the owner declined. ' +
-    'brand_assets: the logo arrived as an image or the owner declined it, and business photos arrived or the owner declined them. ' +
+    'profile_questions: every required field (name, field, mainProducts, location, differentiator, channels) is set, and you asked "anything else customers should know?" once and read the answer, or the owner declined. Do not ask for the logo or photos yet; images the owner sends now are kept for brand_assets. ' +
+    'brand_assets: the logo arrived as an image or the owner declined it, and business photos arrived or the owner declined them. Images already saved count: the profile\'s brand.logoAssetId is the logo and openQuestion.photoAssetIds are the photos; ask only for what is missing. ' +
+    'If the owner has none, skips, or says they already sent it while nothing is saved, record_decline with their words instead of asking again. ' +
     'profile_review: you saved the correction the owner asked for.',
   isDone: ({ db, businessId, turnId }) => onboardingDone(db, businessId, turnId),
 };

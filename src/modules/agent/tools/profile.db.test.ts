@@ -201,3 +201,48 @@ describe('done rules (agent.md, Agents)', () => {
     expect(result.stopReason).toBe('done');
   });
 });
+
+// agent.md, request_photo and The onboarding agent in the flow (2026-11-09). On dev the agent asked
+// for the logo while still in profile_questions, and later asked for the brand assets again and again.
+describe('photo requests in onboarding', () => {
+  const toolsSeen = (n: number) => (sim.callsFor('agent_onboarding')[n]!.request as unknown as { input: { tools: string[] } }).input.tools;
+
+  it('profile_questions: request_photo is not offered, and a call is refused not_allowed and sends nothing', async () => {
+    await newBusiness('onboarding', 'קוראים לנו פרחי דנה');
+    sim.scriptAgent('onboarding', [step(call.requestPhoto('logo', 'יש לכם לוגו? שלחו אותו כאן')), step(call.askOwner('מה אתם מוכרים?', { topic: 'profile:mainProducts' }))]);
+    const result = await agent().runTurn(businessId, 'onboarding', trigger);
+    expect(toolsSeen(0)).not.toContain('request_photo');
+    const [refused, asked] = await turnResults(result.turnId!);
+    expect(refused).toMatchObject({ status: 'refused', reason: 'not_allowed' });
+    expect(asked).toMatchObject({ status: 'ok' });
+    expect(sent).toEqual(['מה אתם מוכרים?']);
+  });
+
+  it('profile_review: request_photo is not offered either', async () => {
+    await newBusiness('onboarding', 'תשנו את השעות', 'profile_review');
+    sim.scriptAgent('onboarding', [step(call.endTurn())]);
+    await agent().runTurn(businessId, 'onboarding', trigger);
+    expect(toolsSeen(0)).not.toContain('request_photo');
+  });
+
+  it('brand_assets: request_photo is offered; a third request for the logo is refused, and a decline lets the step finish', async () => {
+    await newBusiness('onboarding', 'שלחתי כבר', 'brand_assets');
+    sim.scriptAgent(
+      'onboarding',
+      [step(call.requestPhoto('logo', 'יש לכם לוגו? שלחו אותו כאן'))],
+      [step(call.requestPhoto('logo', 'אפשר לשלוח את הלוגו כתמונה?'))],
+      [
+        step(call.requestPhoto('logo', 'עוד פעם, הלוגו?')),
+        step(call.recordDecline('logo', 'שלחתי כבר'), call.recordDecline('business_photos', 'שלחתי כבר')),
+      ],
+    );
+    await agent().runTurn(businessId, 'onboarding', trigger);
+    expect(toolsSeen(0)).toContain('request_photo');
+    await agent().runTurn(businessId, 'onboarding', trigger);
+    const third = await agent().runTurn(businessId, 'onboarding', trigger);
+    const [limit] = await turnResults(third.turnId!);
+    expect(limit).toMatchObject({ status: 'refused', reason: 'photo_request_limit' });
+    expect(third.stopReason).toBe('done');
+    expect(sent).toHaveLength(2);
+  });
+});

@@ -32,6 +32,11 @@ variable "sandbox_members" {
   type        = list(string)
   default     = null
 }
+variable "sandbox_public" {
+  description = "Open the sandbox to anyone with its link, without Google sign-in (docs/deployment.md, \"The sandbox\"); false brings sign-in back. The console stays behind IAP."
+  type        = bool
+  default     = false
+}
 variable "console_members" {
   description = "Who may sign in to the console; null uses sandbox_invokers."
   type        = list(string)

@@ -31,6 +31,7 @@ async function main() {
     publicBaseUrl: config.publicBaseUrl,
     businessNumber: config.businessNumber,
     ownerPhone,
+    env: config.env,
   });
 
   const server = createServer((req, res) => {

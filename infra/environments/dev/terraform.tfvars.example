@@ -13,6 +13,10 @@ sandbox_invokers = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # Different lists per service (both default to sandbox_invokers):
 # console_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
 # sandbox_members = ["user:REPLACE_WITH_YOUR_GOOGLE_ACCOUNT"]
+# Open the sandbox (not the console) to anyone with its link, without Google sign-in, for a while:
+# anyone can then chat with the dev agent on paid Vertex AI calls (docs/security.md, "Sandbox exposure").
+# Delete the line, or set false, and apply again to bring sign-in back.
+# sandbox_public = true
 # Dev always runs on real Gemini (Vertex AI, EU multi-region) with every agent, while WhatsApp,
 # publishing and payments stay simulated (docs/deployment.md, "Real Gemini and the agents on dev").
 # There is no models or agent_flows variable any more; delete those lines from an older terraform.tfvars.

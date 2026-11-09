@@ -83,6 +83,7 @@ export function App() {
       <StatePanel
         state={state}
         onPublishDue={() => call('/api/publish-due')}
+        onPublishNow={() => call('/api/publish-now')}
         onConnect={() => call('/api/connect')}
       />
     </div>
@@ -206,10 +207,12 @@ function StatePanel({
   state,
   onConnect,
   onPublishDue,
+  onPublishNow,
 }: {
   state: PlaygroundState | null;
   onConnect: () => void;
   onPublishDue: () => void;
+  onPublishNow: () => void;
 }) {
   if (!state) {
     return (
@@ -268,6 +271,16 @@ function StatePanel({
           <a className="connect" data-testid="open-checkout" href={`/checkout/${state.payment.customerId}`} target="_blank" rel="noreferrer">
             לדף התשלום המדומה
           </a>
+        </>
+      )}
+      {state.mode === 'sandbox' && state.posts.some((p) => p.status === 'scheduled') && (
+        <>
+          <button type="button" className="connect" data-testid="publish-now" onClick={onPublishNow}>
+            פרסום המתוזמנים עכשיו (dev)
+          </button>
+          <p className="clock" data-testid="publish-now-note">
+            מקדים את הפוסטים המתוזמנים לעכשיו; ה-worker מפרסם אותם תוך דקה בערך.
+          </p>
         </>
       )}
       {state.mode !== 'sandbox' && state.posts.some((p) => p.status === 'scheduled') && (

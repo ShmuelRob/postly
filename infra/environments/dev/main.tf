@@ -57,10 +57,12 @@ module "postly" {
   media_coldline_after_days = 180
   sql_retained_backups      = 3
   log_retention_days        = 7
-  # Simulated mode (WP-51): the stack runs dev on the simulators; the sandbox has no public invoker.
+  # Simulated mode (WP-51): the stack runs dev on the simulators; the sandbox has no public invoker
+  # unless sandbox_public opens it to anyone with the link (docs/security.md, "Sandbox exposure").
   sandbox_enabled  = true
   sandbox_invokers = var.sandbox_invokers
   sandbox_members  = var.sandbox_members
+  sandbox_public   = var.sandbox_public
   # Real Gemini (docs/deployment.md, "Real Gemini and the agents on dev").
   vertex_location  = var.vertex_location
   billing_account  = var.billing_account

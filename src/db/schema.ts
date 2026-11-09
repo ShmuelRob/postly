@@ -129,7 +129,7 @@ export const business = pgTable(
     approverPhone: text('approver_phone').notNull().unique(),
     timezone: text('timezone').notNull().default('Asia/Jerusalem'),
     cancelledAt: tz('cancelled_at'),
-    /** Set on cancellation; the daily archive job applies ARCHIVE after it (named data_delete_after until 0026). */
+    /** Set on cancellation; the daily archive job applies ARCHIVE after it (named data_delete_after until 0027). */
     archiveAfter: tz('archive_after'),
     archivedAt: tz('archived_at'),
     createdAt: createdAt(),

@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
+import { SIMULATED_ENVS } from '../../src/config.js';
 import type { InboundMessage, WebhookRequest } from '../../src/contracts/providers/index.js';
 import { decodeButtonId } from '../../src/contracts/providers/index.js';
 import type { SubscriptionState } from '../../src/contracts/state-machines/index.js';
@@ -34,6 +35,8 @@ export interface SandboxOptions {
   businessNumber: string;
   /** The number the human plays: the business's single approver. */
   ownerPhone: string;
+  /** POSTLY_ENV; publish-now is refused outside the simulated environments (local, test, dev). Default `local`. */
+  env?: string;
   now?: () => Date;
 }
 
@@ -46,6 +49,11 @@ export interface Sandbox {
   send(input: OwnerInput): Promise<void>;
   /** The owner finishes the connection link on the publishing simulator. */
   connect(): Promise<void>;
+  /**
+   * Dev demos: moves the current sign-up's `scheduled` publications to now, so the worker's publishing
+   * job (every minute) publishes them through the normal path. Publishes nothing itself.
+   */
+  publishNow(): Promise<number>; // how many it moved; those already due stay as they are
   /** The owner acts on the mock checkout page; the provider's callback goes to web. */
   checkout(customerId: string, outcome: CheckoutOutcome): Promise<{ status: SubscriptionState; webhookStatus: number }>;
   state(): Promise<PlaygroundState>;
@@ -133,6 +141,20 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     });
   };
 
+  const publishNow = async () => {
+    if (!SIMULATED_ENVS.includes(options.env ?? 'local')) throw new PublishNowRefused();
+    const b = await business();
+    if (!b) return 0;
+    const p = schema.publication;
+    const at = now();
+    // The console role's manual scheduling (database-schema.md, its grant on publication): only the time
+    // moves; the approval, its hash and the post version are the publishing job's to check, as always.
+    const moved = await db.withSystem('console', (tx) =>
+      tx.update(p).set({ scheduledFor: at, updatedAt: at }).where(and(eq(p.businessId, b.id), eq(p.status, 'scheduled'), gt(p.scheduledFor, at))).returning({ id: p.id }),
+    );
+    return moved.length;
+  };
+
   const checkoutOf = async (businessId: string): Promise<CheckoutState | undefined> =>
     world.payment.run((sim) => {
       const link = sim.links.filter((l) => l.request.businessId === businessId).at(-1);
@@ -201,6 +223,14 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
       return json(res, 200, { ok: true });
     }
     if (req.method === 'POST' && url.pathname === '/api/sign-up') return json(res, 200, { businessId: await signUp() });
+    if (req.method === 'POST' && url.pathname === '/api/publish-now') {
+      try {
+        return json(res, 200, { moved: await publishNow() });
+      } catch (error) {
+        if (error instanceof PublishNowRefused) return json(res, 403, { error: error.message });
+        throw error;
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/api/connect') {
       await connect();
       return json(res, 200, { ok: true });
@@ -237,6 +267,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     signUp,
     send,
     connect,
+    publishNow,
     checkout,
     state,
     transcript: async () =>
@@ -271,6 +302,12 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
     },
     close,
   };
+}
+
+class PublishNowRefused extends Error {
+  constructor() {
+    super('publish now runs only on the simulators (local, test or dev)');
+  }
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {

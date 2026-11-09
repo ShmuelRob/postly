@@ -26,4 +26,11 @@ describe('invalidPaths', () => {
     const paths = check(z.object({ v: schema }), { v: { 'שלום עולם': 'x' } });
     expect(paths).not.toContain('שלום');
   });
+
+  it("uses a custom issue's logPath as given: an agent step names its failing calls (agent.md, One bad call)", () => {
+    const schema = z.object({ calls: z.array(z.unknown()) }).superRefine((_v, ctx) => {
+      ctx.addIssue({ code: 'custom', path: ['calls', 0], message: 'no call parses', params: { logPath: 'calls.0(create_draft).design.title' } });
+    });
+    expect(check(schema, { calls: [{}] })).toBe('calls.0(create_draft).design.title');
+  });
 });

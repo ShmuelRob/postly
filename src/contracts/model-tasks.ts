@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BusinessProfileDraft } from './business-profile.js';
-import { AgentContext, AgentStep } from './agent.js';
+import { AgentContext, AgentStep, AgentStepOutput } from './agent.js';
 import { Caption, ChannelCaptions, FACT_TYPES, Fact, PREFERENCE_SCOPES, PlannedPost } from './content.js';
 import { ContentType, Language, Network, POST_FORMATS, Uuid } from './common.js';
 import { EditCrop, RotateDeg, ToneAdjust } from './design-spec.js';
@@ -147,9 +147,11 @@ export const modelTasks = {
   image_review: { input: ImageReviewInput, output: ImageReviewOutput },
   fact_check: { input: FactCheckInput, output: FactCheckOutput },
   // The hybrid agent (agent.md): one step of a turn, whose tool calls code checks and applies.
-  agent_onboarding: { input: AgentContext, output: AgentStep },
-  agent_weekly: { input: AgentContext, output: AgentStep },
-  agent_drafts: { input: AgentContext, output: AgentStep },
+  // `output` is the schema the model receives; `accept` is what the model layer checks: the runtime
+  // checks each call on its own (agent.md, One bad call does not sink the step).
+  agent_onboarding: { input: AgentContext, output: AgentStep, accept: AgentStepOutput },
+  agent_weekly: { input: AgentContext, output: AgentStep, accept: AgentStepOutput },
+  agent_drafts: { input: AgentContext, output: AgentStep, accept: AgentStepOutput },
 } as const;
 
 export type ModelTaskName = keyof typeof modelTasks;
@@ -157,3 +159,5 @@ export const MODEL_TASK_NAMES = Object.keys(modelTasks) as [ModelTaskName, ...Mo
 
 export type ModelTaskInput<T extends ModelTaskName> = z.infer<(typeof modelTasks)[T]['input']>;
 export type ModelTaskOutput<T extends ModelTaskName> = z.infer<(typeof modelTasks)[T]['output']>;
+/** What `ModelLayer.run` returns: the task's `accept` schema when it has one, else its `output`. */
+export type ModelTaskResult<T extends ModelTaskName> = (typeof modelTasks)[T] extends { accept: infer A extends z.ZodType } ? z.infer<A> : ModelTaskOutput<T>;

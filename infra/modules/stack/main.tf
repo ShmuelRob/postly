@@ -105,6 +105,15 @@ variable "sandbox_invokers" {
     error_message = "The sandbox must not be public: list people or service accounts, never allUsers or allAuthenticatedUsers."
   }
 }
+variable "sandbox_public" {
+  description = "Opens the dev sandbox to anyone with its link, with no sign-in: IAP off on the sandbox and an allUsers invoker (docs/security.md, \"Sandbox exposure\"). Every IAP setting stays, so false restores sign-in."
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.sandbox_public || (var.env_name == "dev" && var.sandbox_enabled)
+    error_message = "sandbox_public is for the dev sandbox only."
+  }
+}
 variable "sandbox_owner_phone" {
   description = "The number the human plays in the sandbox (a test number)."
   type        = string
@@ -389,7 +398,8 @@ module "worker" {
 
 # The dev sandbox (WP-51, docs/deployment.md "The sandbox"): its own image, built only for dev; no
 # allUsers invoker, only sandbox_invokers, reached with `gcloud run services proxy` and, with
-# cloud_run_iap, in a browser through Cloud Run's built-in IAP. Runs as the web account: it
+# cloud_run_iap, in a browser through Cloud Run's built-in IAP. With sandbox_public (dev only), IAP is
+# off on this service and allUsers may invoke it; the IAP grants below stay for when it is turned off. Runs as the web account: it
 # needs the same login passwords and the webhook secret.
 module "sandbox" {
   count                = var.sandbox_enabled ? 1 : 0
@@ -404,9 +414,9 @@ module "sandbox" {
   subnetwork_id        = module.network.subnetwork_id
   env                  = merge(local.app_env, { SANDBOX_OWNER_PHONE = var.sandbox_owner_phone })
   secret_env           = local.app_secret_env
-  public               = false
+  public               = var.sandbox_public
   external_ingress     = true
-  iap_enabled          = local.sandbox_iap
+  iap_enabled          = local.sandbox_iap && !var.sandbox_public
   cpu_always_allocated = false
   depends_on           = [google_secret_manager_secret_version.generated, google_secret_manager_secret_version.admin_url]
 }

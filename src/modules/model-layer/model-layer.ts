@@ -1,11 +1,12 @@
 import { performance } from 'node:perf_hooks';
 import { and, eq, gte, sum } from 'drizzle-orm';
 import { z } from 'zod';
-import { type ModelTaskInput, type ModelTaskName, type ModelTaskOutput, modelTasks } from '../../contracts/model-tasks.js';
+import { type ModelTaskInput, type ModelTaskName, type ModelTaskResult, modelTasks } from '../../contracts/model-tasks.js';
 import type { ModelProvider, StructuredResult } from '../../contracts/providers/model.js';
 import type { Database } from '../../db/index.js';
 import { consoleItem, modelRun, modelTaskConfig, promptTemplate } from '../../db/schema.js';
 import { errorText, log } from '../../shared/logger.js';
+import { issuePaths } from '../../shared/zod-paths.js';
 import { metrics, withSpan } from '../../shared/telemetry.js';
 
 /** Resolves a business's media asset to a URL the model provider can fetch (voice notes, photos). */
@@ -47,8 +48,8 @@ export interface ModelLayer {
     businessId: string,
     task: T,
     input: ModelTaskInput<T>,
-    options?: RunOptions<ModelTaskOutput<T>>,
-  ): Promise<ModelTaskOutput<T>>;
+    options?: RunOptions<ModelTaskResult<T>>,
+  ): Promise<ModelTaskResult<T>>;
   /** The business's model spend in USD since a time, every task (agent.md, Limits). */
   spentSince(businessId: string, since: Date): Promise<number>;
   /** Every business's model spend in USD since a time, for the global daily cap. */
@@ -77,46 +78,13 @@ type Target = { provider: string; model: string };
 /** `invalidPaths`: the Zod issue paths of an invalid output, never its values (docs/observability.md). */
 type Attempt = { result?: StructuredResult; output?: unknown; valid: boolean; error?: string; invalidPaths?: string };
 
-type SchemaDef = { type?: string; shape?: Record<string, z.ZodType>; valueType?: z.ZodType; element?: z.ZodType; innerType?: z.ZodType; in?: z.ZodType; items?: z.ZodType[]; getter?: () => z.ZodType };
-const defOf = (schema: z.ZodType | undefined): SchemaDef | undefined => (schema as unknown as { _zod?: { def?: SchemaDef } } | undefined)?._zod?.def;
-const WRAPPERS = new Set(['optional', 'nullable', 'default', 'prefault', 'readonly', 'catch', 'nonoptional']);
+export { issuePaths };
 
-/** One step down the schema along a path segment, and how to write that segment: a field name, `#` or `*`. */
-function stepInto(schema: z.ZodType | undefined, segment: PropertyKey): { next: z.ZodType | undefined; written: string } {
-  let def = defOf(schema);
-  for (let i = 0; def && i < 10; i++) {
-    if (def.type && WRAPPERS.has(def.type)) def = defOf(def.innerType);
-    else if (def.type === 'pipe') def = defOf(def.in);
-    else if (def.type === 'lazy' && def.getter) def = defOf(def.getter());
-    else break;
-  }
-  if (typeof segment === 'number') return { next: def?.type === 'array' ? def.element : def?.type === 'tuple' ? def.items?.[segment] : undefined, written: '#' };
-  const key = String(segment);
-  if (def?.type === 'object' && def.shape && key in def.shape) return { next: def.shape[key], written: key };
-  // A record key is what the model wrote, so it may be content; a key the schema cannot place is a
-  // plain identifier at most.
-  if (def?.type === 'record') return { next: def.valueType, written: '*' };
-  return { next: undefined, written: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(key) ? key : '*' };
-}
-
-/**
- * Where an output was invalid, for `invalidPaths` (docs/observability.md, Timing lines): the issue
- * paths as field names, array indexes as `#`, record keys as `*`, never the values.
- */
-export function issuePaths(schema: z.ZodType, error: z.ZodError): string {
-  const paths = error.issues.map((issue) => {
-    if (issue.path.length === 0) return '(root)';
-    let at: z.ZodType | undefined = schema;
-    return issue.path
-      .map((segment) => {
-        const { next, written } = stepInto(at, segment);
-        at = next;
-        return written;
-      })
-      .join('.');
-  });
-  return [...new Set(paths)].join(',').slice(0, 200);
-}
+/** What the model layer checks an output against: the task's `accept` schema, else its `output`. */
+const acceptSchema = (task: ModelTaskName): z.ZodType => {
+  const def = modelTasks[task] as { output: z.ZodType; accept?: z.ZodType };
+  return def.accept ?? def.output;
+};
 
 const attemptOutcome = (a: Attempt) => (a.valid ? 'valid' : a.result ? 'invalid' : 'provider_error');
 
@@ -161,9 +129,11 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
     } catch (error) {
       return { valid: false, error: `provider error: ${errorText(error)}` };
     }
-    const check = modelTasks[task].output.safeParse(result.output);
+    // An agent task accepts a step whose calls the runtime checks one by one (agent.md, One bad call).
+    const accepted = acceptSchema(task);
+    const check = accepted.safeParse(result.output);
     if (check.success) return { result, output: check.data, valid: true };
-    return { result, valid: false, error: z.prettifyError(check.error), invalidPaths: issuePaths(modelTasks[task].output, check.error) };
+    return { result, valid: false, error: z.prettifyError(check.error), invalidPaths: issuePaths(accepted, check.error) };
   }
 
   return {
@@ -276,7 +246,7 @@ export function createModelLayer(deps: ModelLayerDeps): ModelLayer {
             .returning({ id: modelRun.id }),
         );
         runIds.push(...rows.map((r) => r.id));
-        if (outcome.valid) return outcome.output as ModelTaskOutput<typeof task>;
+        if (outcome.valid) return outcome.output as ModelTaskResult<typeof task>;
 
         errors.push(outcome.error ?? 'invalid output');
         lastFailure = { reason: outcome.result ? 'invalid' : 'provider_error', ...(outcome.invalidPaths ? { invalidPaths: outcome.invalidPaths } : {}) };

@@ -1,8 +1,11 @@
 import { and, asc, eq, gte, inArray, lt } from 'drizzle-orm';
+import { z } from 'zod';
 import {
-  AgentStep,
   AgentToolCall,
   AgentToolResult,
+  agentCallIssuePaths,
+  parseAgentCall,
+  type AgentStepOutput,
   type AgentName,
   type AgentToolName,
   type AgentTurnStopReason,
@@ -15,7 +18,7 @@ import { buildContext } from './context.js';
 import { handOff } from './handoff.js';
 import { loadLimits, localMidnight, localWeekStart, utcMidnight } from './limits.js';
 import { handlerFor } from './registry.js';
-import type { AgentDeps, AgentLimits, PastCall, RunTurnOptions, ToolContext, ToolOutcome, TurnResult, TurnTrigger } from './types.js';
+import { toolsFor, type AgentDeps, type AgentLimits, type PastCall, type RunTurnOptions, type ToolContext, type ToolOutcome, type TurnResult, type TurnTrigger } from './types.js';
 
 /** One recorded step of a turn: what the model asked for and what code answered (agent_turn.steps). */
 interface RecordedStep {
@@ -188,7 +191,7 @@ export function createAgent(input: AgentDeps): Agent {
             }),
           );
 
-          let step: AgentStep;
+          let step: AgentStepOutput;
           const modelStarted = deps.now().getTime();
           try {
             const left = limits.timeoutMs - (deps.now().getTime() - started.getTime());
@@ -219,13 +222,33 @@ export function createAgent(input: AgentDeps): Agent {
 
           const toolsStarted = deps.now().getTime();
           const ctx: ToolContext = { businessId, turnId, agent: agentName, deps, context, approverPhone, personaName, limits, history, turn };
-          for (const call of step.calls) {
+          // A call that does not match its tool's schema is refused invalid_input without stopping the
+          // step; a step's schema refusals count as one (agent.md, One bad call does not sink the step).
+          let schemaRefused = false;
+          for (const [index, raw] of step.calls.entries()) {
             if (toolCalls >= limits.maxToolCalls) {
               stop = 'max_tool_calls';
               break;
             }
             toolCalls += 1;
-            const outcome = await runTool(call, definition.tools, ctx);
+            const parsed = parseAgentCall(raw);
+            if (!parsed.success) {
+              const result = invalidCall(raw, index, parsed.error, ctx);
+              recorded.calls.push({ call: raw, result });
+              toolResults.push({ tool: raw.tool, result });
+              await save();
+              if (!schemaRefused) {
+                schemaRefused = true;
+                refusals += 1;
+                if (refusals >= limits.maxRefusals) {
+                  stop = 'refusals';
+                  break;
+                }
+              }
+              continue;
+            }
+            const call = parsed.call;
+            const outcome = await runTool(call, toolsFor(definition, context.step), ctx);
             recorded.calls.push({ call, result: outcome.result });
             toolResults.push({ tool: call.tool, result: outcome.result });
             if (outcome.result.status === 'ok') history.push({ turnId, call, result: outcome.result });
@@ -371,6 +394,19 @@ async function runTool(call: AgentToolCall, allowed: readonly AgentToolName[], c
     log.warn('agent tool call', { ...fields, outcome: 'error', durationMs: durationMs(), error: asError(error) });
     throw error;
   }
+}
+
+/**
+ * The refusal of a call that does not match its tool's schema: the Zod issues go back to the agent, and
+ * the log names the call and the field (`calls.2(create_draft).design.title`), never a value.
+ */
+function invalidCall(raw: { tool: AgentToolName }, index: number, error: z.ZodError, ctx: ToolContext): AgentToolResult {
+  const path = agentCallIssuePaths(index, raw.tool, error);
+  const detail = `${raw.tool} does not match its schema: ${z.prettifyError(error).replace(/\s+/g, ' ')}`.slice(0, 300);
+  const fields = { businessId: ctx.businessId, agent: ctx.agent, agentTurnId: ctx.turnId, tool: raw.tool, reason: 'invalid_input', path };
+  log.info('agent tool call', { ...fields, outcome: 'refused', durationMs: 0 });
+  log.warn('agent tool refused', fields);
+  return { status: 'refused', reason: 'invalid_input', detail };
 }
 
 /** The successful calls recorded in one turn's steps. */
