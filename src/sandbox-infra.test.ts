@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { IAP_AUDIENCE_PATTERN } from './modules/console/index.js';
 
 // docs/security.md, "Sandbox exposure" and "Console exposure", and docs/deployment.md, "Browser sign-in
-// on dev": the dev sandbox is never public and exists only in dev; with cloud_run_iap (dev's default)
+// on dev": the dev sandbox exists only in dev and is public only through dev's sandbox_public switch
+// (off by default; every IAP setting stays in place, so turning it off restores sign-in); with cloud_run_iap (dev's default)
 // the sandbox and the console open in a browser through Cloud Run's built-in IAP, each for its own
 // member list only, with no load balancer and no OAuth secret in Terraform. Stage and prod keep the
 // console's load balancer.
@@ -23,7 +24,7 @@ const block = (header: string, text = stack) => {
 };
 const NOT_PUBLIC = /!contains\(\["allUsers", "allAuthenticatedUsers"\], m\)/;
 
-describe('the sandbox and the console are never public', () => {
+describe('the console is never public; the sandbox only through sandbox_public', () => {
   it('sandbox_invokers, sandbox_members and console_members refuse allUsers and allAuthenticatedUsers', () => {
     expect(block('variable "sandbox_invokers"')).toMatch(NOT_PUBLIC);
     expect(block('variable "sandbox_members"')).toMatch(NOT_PUBLIC);
@@ -49,13 +50,41 @@ describe('the sandbox and the console are never public', () => {
       block('resource "google_cloud_run_v2_service_iam_member" "console_iap_invoker"'),
     ];
     for (const g of grants) expect(g).not.toMatch(/allUsers|allAuthenticatedUsers/);
-    expect(block('module "sandbox"')).toMatch(/public\s*=\s*false/);
+    expect(block('module "sandbox"')).toMatch(/public\s*=\s*var\.sandbox_public\n/);
     expect(block('module "console"')).toMatch(/public\s*=\s*false/);
   });
 
   it('no OAuth client secret reaches Terraform: no IAP settings resource reads one', () => {
     expect(stack).not.toMatch(/resource "google_iap_settings"/);
     expect(stack).not.toMatch(/sandbox_iap_client_id|gcloud_oauth_client/);
+  });
+});
+
+describe('dev: the sandbox_public switch', () => {
+  it('is off by default and allowed only in dev', () => {
+    const v = block('variable "sandbox_public"');
+    expect(v).toMatch(/default\s*=\s*false/);
+    expect(v).toContain('!var.sandbox_public || (var.env_name == "dev" && var.sandbox_enabled)');
+    expect(block('variable "sandbox_public"', devVariables)).toMatch(/default\s*=\s*false/);
+    expect(dev).toMatch(/sandbox_public\s*=\s*var\.sandbox_public/);
+  });
+
+  it('turns off IAP on the sandbox service only, and keeps every IAP grant for when it is turned off', () => {
+    expect(block('module "sandbox"')).toMatch(/iap_enabled\s*=\s*local\.sandbox_iap && !var\.sandbox_public/);
+    expect(block('module "console"')).not.toMatch(/sandbox_public/);
+    // The IAP grants, and with them the run.app SANDBOX_URL, still follow cloud_run_iap alone.
+    expect(block('resource "google_iap_web_cloud_run_service_iam_member" "sandbox"')).not.toMatch(/sandbox_public/);
+    expect(block('resource "google_cloud_run_v2_service_iam_member" "sandbox_iap_invoker"')).not.toMatch(/sandbox_public/);
+    expect(stack).not.toMatch(/sandbox_iap\s*=.*sandbox_public/);
+  });
+
+  it("opens it through the cloud_run module's allUsers invoker, with ingress from the internet", () => {
+    const pub = block('resource "google_cloud_run_v2_service_iam_member" "public"', cloudRun);
+    expect(pub).toContain('count    = var.kind == "service" && var.public ? 1 : 0');
+    expect(pub).toContain('member   = "allUsers"');
+    expect(cloudRun).toContain(
+      'ingress             = coalesce(var.ingress, var.public || var.external_ingress ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY")',
+    );
   });
 });
 
@@ -75,9 +104,9 @@ describe('dev: the sandbox in a browser through Cloud Run built-in IAP', () => {
     expect(dev).toContain('console_members = var.console_members != null ? var.console_members : var.sandbox_invokers');
   });
 
-  it('turns on iap_enabled on the sandbox service', () => {
+  it('turns on iap_enabled on the sandbox service unless sandbox_public', () => {
     expect(stack).toContain('sandbox_iap     = var.sandbox_enabled && var.cloud_run_iap');
-    expect(block('module "sandbox"')).toMatch(/iap_enabled\s*=\s*local\.sandbox_iap/);
+    expect(block('module "sandbox"')).toMatch(/iap_enabled\s*=\s*local\.sandbox_iap && !var\.sandbox_public/);
     expect(cloudRun).toMatch(/iap_enabled\s*=\s*var\.iap_enabled/);
     expect(cloudRun).toMatch(/variable "iap_enabled" \{[^}]*default\s*=\s*false/);
   });
