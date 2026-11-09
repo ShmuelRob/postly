@@ -5,7 +5,7 @@ import { BusinessProfile, BusinessProfileDraft, missingRequiredProfileFields } f
 import { type Network, VISUAL_STYLES } from '../../contracts/common.js';
 
 type VisualStyle = (typeof VISUAL_STYLES)[number];
-import type { ModelTaskInput, ModelTaskName, ModelTaskOutput } from '../../contracts/model-tasks.js';
+import type { ModelTaskInput, ModelTaskName, ModelTaskResult } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database, Tx } from '../../db/index.js';
@@ -30,7 +30,7 @@ export interface OnboardingDeps {
   db: Database;
   workflow: Workflow;
   messaging: { sendText(businessId: string, request: SendTextRequest): Promise<unknown> };
-  model: { run<T extends ModelTaskName>(businessId: string, task: T, input: ModelTaskInput<T>): Promise<ModelTaskOutput<T>> };
+  model: { run<T extends ModelTaskName>(businessId: string, task: T, input: ModelTaskInput<T>): Promise<ModelTaskResult<T>> };
   /** URL of a business media asset (messaging's `mediaUrl`). */
   mediaUrl(businessId: string, mediaAssetId: string): Promise<string>;
   /** Renders one sample per style (the design module's `renderStyleSamples`), returning image URLs. */
