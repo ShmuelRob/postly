@@ -208,8 +208,10 @@ function recordModel(inner: ModelProvider, record: E2eRecord, now: () => string)
     async (request: { task: ModelTaskName }) => {
       try {
         const result = await (inner[method] as (r: unknown) => ReturnType<ModelProvider['generateStructured']>)(request);
-        const check = modelTasks[request.task].output.safeParse(result.output);
-        log({ at: now(), method, task: request.task, output: result.output, valid: check.success, ...(check.success ? {} : { error: check.error.issues.map((i) => i.message).join('; ') }) });
+        // What the model layer accepts: an agent step may carry a call the runtime refuses (agent.md).
+        const task = modelTasks[request.task] as { output: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { message: string }[] } } }; accept?: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { message: string }[] } } } };
+        const check = (task.accept ?? task.output).safeParse(result.output);
+        log({ at: now(), method, task: request.task, output: result.output, valid: check.success, ...(check.success ? {} : { error: check.error!.issues.map((i) => i.message).join('; ') }) });
         return result;
       } catch (error) {
         log({ at: now(), method, task: request.task, valid: false, error: error instanceof Error ? error.message : String(error) });

@@ -19,9 +19,10 @@ import { createDatabase } from '../../src/db/index.js';
 import * as schema from '../../src/db/schema.js';
 import { createDesignRenderer } from '../../src/modules/design/index.js';
 import { draftsCopy } from '../../src/modules/workflow/index.js';
+import { handOffLine } from '../../src/modules/agent/index.js';
 import { fixtureAssets, fixtureUrls } from '../../src/modules/design/fixtures/fixture.js';
 import { MessagingSimulator, ModelSimulator, PaymentSimulator, PublishingSimulator } from '../../src/simulators/index.js';
-import { call, step } from '../../src/simulators/scripted-agent.js';
+import { call, invalidOutput, step, stepWithBadCalls } from '../../src/simulators/scripted-agent.js';
 import { e2eTest, type AppFactory, type E2eHarness, type Providers } from './harness/index.js';
 
 const BUSINESS_PHONE = '+972521111194';
@@ -268,6 +269,58 @@ e2eTest(
           writeFileSync(`${OUT}/${['single', 'single-fixed', 'carousel'][i]}-${j + 1}.jpg`, (await storage.read(row.storagePath))!.data);
         }
       }
+    } finally {
+      await design.close();
+    }
+  },
+);
+
+// agent.md, One bad call does not sink the step (2026-11-09). On dev a drafts turn after the plan
+// handed the owner off: one call of the step did not match its schema, so the whole step was invalid,
+// and the retry did not fit the old cost cap. Now the step's valid calls run, the bad call goes back to
+// the agent as invalid_input, and the owner still gets every draft.
+e2eTest(
+  'a drafts step with a bad call still drafts: the first output is invalid and retried, the bad call is refused and resent, and the owner gets both drafts',
+  { timeout: 180_000 },
+  async ({ e2e }) => {
+    const { run, postly, model, businessId, weekId, photos, posts, design } = await start(e2e);
+    const [p1, p2] = posts as [string, string];
+    const [a1, a2, a3, a4] = photos as [string, string, string, string];
+    const postRow = async (id: string) => (await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.post).where(eq(schema.post.id, id))))[0]!;
+    try {
+      model.setDefault('image_review', { usable: true, score: 0.9, issues: [], description: 'זר סתיו על שולחן עץ' });
+      const captions = (text: string) => ({ instagram: { text, hashtags: ['#פרחים'] } });
+      const design1 = { photos: [{ assetId: a1 }], title: '20% הנחה על זרי הסתיו', badge: { kind: 'discount' as const, text: '-20%', factId: 'f1' } };
+      const design2 = { photos: [{ assetId: a2 }, { assetId: a3 }, { assetId: a4 }], title: 'שלושה זרים חדשים', carouselLayout: 'numbered' as const };
+      const good1 = call.createDraft({ postId: p1, captions: captions(CAPTION), usedFactIds: ['f1', 'f2'], design: design1 });
+      const good2 = call.createDraft({ postId: p2, captions: captions('שלושה זרים חדשים הגיעו'), usedFactIds: [], design: design2 });
+      // What the response schema cannot hold: a sticker with a text of its own, and a hashtag without '#'.
+      const badSticker = { ...good1, design: { ...design1, badge: { kind: 'sale', text: 'מבצע' } } };
+      const badHashtag = { ...good2, captions: { instagram: { text: 'שלושה זרים חדשים הגיעו', hashtags: ['פרחים'] } } };
+      model.scriptAgent('drafts', [
+        // Attempt 1: no call matches its schema, so the model layer retries.
+        invalidOutput({ calls: [badSticker, badHashtag], confidence: 0.9 }),
+        // Attempt 2: the first call is still bad; the second runs and drafts the carousel.
+        stepWithBadCalls(0.9, badSticker, good2),
+        // The next step resends the refused call, fixed.
+        step(good1),
+      ]);
+
+      await postly.drafts.draftWeek(businessId, weekId);
+
+      // The owner got both drafts with their buttons, and no hand-off line.
+      const buttons = run.owner.received().filter((m) => m.kind === 'buttons');
+      expect(buttons).toHaveLength(2);
+      expect(run.owner.received().map((m) => m.text)).not.toContain(handOffLine('פוסטלי', 'he'));
+      expect((await postRow(p1)).status).toBe('awaiting_approval');
+      expect((await postRow(p2)).status).toBe('awaiting_approval');
+      const [turn] = await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.agentTurn).where(eq(schema.agentTurn.businessId, businessId)));
+      expect(turn).toMatchObject({ agent: 'drafts', status: 'done', stopReason: 'done' });
+      const calls = (turn!.steps as { calls: { call: { tool: string }; result: { status: string; reason?: string } }[] }[]).map((s) => s.calls.map((c) => c.result.reason ?? c.result.status));
+      expect(calls).toEqual([['invalid_input', 'ok'], ['ok']]);
+      const runs = await db.withBusiness('model', businessId, (tx) => tx.select().from(schema.modelRun).where(eq(schema.modelRun.task, 'agent_drafts')));
+      expect(runs.map((r) => r.valid).sort()).toEqual([false, true, true]);
+      expect(await db.withBusiness('workflow', businessId, (tx) => tx.select().from(schema.consoleItem))).toEqual([]);
     } finally {
       await design.close();
     }

@@ -8,7 +8,7 @@ import type { z } from 'zod';
 import type { Language as LanguageSchema } from '../../contracts/common.js';
 
 type Language = z.infer<typeof LanguageSchema>;
-import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, PlannedPost, PREFERENCE_SCOPES } from '../../contracts/model-tasks.js';
+import type { ChannelCaptions, Fact, ModelTaskInput, ModelTaskName, ModelTaskOutput, ModelTaskResult, PlannedPost, PREFERENCE_SCOPES } from '../../contracts/model-tasks.js';
 import { OpenQuestion } from '../../contracts/open-question.js';
 import type { RenderedMedia } from '../../contracts/post-version.js';
 import { encodeButtonId, WindowClosedError, type SendButtonsRequest, type SendTemplateRequest, type SendTextRequest } from '../../contracts/providers/messaging.js';
@@ -58,8 +58,8 @@ export interface DraftsDeps {
       businessId: string,
       task: T,
       input: ModelTaskInput<T>,
-      options?: { referenceId?: string; check?: (output: ModelTaskOutput<T>) => string | null },
-    ): Promise<ModelTaskOutput<T>>;
+      options?: { referenceId?: string; check?: (output: ModelTaskResult<T>) => string | null },
+    ): Promise<ModelTaskResult<T>>;
   };
   /** Renders with the design module for one business (`forBusiness(...).render`). */
   render(business: { businessId: string; businessName: string; languages: Language[] }, request: RenderRequest): Promise<RenderResult>;

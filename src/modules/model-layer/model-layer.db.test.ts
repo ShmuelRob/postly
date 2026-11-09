@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeEach, describe, expect, inject, it } from 'vitest';
+import type { AgentContext } from '../../contracts/agent.js';
 import { MODEL_TASK_NAMES } from '../../contracts/model-tasks.js';
 import { createDatabase } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -305,6 +306,63 @@ describe('agent budgets', () => {
     expect(await layer.spentSince(businessId, since)).toBeCloseTo(0.004, 6);
     expect(await layer.spentSince(businessId, new Date(Date.now() + 60_000))).toBe(0);
     expect(await layer.spentByAllSince(since)).toBeGreaterThanOrEqual(0.008 - 1e-9);
+  });
+});
+
+// agent.md, One bad call does not sink the step (2026-11-09): on dev a drafts step of about USD 0.0102
+// was invalid and its retry never started, because 0.0102 + 0.0102 was over the old USD 0.02 cap.
+describe('agent step caps (0026)', () => {
+  const context = {
+    agent: 'drafts',
+    persona: { name: 'פוסטלי', gender: 'feminine' },
+    languages: ['he'],
+    tone: { register: 'warm', address: 'plural', emoji: true },
+    profile: { name: 'פרחי דנה' },
+    missingFields: [],
+    messages: [],
+    step: 'processing_update',
+    openQuestion: null,
+    week: null,
+    posts: [],
+    rules: [],
+    history: [],
+    tools: ['create_draft', 'end_turn'],
+    doneRule: 'Done when every post has a draft',
+    budget: { stepsLeft: 12, costLeftUsd: 0.15 },
+    toolResults: [],
+  } satisfies AgentContext;
+
+  it('caps each agent step at USD 0.05 and each turn at USD 0.15, so an attempt of up to USD 0.022 leaves room for a retry', async () => {
+    const layer = createModelLayer({ db, providers: { google: sim } });
+    for (const task of ['agent_onboarding', 'agent_weekly', 'agent_drafts'] as const) {
+      const cap = await layer.costCap(businessId, task);
+      expect(cap, task).toBe(0.05);
+      expect(0.022 + 0.022, task).toBeLessThanOrEqual(cap);
+    }
+    const agents = await db.withSystem('console', (tx) => tx.select().from(schema.agentConfig));
+    expect(agents.map((a) => [a.agent, Number(a.maxTurnCostUsd)]).sort()).toEqual([['drafts', 0.15], ['onboarding', 0.15], ['weekly', 0.15]]);
+  });
+
+  it('retries an invalid drafts step of USD 0.0102 within the seeded cap, and returns the valid retry', async () => {
+    let n = 0;
+    const provider: ModelProvider = {
+      name: 'google',
+      generateStructured: async () => {
+        n += 1;
+        // The first answer has no call that matches its tool; the retry is a valid step.
+        const output = n === 1 ? { calls: [{ tool: 'create_draft', postId: 'not-a-uuid' }], confidence: 0.9 } : { calls: [{ tool: 'end_turn' }], confidence: 0.9 };
+        return { output, inputTokens: 9640, outputTokens: 2554, thinkingTokens: 1736, costUsd: 0.0102 };
+      },
+      analyzeImage: async () => ({ output: {}, inputTokens: 1, outputTokens: 1, costUsd: 0 }),
+      transcribeAudio: async () => ({ text: '', language: 'he', costUsd: 0 }),
+    };
+    const layer = createModelLayer({ db, providers: { google: provider } });
+    const cap = await layer.costCap(businessId, 'agent_drafts');
+    const step = await layer.run(businessId, 'agent_drafts', context, { maxCostUsd: cap });
+    expect(step.calls).toEqual([{ tool: 'end_turn' }]);
+    const runs = await runsOf(businessId);
+    expect(runs.map((r) => [r.attempt, r.valid])).toEqual([[1, false], [2, true]]);
+    expect(await consoleOf(businessId)).toEqual([]);
   });
 });
 

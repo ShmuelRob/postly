@@ -8,10 +8,13 @@ import {
   AGENT_TURN_STOP_REASONS,
   AgentContext,
   AgentStep,
+  AgentStepOutput,
   AgentToolCall,
+  agentCallIssuePaths,
   AgentToolResult,
   DEFAULT_AGENT_NAME,
   HAND_OFF_REASONS,
+  parseAgentCall,
   personaName,
 } from './agent.js';
 
@@ -286,5 +289,57 @@ describe('AgentContext', () => {
   it('has no field for phone numbers', () => {
     expect(Object.keys(AgentContext.shape)).not.toContain('approverPhone');
     expect(AgentContext.shape.profile.safeParse({ approverPhone: '+972501234567' }).success).toBe(false);
+  });
+});
+
+// agent.md, One bad call does not sink the step (2026-11-09): the model layer accepts a step whose
+// calls name known tools; the runtime checks each call on its own; the log names the failing call.
+describe('AgentStepOutput and per-call parsing', () => {
+  const design = { photos: [{ assetId: uuid }], title: 'זרי סתיו' };
+  const good = { tool: 'create_draft' as const, postId: uuid, captions: { instagram: { text: 'זרי סתיו', hashtags: ['#פרחים'] } }, usedFactIds: [], design };
+  const badTitle = { ...good, design: { ...design, title: 'כותרת ארוכה מדי '.repeat(4) } };
+  const badSticker = { ...good, design: { ...design, badge: { kind: 'sale', text: 'מבצע' } } };
+
+  it('accepts a step with one bad call next to a good one, and keeps the bad call as sent', () => {
+    const parsed = AgentStepOutput.safeParse({ calls: [badTitle, good], confidence: 0.9 });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data!.calls[0]).toEqual(badTitle);
+  });
+
+  it('rejects a step in which no call matches its tool, a call with no known tool, or no calls', () => {
+    expect(AgentStepOutput.safeParse({ calls: [badTitle], confidence: 0.9 }).success).toBe(false);
+    expect(AgentStepOutput.safeParse({ calls: [good, { tool: 'approve_post', postId: uuid }], confidence: 0.9 }).success).toBe(false);
+    expect(AgentStepOutput.safeParse({ calls: [], confidence: 0.9 }).success).toBe(false);
+    expect(AgentStepOutput.safeParse({ calls: [good], confidence: 2 }).success).toBe(false);
+  });
+
+  it('parses a call against its own tool: a match is an AgentToolCall, a mismatch keeps the Zod error', () => {
+    const ok = parseAgentCall(good);
+    expect(ok.success && ok.call).toEqual(good);
+    const bad = parseAgentCall(badSticker);
+    expect(bad.success).toBe(false);
+    expect(!bad.success && bad.error.issues.length).toBeGreaterThan(0);
+  });
+
+  it('names the failing call as calls.<index>(<tool>).<path>, field names only and never a value', () => {
+    const at = (index: number, raw: { tool: (typeof AGENT_TOOL_NAMES)[number]; [k: string]: unknown }) => {
+      const r = parseAgentCall(raw);
+      if (r.success) throw new Error('expected an invalid call');
+      return agentCallIssuePaths(index, raw.tool, r.error);
+    };
+    expect(at(2, badTitle)).toBe('calls.2(create_draft).design.title');
+    expect(at(0, { ...good, captions: { instagram: { text: 'זרי סתיו', hashtags: ['פרחים'] } } })).toBe('calls.0(create_draft).captions.*.hashtags.#');
+    expect(at(1, badSticker)).toBe('calls.1(create_draft).design.badge');
+    expect(at(3, { tool: 'apply_change' as const, postId: uuid, ownerQuote: 'רק תוסיפי' })).toBe('calls.3(apply_change)');
+    expect(at(0, badTitle)).not.toMatch(/כותרת/);
+  });
+
+  it('carries the per-call paths into the step error, so invalidPaths names the failing calls', () => {
+    const parsed = AgentStepOutput.safeParse({ calls: [badTitle, badSticker], confidence: 0.9 });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error!.issues.map((i) => (i as { params?: { logPath?: string } }).params?.logPath)).toEqual([
+      'calls.0(create_draft).design.title',
+      'calls.1(create_draft).design.badge',
+    ]);
   });
 });

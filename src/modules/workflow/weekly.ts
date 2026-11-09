@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { BusinessProfile } from '../../contracts/business-profile.js';
 import type { OpenQuestion } from '../../contracts/open-question.js';
-import type { ModelTaskInput, ModelTaskName, ModelTaskOutput } from '../../contracts/model-tasks.js';
+import type { ModelTaskInput, ModelTaskName, ModelTaskOutput, ModelTaskResult } from '../../contracts/model-tasks.js';
 import type { SendTemplateRequest, SendTextRequest } from '../../contracts/providers/messaging.js';
 import type { Database } from '../../db/index.js';
 import * as schema from '../../db/schema.js';
@@ -30,8 +30,8 @@ export interface WeeklyDeps {
       businessId: string,
       task: T,
       input: ModelTaskInput<T>,
-      options?: { referenceId?: string; check?: (output: ModelTaskOutput<T>) => string | null },
-    ): Promise<ModelTaskOutput<T>>;
+      options?: { referenceId?: string; check?: (output: ModelTaskResult<T>) => string | null },
+    ): Promise<ModelTaskResult<T>>;
   } & Partial<Omit<AgentDeps['models'], 'run'>>;
   now?: () => Date;
   /** Runs once the week's plan is stored: drafting (technical-design.md, Drafts flow). */

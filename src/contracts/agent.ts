@@ -5,6 +5,7 @@ import { Language, Network, PostFormat, Timestamp, Uuid } from './common.js';
 import { DesignPhoto, DesignSpec, PhotoEdit } from './design-spec.js';
 import { OpenQuestion } from './open-question.js';
 import { CONVERSATION_STEP_VALUES, POST_STATES } from './state-machines/index.js';
+import { issuePaths } from '../shared/zod-paths.js';
 
 // The hybrid agent's contracts (contracts.md, Agent; agent.md, Tools). The agent acts only through
 // these tool calls; code checks each one and applies it through the module that owns the data. No
@@ -278,6 +279,64 @@ export const AgentStep = z.object({
   confidence: z.number().min(0).max(1),
 });
 export type AgentStep = z.infer<typeof AgentStep>;
+
+// One bad call does not sink the step (agent.md, 2026-11-09): the model receives `AgentStep`'s JSON
+// schema, but the model layer accepts `AgentStepOutput`, and the runtime parses each call on its own.
+
+const TOOL_SCHEMAS: Record<AgentToolName, z.ZodType> = {
+  ask_owner: AskOwner,
+  set_profile_field: SetProfileField,
+  record_fact: RecordFact,
+  request_photo: RequestPhoto,
+  record_decline: RecordDecline,
+  plan_posts: PlanPosts,
+  create_draft: CreateDraft,
+  apply_change: ApplyChange,
+  hand_off_to_console: HandOffToConsole,
+  end_turn: EndTurn,
+};
+
+/** A call as the model sent it: a known `tool`, the other fields kept as sent until `parseAgentCall`. */
+export const RawAgentCall = z.looseObject({ tool: AgentToolName });
+export type RawAgentCall = z.infer<typeof RawAgentCall>;
+
+export type ParsedAgentCall = { success: true; call: AgentToolCall } | { success: false; error: z.ZodError };
+
+/** Checks one call against its own tool's schema, so a failure names that tool's fields. */
+export function parseAgentCall(raw: RawAgentCall): ParsedAgentCall {
+  const parsed = TOOL_SCHEMAS[raw.tool].safeParse(raw);
+  return parsed.success ? { success: true, call: parsed.data as AgentToolCall } : { success: false, error: parsed.error };
+}
+
+/**
+ * Where a call failed, for the logs: `calls.<index>(<tool>).<path inside the call>`, for example
+ * `calls.2(create_draft).design.title`; field names only, never a value (docs/observability.md).
+ */
+export function agentCallIssuePaths(index: number, tool: AgentToolName, error: z.ZodError): string {
+  const at = `calls.${index}(${tool})`;
+  return issuePaths(TOOL_SCHEMAS[tool], error)
+    .split(',')
+    .map((p) => (p === '(root)' ? at : `${at}.${p}`))
+    .join(',');
+}
+
+/**
+ * What the model layer accepts for an agent task: a step whose calls each name a known tool, at least
+ * one of which matches its tool's schema. When none does, each call's failure is an issue whose
+ * `logPath` is its `agentCallIssuePaths`, so `invalidPaths` names the failing calls.
+ */
+export const AgentStepOutput = z
+  .object({ calls: z.array(RawAgentCall).min(1), confidence: AgentStep.shape.confidence })
+  .superRefine((step, ctx) => {
+    const parsed = step.calls.map(parseAgentCall);
+    if (parsed.some((p) => p.success)) return;
+    parsed.forEach((p, i) => {
+      if (p.success) return;
+      const logPath = agentCallIssuePaths(i, step.calls[i]!.tool, p.error);
+      ctx.addIssue({ code: 'custom', path: ['calls', i], message: `${logPath}: ${z.prettifyError(p.error)}`, params: { logPath } });
+    });
+  });
+export type AgentStepOutput = z.infer<typeof AgentStepOutput>;
 
 export const AGENT_TOOL_REFUSAL_REASONS = [
   'not_allowed',

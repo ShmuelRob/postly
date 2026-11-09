@@ -2,6 +2,7 @@ import {
   AgentContext,
   type AgentName,
   AgentStep,
+  AgentStepOutput,
   type AgentToolCall,
   type AgentToolResult,
   type AgentTurnStopReason,
@@ -91,6 +92,15 @@ export function step(...calls: AgentToolCall[]): ScriptEntry {
 /** A step with its own confidence, for the low-confidence limit. */
 export function stepWith(confidence: number, ...calls: AgentToolCall[]): ScriptEntry {
   return { kind: 'step', step: AgentStep.parse({ calls, confidence }) };
+}
+
+/**
+ * A step in which some calls do not match their tool's schema (agent.md, One bad call does not sink
+ * the step): the model layer accepts it as long as one call matches, and the runtime refuses the others
+ * as `invalid_input`. Checked against `AgentStepOutput` when the script is written.
+ */
+export function stepWithBadCalls(confidence: number, ...calls: unknown[]): ScriptEntry {
+  return { kind: 'step', step: AgentStepOutput.parse({ calls, confidence }) as unknown as AgentStep };
 }
 
 /** A step built from the context of the call it answers; checked against `AgentStep` when it is served. */
