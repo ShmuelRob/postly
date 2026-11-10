@@ -40,6 +40,21 @@ describe('workflow_event', () => {
   });
 });
 
+describe('erasure_request', () => {
+  it('keeps business_id as a plain value, so the record of an erasure outlives the business', () => {
+    expect(byName('erasure_request').foreignKeys).toEqual([]);
+    expect(byName('erasure_request').columns.find((c) => c.name === 'business_id')?.notNull).toBe(true);
+  });
+});
+
+describe('business', () => {
+  it('has archive_after and archived_at, and no data_delete_after (2026-11-07)', () => {
+    const names = columnNames('business');
+    expect(names).toEqual(expect.arrayContaining(['archive_after', 'archived_at']));
+    expect(names).not.toContain('data_delete_after');
+  });
+});
+
 describe('tables', () => {
   it('has exactly the tables in database-schema.md', () => {
     expect(tables.map((t) => t.name).sort()).toEqual(
@@ -66,6 +81,7 @@ describe('tables', () => {
         'agent_turn',
         'agent_config',
         'console_action',
+        'erasure_request',
       ].sort(),
     );
   });

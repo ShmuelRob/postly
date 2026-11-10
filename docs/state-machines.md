@@ -25,8 +25,9 @@ Stored in `business.status`.
 | `onboarding` | `CANCEL` | `cancelled` | |
 | `active` | `CANCEL` | `cancelled` | |
 | `paused` | `CANCEL` | `cancelled` | |
+| `cancelled` | `ARCHIVE` | `archived` | `archive_after` has passed (re-checked inside the transaction); sets `archived_at`. Source `system`, the daily archive job |
 
-`cancelled` is terminal. The `CANCEL` guard sets `cancelled_at` and `data_delete_after` (`cancelled_at` plus the retention period, 30 days by default). Then channels are disconnected immediately (`REVOKED`), pending publications and open posts are cancelled, and the subscription is cancelled (technical-design.md, Cancellation, data deletion and the monthly report, WP-43).
+`archived` is terminal; `cancelled` is not (changed 2026-11-07 by the human's decision "Keep, archive it", H1, [review item](review-queue/pr-150.md)). The `CANCEL` guard sets `cancelled_at` and `archive_after` (`cancelled_at` plus the retention period, 30 days by default). Then channels are disconnected immediately (`REVOKED`), pending publications and open posts are cancelled, and the subscription is cancelled (technical-design.md, [Cancellation, archiving and erasure](technical-design.md#cancellation-archiving-erasure-and-the-monthly-report)). A `cancelled` or `archived` business is read-only: no flow processes its messages and nothing is sent to it. No event deletes a business. Erasure on the owner's explicit request deletes the `business` row outside the machine, from a `cancelled` or `archived` business only; its `workflow_event` rows stay.
 
 ## Onboarding
 

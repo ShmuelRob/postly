@@ -1,6 +1,6 @@
 /**
- * Cancellation, the data deletion schedule and the monthly report (WP-43; technical-design.md,
- * Cancellation, data deletion and the monthly report). Each case runs the real app on the simulators
+ * Cancellation, archiving, erasure on request and the monthly report (WP-43, archiving 2026-11-07;
+ * technical-design.md, Cancellation, archiving, erasure and the monthly report). Each case runs the real app on the simulators
  * (the H5 world in test/h5/subject.ts, with a placeholder renderer) and asserts on what the owner, the
  * networks and the team see. Template bodies are provisional.
  */
@@ -9,7 +9,8 @@ import { eq, sql } from 'drizzle-orm';
 import { expect, inject } from 'vitest';
 import type { ModelProvider, PaymentProvider, TemplateRenderer } from '../../src/contracts/providers/index.js';
 import * as schema from '../../src/db/schema.js';
-import { createConsole, registerConsoleRoutes } from '../../src/modules/console/index.js';
+import { createErasure } from '../../src/modules/business-data/index.js';
+import { createConsole, DEV_ACTOR, registerConsoleRoutes } from '../../src/modules/console/index.js';
 import type { Publishing } from '../../src/modules/publishing/index.js';
 import { cancellationCopy } from '../../src/modules/workflow/index.js';
 import { MessagingSimulator, PublishingSimulator, type PaymentSimulator } from '../../src/simulators/index.js';
@@ -129,11 +130,11 @@ e2eTest('the team cancels a business from the console: channels are disconnected
     expect((await publications(db, draft.postId)).map((p) => p.status)).toEqual(['cancelled', 'cancelled']);
     expect(await db.postStatus(draft.postId)).toBe('cancelled');
     const row = await business(db, businessId);
-    expect(row).toMatchObject({ status: 'cancelled', cancelledAt: new Date(START), dataDeleteAfter: new Date(Date.parse(START) + 30 * DAY) });
+    expect(row).toMatchObject({ status: 'cancelled', cancelledAt: new Date(START), archiveAfter: new Date(Date.parse(START) + 30 * DAY) });
     expect(await subscription(db, businessId)).toMatchObject({ status: 'cancelled' });
     expect((await paymentSim.getSubscriptionStatus((await subscription(db, businessId))!.providerSubscriptionId!)).status).toBe('cancelled');
     expect(templates(run).map((t) => t.template)).toEqual([
-      { name: cancellationCopy.CANCELLED_TEMPLATE, language: 'he', variables: { deleteAfter: '03.12.2026' } },
+      { name: cancellationCopy.CANCELLED_TEMPLATE, language: 'he', variables: {} },
     ]);
 
     // The proposed time passes: nothing reaches the networks.
@@ -170,52 +171,181 @@ e2eTest('the payment provider reports the subscription cancelled: the business i
   });
 });
 
-e2eTest('the data deletion schedule: kept for 30 days after cancellation, then every row and file of the business is deleted', { timeout: 90_000 }, async ({ e2e }) => {
+/** Rows of the business in every business-owned table (the console role sees them all). */
+const BUSINESS_TABLES = ['business', 'channel_connection', 'conversation_state', 'message', 'media_asset', 'weekly_update', 'post', 'post_version', 'approval', 'publication', 'subscription', 'console_item'];
+const counts = (db: H5Db, businessId: string) =>
+  read(db, async (tx) => {
+    const out: Record<string, number> = {};
+    for (const table of BUSINESS_TABLES) {
+      const column = table === 'business' ? 'id' : 'business_id';
+      const [row] = await tx.execute<{ n: number }>(sql`select count(*)::int as n from ${sql.identifier(table)} where ${sql.identifier(column)} = ${businessId}`);
+      out[table] = Number(row!.n);
+    }
+    return out;
+  });
+const auditRows = (db: H5Db, businessId: string) => read(db, (tx) => tx.select().from(schema.workflowEvent).where(eq(schema.workflowEvent.businessId, businessId)));
+const businessFiles = (files: Map<string, Uint8Array>, businessId: string) => [...files.keys()].filter((p) => p.startsWith(`${businessId}/`));
+
+/** The console server with the cancel and erase actions wired, as main.ts wires them; `erasure` replaces the app's (a failing store). */
+function consoleServer(ctx: Ctx, erasure = ctx.app.erasure) {
+  const server = Fastify({ logger: false });
+  registerConsoleRoutes(server, {
+    console: createConsole(ctx.db.db, ctx.app.workflow),
+    cancelBusiness: (id) => ctx.app.cancellation.cancel(id, 'console'),
+    eraseBusiness: (id, request) => erasure.erase(id, request),
+  });
+  return server;
+}
+
+/** The names in the console's Conversations list, for one filter. */
+async function listed(server: ReturnType<typeof Fastify>, kind?: string) {
+  const html = (await server.inject({ method: 'GET', url: `/console?tab=conversations${kind ? `&kind=${kind}` : ''}` })).body;
+  const list = html.slice(html.indexOf('data-testid="conversation-list"'));
+  return list.slice(0, list.indexOf('</ul>'));
+}
+
+e2eTest('cancellation keeps the data: still readable through the retention period, then archived with every row and file kept', { timeout: 90_000 }, async ({ e2e }) => {
   await withBusiness(e2e, async (ctx) => {
-    const { app, db, files, businessId, setNow, world } = ctx;
+    const { run, app, db, files, businessId, setNow, world } = ctx;
     const draft = await scheduledPost(ctx);
-    expect([...files.keys()].some((p) => p.startsWith(`${businessId}/`))).toBe(true);
+    expect(businessFiles(files, businessId).length).toBeGreaterThan(0);
     await app.cancellation.cancel(businessId, 'console');
+    // The owner is told the data is kept, with no deletion date.
+    expect(templates(run).map((t) => t.template)).toEqual([{ name: cancellationCopy.CANCELLED_TEMPLATE, language: 'he', variables: {} }]);
+    expect(cancellationCopy.CANCELLED_TEMPLATE_BODY).not.toMatch(/יימחקו|{{/);
     // A second business, cancelled ten days later, is not due when the first one is.
     const otherId = await world.createBusiness(OTHER_OWNER);
     setNow(new Date(Date.parse(START) + 10 * DAY).toISOString());
     await app.cancellation.cancel(otherId, 'console');
     const both = [businessId, otherId];
-
-    /** Rows of the business in every business-owned table (the console role sees them all). */
-    const counts = () =>
-      read(db, async (tx) => {
-        const out: Record<string, number> = {};
-        for (const table of ['business', 'channel_connection', 'conversation_state', 'message', 'media_asset', 'weekly_update', 'post', 'post_version', 'approval', 'publication', 'subscription', 'console_item']) {
-          const column = table === 'business' ? 'id' : 'business_id';
-          const [row] = await tx.execute<{ n: number }>(sql`select count(*)::int as n from ${sql.identifier(table)} where ${sql.identifier(column)} = ${businessId}`);
-          out[table] = Number(row!.n);
-        }
-        return out;
-      });
-    const before = await counts();
+    const before = await counts(db, businessId);
     for (const table of ['business', 'channel_connection', 'message', 'post', 'post_version', 'approval', 'publication', 'subscription']) expect(before[table], table).toBeGreaterThan(0);
+    const filesBefore = businessFiles(files, businessId);
 
-    // Day 29: nothing is deleted.
+    // Day 29: still cancelled, every row readable.
     const day29 = new Date(Date.parse(START) + 29 * DAY);
     setNow(day29.toISOString());
-    expect(await app.dataDeletion.tick(day29, { businessIds: both })).toEqual([]);
-    expect(await counts()).toEqual(before);
+    expect(await app.archive.tick(day29, { businessIds: both })).toEqual([]);
+    expect(await business(db, businessId)).toMatchObject({ status: 'cancelled', archiveAfter: new Date(Date.parse(START) + 30 * DAY), archivedAt: null });
+    expect(await counts(db, businessId)).toEqual(before);
 
-    // Day 30, the next daily run: the business and everything it owns are gone, files included.
+    // Day 30, the next daily run: archived, and nothing is deleted, rows or files.
     const day30 = new Date(Date.parse(START) + 30 * DAY + 60 * 60_000);
     setNow(day30.toISOString());
-    expect(await app.dataDeletion.tick(day30, { businessIds: both })).toEqual([businessId]);
-    expect(Object.values(await counts()).every((n) => n === 0)).toBe(true);
-    // The business not due yet keeps its row and its dates.
-    expect(await business(db, otherId)).toMatchObject({ status: 'cancelled', dataDeleteAfter: new Date(Date.parse(START) + 40 * DAY) });
-    expect([...files.keys()].filter((p) => p.startsWith(`${businessId}/`))).toEqual([]);
-    expect(await db.postStatus(draft.postId).catch(() => 'gone')).not.toBe('cancelled');
+    const sentBefore = run.owner.received().length;
+    expect(await app.archive.tick(day30, { businessIds: both })).toEqual([businessId]);
+    expect(await business(db, businessId)).toMatchObject({ status: 'archived', archivedAt: day30 });
+    expect(await counts(db, businessId)).toEqual(before);
+    expect(businessFiles(files, businessId)).toEqual(filesBefore);
+    expect(await db.postStatus(draft.postId)).toBe('cancelled');
+    expect((await auditRows(db, businessId)).filter((e) => e.event === 'ARCHIVE').map((e) => [e.fromState, e.toState, e.source])).toEqual([['cancelled', 'archived', 'system']]);
+    // The business not due yet keeps its state and its date.
+    expect(await business(db, otherId)).toMatchObject({ status: 'cancelled', archiveAfter: new Date(Date.parse(START) + 40 * DAY) });
 
-    // A later run finds nothing.
-    expect(await app.dataDeletion.tick(new Date(day30.getTime() + DAY), { businessIds: both })).toEqual([]);
-    // Its own day comes ten days later.
-    expect(await app.dataDeletion.tick(new Date(Date.parse(START) + 40 * DAY + 60 * 60_000), { businessIds: both })).toEqual([otherId]);
+    // Archived: no processing and no messages. The owner's text is stored for the team, and nothing is answered.
+    await run.owner.sendsText('שלום, אפשר לחזור?');
+    expect(run.owner.received()).toHaveLength(sentBefore);
+    expect((await counts(db, businessId)).message).toBe(before.message! + 1);
+
+    // The console: hidden from the normal list, shown under Archived, and its client panel still opens.
+    const server = consoleServer(ctx);
+    const name = (await business(db, businessId))!.name;
+    // Every test business has the same name, so the list is checked by the business id in its links.
+    expect(await listed(server)).not.toContain(`business=${businessId}`);
+    expect(await listed(server, 'archived')).toContain(`business=${businessId}`);
+    const panel = await server.inject({ method: 'GET', url: `/console?tab=conversations&business=${businessId}&panel=client` });
+    expect(panel.statusCode).toBe(200);
+    expect(panel.body).toContain(name);
+
+    // A later run finds nothing; the other business's own day comes ten days later.
+    expect(await app.archive.tick(new Date(day30.getTime() + DAY), { businessIds: both })).toEqual([]);
+    expect(await app.archive.tick(new Date(Date.parse(START) + 40 * DAY + 60 * 60_000), { businessIds: both })).toEqual([otherId]);
+
+    // Months later the owner asks to be erased: an archived business is erased like a cancelled one.
+    const erased = await server.inject({
+      method: 'POST',
+      url: `/console/api/businesses/${businessId}/erase`,
+      payload: { confirmName: name, requestedBy: 'owner', channel: 'email', requestedAt: '2027-02-01T09:00:00.000Z' },
+    });
+    await server.close();
+    expect(erased.statusCode).toBe(200);
+    expect(erased.json()).toEqual({ outcome: 'erased' });
+    expect(Object.values(await counts(db, businessId)).every((n) => n === 0)).toBe(true);
+    expect(businessFiles(files, businessId)).toEqual([]);
+    expect((await auditRows(db, businessId)).some((e) => e.event === 'ARCHIVE')).toBe(true);
+  });
+});
+
+e2eTest('erasure on request: the team erases a cancelled business from the console; every row and file goes, the workflow audit trail stays', { timeout: 90_000 }, async ({ e2e }) => {
+  await withBusiness(e2e, async (ctx) => {
+    const { app, db, files, businessId } = ctx;
+    await scheduledPost(ctx);
+    const server = consoleServer(ctx);
+    const url = `/console/api/businesses/${businessId}/erase`;
+    const name = (await business(db, businessId))!.name;
+    const request = { confirmName: name, requestedBy: 'owner', channel: 'whatsapp', requestedAt: '2026-11-03T09:30:00.000Z' };
+
+    // An active business cannot be erased: it is cancelled first, so channels and the subscription are closed.
+    const active = await server.inject({ method: 'POST', url, payload: request });
+    expect(active.statusCode).toBe(409);
+    expect(active.json()).toMatchObject({ reason: 'not_cancelled' });
+    expect((await business(db, businessId))?.status).toBe('active');
+
+    await app.cancellation.cancel(businessId, 'console');
+    const before = await counts(db, businessId);
+    const audit = await auditRows(db, businessId);
+    expect(audit.length).toBeGreaterThan(0);
+
+    // Without the business name, or without who asked and how, nothing happens.
+    expect((await server.inject({ method: 'POST', url, payload: { ...request, confirmName: 'not the name' } })).statusCode).toBe(400);
+    expect((await server.inject({ method: 'POST', url, payload: { confirmName: name } })).statusCode).toBe(400);
+    expect(await counts(db, businessId)).toEqual(before);
+
+    const erased = await server.inject({ method: 'POST', url, payload: request });
+    expect(erased.statusCode).toBe(200);
+    expect(erased.json()).toEqual({ outcome: 'erased' });
+
+    // Every row and file of the business is gone.
+    expect(Object.values(await counts(db, businessId)).every((n) => n === 0)).toBe(true);
+    expect(businessFiles(files, businessId)).toEqual([]);
+    // The workflow audit trail stays, and the erasure itself is recorded: who asked, how, when, and who ran it.
+    expect(await auditRows(db, businessId)).toEqual(audit);
+    const records = await read(db, (tx) => tx.select().from(schema.erasureRequest).where(eq(schema.erasureRequest.businessId, businessId)));
+    expect(records).toEqual([
+      expect.objectContaining({ requestedBy: 'owner', channel: 'whatsapp', requestedAt: new Date(request.requestedAt), actor: DEV_ACTOR }),
+    ]);
+
+    // Running it again finds nothing.
+    expect((await server.inject({ method: 'POST', url, payload: request })).statusCode).toBe(404);
+    await server.close();
+  });
+});
+
+
+e2eTest('erasure whose files cannot be deleted: the rows are erased and recorded, and the console answers 500 files_failed', { timeout: 90_000 }, async ({ e2e }) => {
+  await withBusiness(e2e, async (ctx) => {
+    const { app, db, files, businessId } = ctx;
+    await scheduledPost(ctx);
+    await app.cancellation.cancel(businessId, 'console');
+    const stored = businessFiles(files, businessId);
+    expect(stored.length).toBeGreaterThan(0);
+    // The storage refuses every delete (a Cloud Storage outage).
+    const outage = () => Promise.reject(new Error('storage unavailable'));
+    const server = consoleServer(ctx, createErasure({ db: db.db, storage: { removePrefix: outage, remove: outage } }));
+    const name = (await business(db, businessId))!.name;
+    const response = await server.inject({
+      method: 'POST',
+      url: `/console/api/businesses/${businessId}/erase`,
+      payload: { confirmName: name, requestedBy: 'representative', channel: 'letter', requestedAt: '2026-11-03T09:30:00.000Z' },
+    });
+    await server.close();
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ reason: 'files_failed' });
+    // The rows are gone and the request recorded; the files are left for the team.
+    expect(Object.values(await counts(db, businessId)).every((n) => n === 0)).toBe(true);
+    const records = await read(db, (tx) => tx.select().from(schema.erasureRequest).where(eq(schema.erasureRequest.businessId, businessId)));
+    expect(records).toEqual([expect.objectContaining({ requestedBy: 'representative', channel: 'letter', actor: DEV_ACTOR })]);
+    expect(businessFiles(files, businessId)).toEqual(stored);
   });
 });
 

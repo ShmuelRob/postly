@@ -7,11 +7,11 @@ import * as schema from '../../db/schema.js';
 import * as copy from './cancellation-copy.js';
 import type { Workflow } from './workflow.js';
 
-// Cancellation (WP-43; technical-design.md, Cancellation, data deletion and the monthly report;
+// Cancellation (WP-43; technical-design.md, Cancellation, archiving, erasure and the monthly report;
 // state-machines.md, Business). Each step is idempotent, so running it again finishes a cancellation
 // that stopped half way. The other modules' steps come in as functions (workflow imports none of them).
 
-/** Provisional (PRD open question): 30 days from cancellation to deletion. */
+/** Provisional (PRD open question): 30 days from cancellation to the archive; nothing is deleted. */
 export const RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 /** Posts the post machine can still cancel (state-machines.md, Post). */
@@ -32,7 +32,7 @@ export interface CancellationDeps {
 }
 
 export type CancellationResult =
-  | { outcome: 'cancelled'; deleteAfter: Date; revoked: Network[]; providerFailed: Network[] }
+  | { outcome: 'cancelled'; archiveAfter: Date; revoked: Network[]; providerFailed: Network[] }
   | { outcome: 'not_found' };
 
 export interface Cancellation {
@@ -53,8 +53,8 @@ export function createCancellation(deps: CancellationDeps): Cancellation {
       const before = await load(businessId);
       if (!before) return { outcome: 'not_found' };
 
-      // 1. CANCEL sets the dates; a business already cancelled keeps its own.
-      if (before.status !== 'cancelled') {
+      // 1. CANCEL sets the dates; a business already cancelled (or archived) keeps its own.
+      if (before.status !== 'cancelled' && before.status !== 'archived') {
         const at = now();
         const result = await workflow.apply(businessId, {
           machine: 'business',
@@ -62,7 +62,7 @@ export function createCancellation(deps: CancellationDeps): Cancellation {
           event: 'CANCEL',
           source: reason === 'console' ? 'console' : 'system',
           guard: async (tx) => {
-            await tx.update(b).set({ cancelledAt: at, dataDeleteAfter: new Date(at.getTime() + retentionMs) }).where(eq(b.id, businessId));
+            await tx.update(b).set({ cancelledAt: at, archiveAfter: new Date(at.getTime() + retentionMs) }).where(eq(b.id, businessId));
             return null;
           },
         });
@@ -83,7 +83,7 @@ export function createCancellation(deps: CancellationDeps): Cancellation {
 
       // 5. The owner, by template (the window may be closed), once: a run that stopped before this step
       // sends it when run again (review of PR #54).
-      const deleteAfter = business.dataDeleteAfter!;
+      const archiveAfter = business.archiveAfter!;
       const m = schema.message;
       const [told] = await db.withBusiness('workflow', businessId, (tx) =>
         tx
@@ -98,10 +98,10 @@ export function createCancellation(deps: CancellationDeps): Cancellation {
           to: business.approverPhone,
           language: profile.success ? profile.data.languages[0]! : 'he',
           templateName: copy.CANCELLED_TEMPLATE,
-          variables: { deleteAfter: copy.deletionDate(deleteAfter, business.timezone) },
+          variables: {},
         });
       }
-      return { outcome: 'cancelled', deleteAfter, ...channels };
+      return { outcome: 'cancelled', archiveAfter, ...channels };
     },
   };
 }

@@ -31,6 +31,14 @@ export interface ConsoleRouteOptions {
   console: ConsoleService;
   /** The cancellation (WP-43); the route exists only when it is wired. */
   cancelBusiness?(businessId: string, actor: string): Promise<unknown>;
+  /**
+   * Erasure on the owner's explicit request (technical-design.md, Cancellation, archiving, erasure and
+   * the monthly report); the route exists only when it is wired.
+   */
+  eraseBusiness?(
+    businessId: string,
+    request: { requestedBy: 'owner' | 'representative'; channel: 'whatsapp' | 'email' | 'phone' | 'letter' | 'other'; requestedAt: Date; actor: string },
+  ): Promise<{ outcome: 'erased' | 'files_failed' | 'not_found' | 'not_cancelled' }>;
   /** Defaults to the dev bypass. */
   auth?: ConsoleAuth;
   /**
@@ -75,6 +83,12 @@ const InsightsQuery = z.object({ from: Day.optional(), to: Day.optional() }).ref
 const PauseBody = z.object({ by: z.string().min(1).optional(), reason: z.string().optional() });
 /** D2 (docs/security.md): the business name, typed by the team member, confirms a cancellation. */
 const CancelBody = z.object({ confirmName: z.string().trim().min(1) });
+/** The erasure: the typed name, as for cancel, and who asked, how and when (the actor is the sign-in). */
+const EraseBody = CancelBody.extend({
+  requestedBy: z.enum(['owner', 'representative']),
+  channel: z.enum(['whatsapp', 'email', 'phone', 'letter', 'other']),
+  requestedAt: z.iso.datetime({ offset: true }).transform((s) => new Date(s)),
+});
 const DraftsQuery = z.object({ businessId: z.uuid().optional() });
 const PriceQuery = z.object({ plan: z.string().min(1).optional() });
 const PriceBody = z.object({
@@ -264,6 +278,24 @@ export function registerConsoleRoutes(app: FastifyInstance, options: ConsoleRout
             if (!target) throw new ConsoleActionError(404, 'not_found');
             if (target.name.trim() !== confirmName) throw new ConsoleActionError(400, 'confirmation_mismatch', 'type the business name to confirm');
             return cancelBusiness(businessId, consoleActor(q));
+          }),
+        );
+      }
+      if (options.eraseBusiness) {
+        const eraseBusiness = options.eraseBusiness;
+        scope.post('/api/businesses/:id/erase', (q, reply) =>
+          run(reply, async () => {
+            const businessId = id(q.params);
+            const { confirmName, ...request } = EraseBody.parse(q.body ?? {});
+            const target = (await c.businesses()).find((b) => b.id === businessId);
+            if (!target) throw new ConsoleActionError(404, 'not_found');
+            if (target.name.trim() !== confirmName) throw new ConsoleActionError(400, 'confirmation_mismatch', 'type the business name to confirm');
+            const result = await eraseBusiness(businessId, { ...request, actor: consoleActor(q) });
+            if (result.outcome === 'not_found') throw new ConsoleActionError(404, 'not_found');
+            if (result.outcome === 'not_cancelled') throw new ConsoleActionError(409, 'not_cancelled', 'cancel the business first');
+            // The rows are gone and recorded, but some files are not: never a 2xx, so the team finishes them by hand.
+            if (result.outcome === 'files_failed') throw new ConsoleActionError(500, 'files_failed', `the rows are erased; delete the files under ${businessId}/ by hand`);
+            return result;
           }),
         );
       }
